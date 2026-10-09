@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import jwt from "jsonwebtoken";
 
 export type JwtUserClaims = {
@@ -113,11 +113,15 @@ export type SignableClaims = JwtUserClaims & {
   sessionStartedAt?: number;
   /** passwordVersion() of the user's current stored password. */
   passwordVersion?: string | null;
+  /** users.session_epoch at issue time; carried as `se` only when > 0, so tokens look the same until a first revocation. */
+  sessionEpoch?: number;
 };
 
 export function signAccessToken(claims: SignableClaims, env: NodeJS.ProcessEnv = process.env): string {
-  const { sessionStartedAt, passwordVersion: pwv, ...userClaims } = claims;
-  const payload: Record<string, unknown> = { ...userClaims };
+  const { sessionStartedAt, passwordVersion: pwv, sessionEpoch, ...userClaims } = claims;
+  // Every token carries its own unique id (`jti`) so ONE session can be revoked (logout, refresh rotation).
+  const payload: Record<string, unknown> = { ...userClaims, jti: randomUUID() };
+  if (sessionEpoch && sessionEpoch > 0) payload.se = sessionEpoch;
   if (sessionStartedAt) payload.sst = sessionStartedAt;
   if (pwv) payload.pwv = pwv;
 
@@ -180,6 +184,10 @@ export type VerifiedSession = {
   expiresAt: number | null;
   /** passwordVersion() recorded in the token; null for tokens issued before the claim existed. */
   passwordVersion: string | null;
+  /** Unique token id; null for tokens issued before it existed. */
+  jti: string | null;
+  /** users.session_epoch recorded in the token (`se`); 0 when absent. */
+  sessionEpoch: number;
 };
 
 export function verifySessionToken(token: string): VerifiedSession {
@@ -201,9 +209,25 @@ export function verifySessionToken(token: string): VerifiedSession {
     startedAt: startedAtFromPayload(payload),
     expiresAt: positiveNumber(payload.exp),
     passwordVersion: pwv,
+    jti: typeof payload.jti === "string" && payload.jti ? payload.jti : null,
+    sessionEpoch: Number.isInteger(payload.se) && (payload.se as number) > 0 ? (payload.se as number) : 0,
   };
 }
 
 export function verifyAccessToken(token: string): JwtUserClaims {
   return verifySessionToken(token).claims;
+}
+
+/**
+ * Key under which a session is revoked: the token's `jti`, or - for tokens issued before `jti` existed - a SHA-256
+ * of the token itself, so those can still be logged out and rotated. The hash is not reversible to the token.
+ */
+export function revocationKeyFor(token: string, jti: string | null): string {
+  return jti ? jti : `h:${createHash("sha256").update(token).digest("hex").slice(0, 40)}`;
+}
+
+/** Revocation key of a token this process just signed (reads its jti without re-verifying). */
+export function revocationKeyOfIssued(token: string): string {
+  const decoded = jwt.decode(token) as { jti?: unknown } | null;
+  return revocationKeyFor(token, typeof decoded?.jti === "string" ? decoded.jti : null);
 }

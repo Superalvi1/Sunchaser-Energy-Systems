@@ -65,7 +65,8 @@ export function createRequireAuth(deps: RequireAuthDeps) {
       applyActorToRequest(req, hydrated.actor, hydrated.session);
       next();
     } catch {
-      sendUnauthorized(res);
+      // Could not read the session/account store: fail closed with a retryable status, not a sign-out.
+      res.status(503).json({ error: "Authentication service temporarily unavailable." });
     }
   };
 }

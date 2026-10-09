@@ -1,13 +1,15 @@
 import type { Request } from "express";
 import type { Database } from "../../dbManager";
-import { findUserByUsername, mapUserRow } from "../../userAuthDb.js";
+import { findUserByUsername, mapUserRow, sessionEpochOf } from "../../userAuthDb.js";
 import {
   passwordVersion,
   passwordVersionMatches,
+  revocationKeyFor,
   sessionLimitViolation,
   sessionMaxAgeSeconds,
   verifySessionToken,
 } from "../auth/jwt.ts";
+import { isSessionRevoked } from "../auth/revocation.ts";
 
 export type ActorAuthMethod = "jwt";
 
@@ -33,11 +35,17 @@ export type RequestActor = {
 export type AuthSessionInfo = {
   startedAt: number | null;
   passwordVersion: string | null;
+  /** users.session_epoch as currently stored (0 when the column does not exist yet). */
+  sessionEpoch: number;
+  /** Revocation key of the presented token (its jti, or a hash for tokens issued before jti existed). */
+  tokenKey: string;
+  /** The presented token's own expiry (seconds). */
+  tokenExpiresAt: number | null;
 };
 
 export type ActorHydrationResult =
   | { ok: true; actor: RequestActor; session?: AuthSessionInfo }
-  | { ok: false; status: 401 | 403; error: string; reason: string };
+  | { ok: false; status: 401 | 403 | 503; error: string; reason: string };
 
 /** Account states that may not use an existing session (login refuses the same states). */
 const INACTIVE_ACCOUNT_STATUSES = new Set(["Suspended", "Rejected", "Pending"]);
@@ -81,8 +89,8 @@ async function loadActiveUser(
   localDb: Database | undefined,
   authMethod: ActorAuthMethod
 ): Promise<
-  | { ok: true; actor: RequestActor; passwordVersion: string | null }
-  | { ok: false; status: 401 | 403; error: string; reason: string }
+  | { ok: true; actor: RequestActor; passwordVersion: string | null; sessionEpoch: number; hasEpochColumn: boolean }
+  | { ok: false; status: 401 | 403 | 503; error: string; reason: string }
 > {
   const row = await findUserByUsername(username, localDb);
   if (!row) {
@@ -98,6 +106,8 @@ async function loadActiveUser(
     ok: true,
     actor,
     passwordVersion: passwordVersion((row as Record<string, unknown>).password),
+    sessionEpoch: sessionEpochOf(row),
+    hasEpochColumn: "session_epoch" in (row as object),
   };
 }
 
@@ -128,6 +138,12 @@ export async function hydrateActorFromJwt(
   }
 
   const claims = verified.claims;
+  // One indexed lookup on revoked_sessions, run alongside the user lookup the request needs anyway.
+  const tokenKey = revocationKeyFor(token, verified.jti);
+  const revocation = isSessionRevoked(tokenKey, localDb).then(
+    (revoked) => ({ revoked, error: null as unknown }),
+    (error: unknown) => ({ revoked: false, error })
+  );
   const loaded = await loadActiveUser(claims.username, localDb, "jwt");
   if (!loaded.ok) return loaded;
 
@@ -141,10 +157,31 @@ export async function hydrateActorFromJwt(
     return { ok: false, status: 401, error: "Unauthorized", reason: "password_changed" };
   }
 
+  // "Sign out everywhere", suspension and admin revocation bump users.session_epoch; tokens minted under an older
+  // epoch are dead. Skipped while the column does not exist yet (migration not applied): behaves as before.
+  if (loaded.hasEpochColumn && verified.sessionEpoch !== loaded.sessionEpoch) {
+    return { ok: false, status: 401, error: "Unauthorized", reason: "session_revoked" };
+  }
+
+  const checked = await revocation;
+  if (checked.error) {
+    // Fail CLOSED: when we cannot tell whether this session was logged out, the request is refused, never allowed.
+    return { ok: false, status: 503, error: "Session check unavailable. Please retry.", reason: "revocation_lookup_failed" };
+  }
+  if (checked.revoked) {
+    return { ok: false, status: 401, error: "Unauthorized", reason: "session_revoked" };
+  }
+
   return {
     ok: true,
     actor: loaded.actor,
-    session: { startedAt: verified.startedAt, passwordVersion: loaded.passwordVersion },
+    session: {
+      startedAt: verified.startedAt,
+      passwordVersion: loaded.passwordVersion,
+      sessionEpoch: loaded.sessionEpoch,
+      tokenKey,
+      tokenExpiresAt: verified.expiresAt,
+    },
   };
 }
 

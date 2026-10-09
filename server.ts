@@ -342,11 +342,21 @@ import {
   SupabaseUnavailableError,
   mapUserRow,
   findUserByUsername,
+  revokeAllSessions,
 } from "./userAuthDb.js";
 import { mergeStaffEditedLeadNotes, parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
 import { describeInvoiceChange } from "./server/finance/paymentLedger.ts";
 import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
-import { assertProductionJwtConfig, canRenewSession, passwordVersion, sessionMaxAgeSeconds, signAccessToken } from "./server/auth/jwt.ts";
+import { assertProductionJwtConfig, canRenewSession, passwordVersion, revocationKeyOfIssued, sessionMaxAgeSeconds, signAccessToken } from "./server/auth/jwt.ts";
+import {
+  probeRevocationStore,
+  purgeExpiredRevocations,
+  refreshGraceSeconds,
+  revocationStatus,
+  revokeSessionNow,
+  rotateSession,
+  RevocationLookupError,
+} from "./server/auth/revocation.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
   getRailwayObject,
@@ -1401,12 +1411,13 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
 
   try {
     loadDb();
-    const { user, passwordHash } = await authenticateUserWithCredentials(normalizedUsername, normalizedPassword, db);
+    const { user, passwordHash, sessionEpoch } = await authenticateUserWithCredentials(normalizedUsername, normalizedPassword, db);
     const token = signAccessToken({
       userId: user.id,
       username: user.username,
       role: user.role,
       passwordVersion: passwordVersion(passwordHash),
+      sessionEpoch,
     });
     await appendActivityLog(
       user.id,
@@ -1464,8 +1475,74 @@ app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) =>
     role: req.actor.role,
     sessionStartedAt: session.startedAt!,
     passwordVersion: session.passwordVersion,
+    sessionEpoch: session.sessionEpoch,
   });
+  // Rotation: the presented token is retired after a short grace (so requests already in flight with it still
+  // succeed) and remembers its successor. If it was ALREADY revoked (logout raced this refresh), no new token is
+  // handed out. If the revocation store cannot be written, the refresh fails (503) rather than leaving two live
+  // sessions behind; the client keeps its current token and retries later.
+  try {
+    loadDb();
+    const newKey = revocationKeyOfIssued(token);
+    const rotated = await rotateSession(session.tokenKey, newKey, req.actor.id, session.tokenExpiresAt, refreshGraceSeconds(), db);
+    if (rotated.alreadyRevoked) return res.status(401).json({ error: "Unauthorized" });
+    saveDb();
+  } catch (err) {
+    if (err instanceof RevocationLookupError) {
+      return res.status(503).json({ error: "Session service temporarily unavailable. Please retry." });
+    }
+    throw err;
+  }
   return res.json({ success: true, token, user: actorToApiUser(req.actor) });
+});
+
+// Sign out THIS session only: the presented token's id is recorded as revoked until the token would have expired
+// anyway; other devices keep their own tokens. Idempotent. Always answers 200 for a valid session; `revoked:false`
+// says the server could not record it (migration not applied) so the client does not pretend otherwise.
+app.post("/api/auth/logout", requireAuth, async (req, res) => {
+  const session = req.authSession;
+  if (!req.actor || !session) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    loadDb();
+    const out = await revokeSessionNow(session.tokenKey, req.actor.id, session.tokenExpiresAt, db);
+    saveDb();
+    return res.json({ success: true, revoked: out.stored, ...(out.stored ? {} : { reason: "revocation_inactive" }) });
+  } catch (err) {
+    if (err instanceof RevocationLookupError) {
+      return res.status(503).json({ error: "Could not end the session on the server. Please retry.", code: "revocation_unavailable" });
+    }
+    console.error("[Logout Error]:", err);
+    return res.status(500).json({ error: "Could not end the session." });
+  }
+});
+
+// Sign out of EVERY device: bumps users.session_epoch, so all earlier tokens (including copies) stop working.
+app.post("/api/auth/logout-all", requireAuth, async (req, res) => {
+  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    loadDb();
+    await revokeAllSessions(req.actor.id, db);
+    saveDb();
+    return res.json({ success: true });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: "Could not end the sessions." });
+  }
+});
+
+// Admin: end every session of one user (stolen device, departing employee) without suspending the account.
+app.post("/api/admin/users/:id/revoke-sessions", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  try {
+    loadDb();
+    const user = await updateUserByAdmin(staff.id, staff.username, req.params.id, { revokeSessions: true }, db);
+    saveDb();
+    return res.json({ success: true, user });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 app.post("/api/auth/register", async (req, res) => {
@@ -10598,7 +10675,9 @@ setInterval(async () => {
 
 // Simple health check and status endpoints for separated deployments
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "sunchaser-crm" });
+  const revocation = revocationStatus();
+  // sessionRevocationActive=false means logout/refresh rotation cannot revoke tokens (migration not applied or disabled).
+  res.json({ status: "ok", service: "sunchaser-crm", sessionRevocationActive: revocation.active });
 });
 
 /** PDF engine diagnostic — confirms Playwright/Chromium availability on this host (Render, not Vercel). */
@@ -10725,6 +10804,11 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Sunchaser Energy ERP] listening on port ${PORT}`);
+    loadDb();
+    void probeRevocationStore(db);
+    // Rows are only needed until the revoked token would have expired; purge best-effort every 6 hours.
+    const purge = setInterval(() => { void purgeExpiredRevocations(db); }, 6 * 3600 * 1000);
+    purge.unref?.();
   });
 
   const shutdownMessaging = () => {

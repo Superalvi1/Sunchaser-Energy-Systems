@@ -43,6 +43,21 @@ function expiresHours(h: number) {
   return new Date(Date.now() + h * 3600 * 1000).toISOString();
 }
 
+/** users.session_epoch (0 when the column does not exist yet or was never bumped). */
+export function sessionEpochOf(row: any): number {
+  const n = Number(row?.session_epoch ?? 0);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Patch fragment that revokes every earlier token of a user. Empty when the session_epoch column does not exist yet
+ * (Supabase/PostgREST rows then have no such key), so suspending an account never fails before the migration runs.
+ */
+function epochBumpPatch(row: any): Record<string, unknown> {
+  if (isSupabaseActive() && !("session_epoch" in (row || {}))) return {};
+  return { session_epoch: sessionEpochOf(row) + 1 };
+}
+
 export function mapUserRow(row: any) {
   return {
     id: row.id,
@@ -231,13 +246,13 @@ export async function authenticateUserWithCredentials(
         phone: row.phone,
       }, localDb);
       const refreshed = await getUserById(row.id, localDb);
-      if (refreshed) return { user: mapUserRow(refreshed), passwordHash: String(row.password || "") };
+      if (refreshed) return { user: mapUserRow(refreshed), passwordHash: String(row.password || ""), sessionEpoch: sessionEpochOf(row) };
     } catch (err) {
       console.error("[Auth] client CRM profile backfill failed", err);
     }
   }
 
-  return { user: mapUserRow(row), passwordHash: String(row.password || "") };
+  return { user: mapUserRow(row), passwordHash: String(row.password || ""), sessionEpoch: sessionEpochOf(row) };
 }
 
 export async function registerUser(
@@ -517,6 +532,7 @@ export async function rejectUser(
     account_status: "Rejected",
     rejected_reason: reason || "Registration rejected by administrator.",
     updated_at: new Date().toISOString(),
+    ...epochBumpPatch(await getUserById(targetUserId, localDb)),
   };
   await updateUserRow(targetUserId, patch, localDb);
   return { ok: true, message: "User rejected." };
@@ -851,6 +867,17 @@ export async function updateUserByAdmin(
 ) {
   await assertSuperAdminActor(actorId, actorUsername, localDb);
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  // Suspending/rejecting/returning to Pending, and the explicit "revoke sessions" option, end every earlier session,
+  // so re-approving the account later does not bring old (possibly copied) tokens back to life.
+  const revokesSessions =
+    body.revokeSessions === true || ["Suspended", "Rejected", "Pending"].includes(String(body.accountStatus || ""));
+  if (revokesSessions) {
+    const current = await getUserById(targetUserId, localDb);
+    if (body.revokeSessions === true && isSupabaseActive() && !("session_epoch" in current)) {
+      throw new UserAuthError("Revoking sessions is not available yet (session revocation migration not applied).", 503);
+    }
+    Object.assign(patch, epochBumpPatch(current));
+  }
   if (body.accountStatus) patch.account_status = body.accountStatus;
   if (body.role) patch.role = body.role;
   if (body.name) patch.name = body.name;
@@ -859,6 +886,15 @@ export async function updateUserByAdmin(
   await updateUserRow(targetUserId, patch, localDb);
   const row = await getUserById(targetUserId, localDb);
   return mapUserRow(row);
+}
+
+/** Ends every session of one user ("sign out of all devices" / admin revoke). Needs the session_epoch migration. */
+export async function revokeAllSessions(userId: string, localDb?: Database) {
+  const row = await getUserById(userId, localDb);
+  if (isSupabaseActive() && !("session_epoch" in row)) {
+    throw new UserAuthError("Signing out of all devices is not available yet.", 503);
+  }
+  await updateUserRow(userId, { ...epochBumpPatch(row), updated_at: new Date().toISOString() }, localDb);
 }
 
 async function updateUserRow(id: string, patch: Record<string, unknown>, localDb?: Database) {

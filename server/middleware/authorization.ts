@@ -20,7 +20,7 @@ export type AuthorizationMiddlewareDeps = {
 
 function sendAuthFailure(
   res: Response,
-  status: 401 | 403,
+  status: 401 | 403 | 503,
   error: string
 ): void {
   res.status(status).json({ error });
@@ -58,7 +58,15 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
       return;
     }
 
-    const hydrated = await hydrateActorFromJwt(token, deps.resolveLocalDb());
+    let hydrated;
+    try {
+      hydrated = await hydrateActorFromJwt(token, deps.resolveLocalDb());
+    } catch (err) {
+      // The account/session store could not be read: refuse (fail closed) instead of hanging the request.
+      console.error("[Auth] session lookup failed:", (err as Error)?.message);
+      sendAuthFailure(res, 503, "Authentication service temporarily unavailable.");
+      return;
+    }
     if (!hydrated.ok) {
       sendAuthFailure(res, (hydrated as any).status, (hydrated as any).error);
       return;
