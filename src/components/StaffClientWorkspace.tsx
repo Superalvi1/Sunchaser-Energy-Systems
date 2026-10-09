@@ -19,7 +19,7 @@ import AfterSalesAdminTabs from "./AfterSalesAdminTabs";
 import InvoiceStaff from "./InvoiceStaff";
 import SmartQuotePreview from "./SmartQuotePreview";
 import CustomerDocumentList from "./CustomerDocumentList";
-import { fetchLeadSmartQuoteVersions, prepareLeadCustomerProfile, type SmartQuoteVersionView } from "../services/api";
+import { fetchLeadSmartQuoteVersions, issueLeadSmartQuoteLink, prepareLeadCustomerProfile, type SmartQuoteVersionView } from "../services/api";
 import { parseSmartQuoteLeadNotes, parseSmartQuotePdfArchive, formatLeadReceivedAt, visibleLeadNotes, normalizePakistanMobile } from "../lib/smartQuoteLead";
 import { namesPlausiblyMatch } from "../lib/clientIdentity";
 import InteractiveProposalShareModal from "./InteractiveProposalShareModal";
@@ -76,6 +76,16 @@ export default function StaffClientWorkspace({
       .catch((error) => { if (active) { setVersions([]); setVersionsError(error instanceof Error ? error.message : "Could not load saved quotation versions."); } });
     return () => { active = false; };
   }, [lead.id, tab]);
+  const [linkState, setLinkState] = useState<{ url?: string; error?: string; busy?: boolean }>({});
+  useEffect(() => setLinkState({}), [lead.id]);
+  const createSmartQuoteLink = async () => {
+    setLinkState({ busy: true });
+    try {
+      const issued = await issueLeadSmartQuoteLink(lead.id);
+      try { await navigator.clipboard?.writeText(issued.url); } catch { /* the URL is shown below for manual copy */ }
+      setLinkState({ url: issued.url });
+    } catch (error) { setLinkState({ error: error instanceof Error ? error.message : "Could not create the link." }); }
+  };
   const [preparedCustomerId, setPreparedCustomerId] = useState("");
   const [preparing, setPreparing] = useState(false);
   const [prepareError, setPrepareError] = useState("");
@@ -84,10 +94,13 @@ export default function StaffClientWorkspace({
   const pdfArchive = parseSmartQuotePdfArchive(lead.notes);
   const customerId = leadCustomerId(lead) || preparedCustomerId;
   const phone = normalizePakistanMobile(lead.phone);
-  // Versioned leads list their history below; older duplicate leads for the same client still show here. A lead that merely
-  // shares the phone number (family, office line, agent) belongs to another client and is never listed as this client's quote.
-  const submissions = [...(versions.length ? [] : [lead]), ...relatedLeads.filter(l => l.id !== lead.id && phone && normalizePakistanMobile(l.phone) === phone && namesPlausiblyMatch(l.name, lead.name))]
+  // Versioned leads list their history below. A public Smart Quote never joins an existing lead on name and phone alone, so
+  // other leads that merely look like this client (same phone, similar name) are shown apart and marked unverified: staff
+  // merge them deliberately. A lead that only shares the phone number belongs to another client and is not listed at all.
+  const submissions = (versions.length ? [] : [lead]).filter(l => parseSmartQuoteLeadNotes(l.notes));
+  const possibleDuplicates = relatedLeads.filter(l => l.id !== lead.id && phone && normalizePakistanMobile(l.phone) === phone && namesPlausiblyMatch(l.name, lead.name))
     .filter(l => parseSmartQuoteLeadNotes(l.notes)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const reviewNotes = String(lead.notes || "").split(/\r?\n/).filter(line => /^(Possible existing client|Shared phone number):/.test(line));
   const prepareDocuments = async () => {
     setPreparing(true); setPrepareError("");
     try { setPreparedCustomerId((await prepareLeadCustomerProfile(lead.id)).customerId); }
@@ -115,6 +128,11 @@ export default function StaffClientWorkspace({
           {customerId ? ` · Customer ${customerId}` : " · CRM profile pending"}
         </p>
       </header>
+      {reviewNotes.length > 0 && (
+        <div role="note" data-testid="smart-quote-review-note" className="px-4 py-2 border-b border-amber-500/40 bg-amber-500/10 text-xs text-amber-100 space-y-1">
+          {reviewNotes.map(line => <p key={line}>{line}</p>)}
+        </div>
+      )}
       <div className="flex gap-1 overflow-x-auto px-3 py-2 border-b border-slate-800">
         {TABS.map((item) => (
           <button
@@ -172,8 +190,23 @@ export default function StaffClientWorkspace({
               </div>
               <p className="text-xs text-slate-300">{pdfArchive ? `Original client PDF archived ${formatLeadReceivedAt(pdfArchive.savedAt)}.` : "The quotation submission is saved. An original PDF appears here after the client uses Save PDF."}</p>
             </div>; })}
+            <div className="rounded-2xl border border-slate-800 p-3 text-xs text-slate-300 space-y-2">
+              <p>Send this client a personal Smart Quote link so their next quotation is added to this lead as a new version. Without the link, a public quotation always creates its own lead.</p>
+              <button type="button" disabled={linkState.busy} onClick={createSmartQuoteLink} className="rounded-xl border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-violet-100 disabled:opacity-60">Create client Smart Quote link</button>
+              {linkState.url && <p data-testid="smart-quote-link-url" className="break-all font-mono text-emerald-200">{linkState.url}</p>}
+              {linkState.error && <p role="alert" className="text-red-300">{linkState.error}</p>}
+            </div>
+            {possibleDuplicates.length > 0 && <p className="text-xs font-semibold text-amber-200">Possibly the same client (unverified, separate leads, not merged)</p>}
+            {possibleDuplicates.map(submission => {
+              const dup = parseSmartQuoteLeadNotes(submission.notes)!;
+              return <div key={submission.id} data-testid="smart-quote-possible-duplicate" className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4 space-y-2">
+                <strong className="text-white">{dup.quoteNumber} · {dup.system} · PKR {dup.estimatePkr.toLocaleString("en-PK")}</strong>
+                <p className="text-xs text-amber-100">Lead {submission.id} ({submission.name}). Submitted without verification; review before treating it as this client's quotation.</p>
+                <button className="rounded-xl bg-amber-500/20 border border-amber-400/40 px-3 py-2 text-amber-100" onClick={() => { setPreviewVersion(null); setPreviewLead(submission); }}>View quotation</button>
+              </div>;
+            })}
             <CustomerDocumentList staffUser={staffUser} customerId={customerId} quotationOnly />
-            {!customerId && quotes.length === 0 && submissions.length === 0 && versions.length === 0 && <p className="text-sm text-slate-500">No saved quotations yet.</p>}
+            {!customerId && quotes.length === 0 && submissions.length === 0 && possibleDuplicates.length === 0 && versions.length === 0 && <p className="text-sm text-slate-500">No saved quotations yet.</p>}
             {quotes.map((quote) => (
               <div key={quote.id} className="rounded-2xl border border-slate-800 px-3 py-2 text-sm text-slate-200 flex flex-wrap items-center justify-between gap-3">
                 <span>{quote.id} · {quote.systemSizekW} kW · {quote.status}</span>
