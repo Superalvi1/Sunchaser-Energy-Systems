@@ -21,6 +21,7 @@ import SmartQuotePreview from "./SmartQuotePreview";
 import CustomerDocumentList from "./CustomerDocumentList";
 import { fetchLeadSmartQuoteVersions, prepareLeadCustomerProfile, type SmartQuoteVersionView } from "../services/api";
 import { parseSmartQuoteLeadNotes, parseSmartQuotePdfArchive, formatLeadReceivedAt, visibleLeadNotes, normalizePakistanMobile } from "../lib/smartQuoteLead";
+import { namesPlausiblyMatch } from "../lib/clientIdentity";
 import InteractiveProposalShareModal from "./InteractiveProposalShareModal";
 
 type WorkspaceTab =
@@ -83,8 +84,9 @@ export default function StaffClientWorkspace({
   const pdfArchive = parseSmartQuotePdfArchive(lead.notes);
   const customerId = leadCustomerId(lead) || preparedCustomerId;
   const phone = normalizePakistanMobile(lead.phone);
-  // Versioned leads list their history below; older duplicate leads for the same phone still show here.
-  const submissions = [...(versions.length ? [] : [lead]), ...relatedLeads.filter(l => l.id !== lead.id && phone && normalizePakistanMobile(l.phone) === phone)]
+  // Versioned leads list their history below; older duplicate leads for the same client still show here. A lead that merely
+  // shares the phone number (family, office line, agent) belongs to another client and is never listed as this client's quote.
+  const submissions = [...(versions.length ? [] : [lead]), ...relatedLeads.filter(l => l.id !== lead.id && phone && normalizePakistanMobile(l.phone) === phone && namesPlausiblyMatch(l.name, lead.name))]
     .filter(l => parseSmartQuoteLeadNotes(l.notes)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   const prepareDocuments = async () => {
     setPreparing(true); setPrepareError("");

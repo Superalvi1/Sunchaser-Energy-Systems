@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PublicQuoteLine } from "../../src/lib/publicQuotationBuilder.ts";
 import { normalizePakistanMobile, parseSmartQuoteLeadNotes, parseSmartQuotePdfArchive, quoteSnapshot, replaceSmartQuoteBlock } from "../../src/lib/smartQuoteLead.ts";
+import { namesPlausiblyMatch } from "../../src/lib/clientIdentity.ts";
 import { toPublicLeadInput, type SmartQuoteLeadInput } from "./smartQuoteLead.ts";
 
 export type SmartQuoteVersionPdf = { fileName: string; fileUrl: string; storagePath: string; sha256: string; sizeBytes: number; savedAt: string };
@@ -36,7 +37,10 @@ export type SmartQuoteInsertResult = "inserted" | "duplicate_quote" | "duplicate
 
 export type SmartQuoteVersionStore = {
   findByQuoteNumber(quoteNumber: string): Promise<SmartQuoteVersion | null>;
+  /** Newest active lead with this phone. Kept for older callers; saving uses {@link findActiveLeadsByPhone}. */
   findActiveLeadByPhone(phone: string): Promise<SmartQuoteLeadMatch | null>;
+  /** Every active lead whose phone normalises to the same number, newest first (a number can be shared by several clients). */
+  findActiveLeadsByPhone?(phone: string): Promise<SmartQuoteLeadMatch[]>;
   latestVersionNumber(leadId: string): Promise<number>;
   insert(version: SmartQuoteVersion): Promise<SmartQuoteInsertResult>;
   listByLead(leadId: string): Promise<SmartQuoteVersion[]>;
@@ -81,6 +85,44 @@ function blockVersion(notes: string): number {
   return match ? Number(match[1]) : parseSmartQuoteLeadNotes(notes) ? 1 : 0;
 }
 
+const SHARED_PHONE_PREFIX = "Shared phone number:";
+
+/** One bounded, staff-facing line per lead; the ids let an admin open the other leads and merge deliberately. */
+export function sharedPhoneNoteLine(otherLeadIds: string[]): string {
+  const ids = [...new Set(otherLeadIds)].sort();
+  const listed = ids.slice(0, 3).join(", ");
+  const more = ids.length > 3 ? ` and ${ids.length - 3} more` : "";
+  return `${SHARED_PHONE_PREFIX} also used by ${listed}${more}. Quotations are kept separate; review before merging.`;
+}
+
+/** Leads sharing the phone, from the batch method when the store has one. */
+async function leadsSharingPhone(store: SmartQuoteVersionStore, phone: string): Promise<SmartQuoteLeadMatch[]> {
+  if (store.findActiveLeadsByPhone) return store.findActiveLeadsByPhone(phone);
+  const single = await store.findActiveLeadByPhone(phone);
+  return single ? [single] : [];
+}
+
+/**
+ * Add or refresh the shared-phone line in the lead's human notes. Non-destructive: the latest-quotation block and every
+ * staff-written line stay as they are, the line is rewritten only when the set of other leads changes, and a failure to
+ * write it never fails the quotation save.
+ */
+async function markSharedPhone(store: SmartQuoteVersionStore, leadId: string, otherLeadIds: string[]) {
+  if (!otherLeadIds.length) return;
+  const line = sharedPhoneNoteLine(otherLeadIds);
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = await store.readLeadNotes(leadId);
+      if (current === null || current.split("\n").includes(line)) return;
+      const kept = current.split("\n").filter((existing) => !existing.startsWith(SHARED_PHONE_PREFIX)).join("\n").replace(/\s+$/, "");
+      if (await store.replaceLeadNotes(leadId, current, `${kept ? `${kept}\n` : ""}${line}`)) return;
+    }
+  } catch (error) {
+    // Advisory only: the quotation must still be saved. The next submission on this number writes the line again.
+    console.warn("[smart-quotes] could not write the shared-phone note:", error instanceof Error ? error.message : error);
+  }
+}
+
 export async function saveSmartQuoteSubmission(
   input: SmartQuoteLeadInput,
   deps: {
@@ -99,14 +141,34 @@ export async function saveSmartQuoteSubmission(
   const existing = await store.findByQuoteNumber(input.quoteNumber);
   if (existing) return replayOrConflict(existing);
 
-  let lead = await store.findActiveLeadByPhone(input.phone);
+  // A phone number alone does not identify a client: attach only to a lead whose name plausibly matches, otherwise
+  // keep this client on a separate lead and flag the shared number for staff.
+  const sharing = await leadsSharingPhone(store, input.phone);
+  let lead: SmartQuoteLeadMatch | null = sharing.find((candidate) => namesPlausiblyMatch(candidate.name, input.name)) ?? null;
   let leadCreated = false;
   if (!lead) {
-    const created = await deps.createLead(input, deterministicSmartQuoteLeadId(input.quoteNumber));
+    const newLeadId = deterministicSmartQuoteLeadId(input.quoteNumber);
+    let created: { leadId: string; customerId: string | null };
+    try {
+      created = await deps.createLead(input, newLeadId);
+    } catch (error) {
+      // A concurrent identical first submission may have created this very lead between our lookup and our insert.
+      const winner = (await leadsSharingPhone(store, input.phone)).find((candidate) => candidate.id === newLeadId);
+      if (!winner) throw error;
+      created = { leadId: winner.id, customerId: winner.customerId };
+    }
     lead = { id: created.leadId, customerId: created.customerId, notes: "", name: input.name, phone: input.phone, city: input.city ?? null };
     leadCreated = true;
   } else {
     await preserveLegacyQuotation(store, lead, input.quoteNumber);
+  }
+
+  // Flag every lead on this number for staff. After creating a lead, look again: a concurrent first submission from
+  // another client (or a crashed earlier attempt) may have created a sibling since the first lookup.
+  const onNumber = leadCreated ? await leadsSharingPhone(store, input.phone) : sharing;
+  const everyLeadId = [...new Set([lead.id, ...onNumber.map((candidate) => candidate.id)])];
+  if (everyLeadId.length > 1) {
+    for (const leadId of everyLeadId) await markSharedPhone(store, leadId, everyLeadId.filter((id) => id !== leadId));
   }
 
   const createdAt = (deps.now?.() ?? new Date()).toISOString();
@@ -244,27 +306,33 @@ function check<T>(result: { data: T; error: any }): T {
 
 export function createPostgrestSmartQuoteVersionStore(client: SupabaseClient): SmartQuoteVersionStore {
   const table = () => client.from("smart_quote_versions");
+  const findActiveLeadsByPhone = async (phone: string): Promise<SmartQuoteLeadMatch[]> => {
+    const canonical = normalizePakistanMobile(phone);
+    if (!canonical) return [];
+    // Prefilter: the last seven digits in order with anything between them, so "0301-123-45-67" is a candidate too.
+    // The decision is the full normalised equality below, so the prefilter can add candidates but never matches.
+    const pattern = `%${canonical.slice(-7).split("").join("%")}%`;
+    const rows = check(
+      await client
+        .from("leads")
+        .select("id,name,phone,location,customer_id,notes,created_at")
+        .is("deleted_at", null)
+        .ilike("phone", pattern)
+        .order("created_at", { ascending: false })
+        .limit(200),
+    ) as VersionRow[];
+    return (rows || [])
+      .filter((row) => normalizePakistanMobile(String(row.phone || "")) === canonical)
+      .map((row) => ({ id: row.id, customerId: row.customer_id ?? null, notes: String(row.notes || ""), name: String(row.name || ""), phone: String(row.phone || ""), city: row.location || null }));
+  };
   return {
     async findByQuoteNumber(quoteNumber) {
       const row = check(await table().select("*").eq("quote_number", quoteNumber).maybeSingle());
       return row ? fromRow(row) : null;
     },
+    findActiveLeadsByPhone,
     async findActiveLeadByPhone(phone) {
-      const canonical = normalizePakistanMobile(phone);
-      if (!canonical) return null;
-      const rows = check(
-        await client
-          .from("leads")
-          .select("id,name,phone,location,customer_id,notes,created_at")
-          .is("deleted_at", null)
-          .ilike("phone", `%${canonical.slice(-4)}%`)
-          .order("created_at", { ascending: false })
-          .limit(200),
-      ) as VersionRow[];
-      const match = (rows || []).find((row) => normalizePakistanMobile(String(row.phone || "")) === canonical);
-      return match
-        ? { id: match.id, customerId: match.customer_id ?? null, notes: String(match.notes || ""), name: String(match.name || ""), phone: String(match.phone || ""), city: match.location || null }
-        : null;
+      return (await findActiveLeadsByPhone(phone))[0] ?? null;
     },
     async latestVersionNumber(leadId) {
       const row = check(await table().select("version_number").eq("lead_id", leadId).order("version_number", { ascending: false }).limit(1).maybeSingle()) as VersionRow | null;
