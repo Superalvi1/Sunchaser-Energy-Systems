@@ -1406,6 +1406,30 @@ export async function refreshAuthToken(): Promise<string> {
   return parsed.token;
 }
 
+/**
+ * Ends THIS device's session on the server (other devices stay signed in). The token is passed explicitly because
+ * callers clear local storage right after; `keepalive` lets the request finish even if the page is closing.
+ * Resolves true only when the server confirmed; callers must treat any failure as non-fatal.
+ */
+export async function logoutOnServer(token: string, timeoutMs = 4000): Promise<boolean> {
+  const res = await fetch(`${API_BASE_URL}/api/auth/logout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: "{}",
+    keepalive: true,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  return res.ok;
+}
+
+/** Ends every session of the signed-in user on all devices (needs the server's session-epoch migration). */
+export async function signOutEverywhere(): Promise<void> {
+  const res = await apiFetch("/api/auth/logout-all", { method: "POST", body: "{}", signal: AbortSignal.timeout(12000) });
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(parsed.error || `Could not sign out of all devices (HTTP ${res.status}).`);
+  clearAuthSession();
+}
+
 export async function loginUser(
   body: { username: string; password?: string }
 ): Promise<{ success: boolean; user: User; token?: string }> {
