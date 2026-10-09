@@ -40,3 +40,12 @@ node scripts/e2e-crm-repair/j10-smartquote-link.mjs # Smart Quote link tokens: a
 Each script prints `PASS`/`FAIL` lines, writes `<journey>-results.json` and screenshots under `$E2E_STATE_DIR`,
 and exits non-zero on any failure. Session checks run the web code that the Android WebView loads; they are
 not a physical-device test.
+
+## Payment guard review (J11)
+
+`j11-*` reproduce the independent review of `scripts/invoice-payments-integrity.sql` (see `docs/ops/payment-guard-review.md`). They need two app instances
+(`E2E_BASE_URL`, `E2E_BASE_URL_2`; a third optional via `E2E_BASE_URL_3` for the stress) and touch only the disposable stack:
+
+```bash
+E2E_BASE_URL_2=http://127.0.0.1:3804 bash scripts/e2e-crm-repair/j11-run-all.sh   # everything, in the right order
+```
