@@ -68,11 +68,16 @@ jobs:
   # Suites that need Docker (they start their own Postgres containers) or a scratch Postgres server.
   # Here a skipped suite is a FAILURE: GitHub's runners provide Docker, so "Docker unavailable" means something is wrong.
   docker-suites:
+    name: docker-suites (PostgreSQL ${{ matrix.pg }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [16, 17]
     timeout-minutes: 45
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.pg }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -103,6 +108,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-report-docker
+          name: ci-report-docker-pg${{ matrix.pg }}
           path: ci-report-docker/
           retention-days: 14

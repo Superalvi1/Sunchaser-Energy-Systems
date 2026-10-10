@@ -78,6 +78,10 @@
   ],
   "docker": [
     {
+      "script": "test:invoice-atomic-pg",
+      "area": "atomic invoice save against real PostgreSQL (16 and 17)"
+    },
+    {
       "script": "test:smart-quote-migration",
       "area": "Smart Quote migration applied for real: idempotent, RLS, lock timeout, rollback, restore"
     },

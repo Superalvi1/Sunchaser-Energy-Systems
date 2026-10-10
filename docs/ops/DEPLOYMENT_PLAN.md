@@ -101,7 +101,8 @@ Also confirm: the role names PostgREST uses, `service_role` exists, no triggers 
 Run every migration, rollback and verify script on the **restored copy** before production (section 7).
 
 ### Step 4. Deploy the backend with no migrations (needs G4 for PR #111)
-Merge PR #111. The code works without any of the three tables: Smart Quote falls back, `/health` shows `sessionRevocationActive:false`, payments use the application lock.
+**Order is backend first, migrations second - chosen from rehearsal evidence (`docs/ops/DEPLOYMENT_REHEARSAL.md`, matrix J13).** The new backend on the OLD schema is safe on one replica (no corruption, no 5xx, payments protected by the in-process lock) with two named degradations. The OLD backend on the NEW schema is not: the payment guard makes it answer 500 to legitimate payments and over-payments. So the guard must never be applied before this backend is live.
+Merge PR #111. The code works without any of the migrations: Smart Quote falls back, `/health` shows `sessionRevocationActive:false`, payments use the application lock.
 Verify: login, refresh, lead list, Smart Quote (anonymous), invoice list, one payment on a **test invoice**, document upload and download.
 Watch Railway logs and HTTP error rate for 30 minutes. Rollback: redeploy the previous Railway deployment.
 
@@ -111,6 +112,7 @@ Watch Railway logs and HTTP error rate for 30 minutes. Rollback: redeploy the pr
 | 5a | `smart-quote-versions-schema.sql` | `smart-quote-versions-verify.sql`; one synthetic quote; staff Proposals tab | `smart-quote-versions-rollback.sql` (copies rows to a backup table first) and `smart-quote-versions-restore.sql` |
 | 5b | `session-revocation-schema.sql` | `/health` reports `sessionRevocationActive:true` within 15 s; log in, log out, reuse the token (must be 401) | `session-revocation-rollback.sql` (revived tokens: see limits) |
 | 5c | `invoice-payments-integrity.sql` run twice | `invoice-payments-verify.sql` (all rows `ok`); one payment, one over-payment (must be refused); `j11-db-level.sql` on the copy | `invoice-payments-integrity-rollback.sql`; schema returns byte-identical on the test stack |
+| 5d | `invoice-save-atomic.sql` (new; needs 5c first, creates one function, touches no data) | `select to_regprocedure('public.invoice_save_atomic(text,timestamptz,jsonb,jsonb)')` is not null; edit one test invoice twice from two browser tabs: the second save must answer 409 `INVOICE_CONFLICT` | `invoice-save-atomic-rollback.sql` (the app falls back to the previous save path) |
 
 Each applies in milliseconds on a 100,000-invoice test database and fails safe on a lock timeout (5 s), changing nothing.
 Window: any quiet 10 minutes, one migration at a time, no app restart. The payment guard requires the app commit from this release to be live (Step 4).
@@ -166,19 +168,22 @@ The artifact **listing** (names, sizes, digests) is public without login; the re
 psql "$RESTORED_URL" -v ON_ERROR_STOP=1 -f scripts/invoice-payments-preflight.sql
 psql "$RESTORED_URL" -v ON_ERROR_STOP=1 -f scripts/smart-quote-versions-preflight.sql
 psql "$RESTORED_URL" -v ON_ERROR_STOP=1 -f scripts/session-revocation-preflight.sql
-for f in smart-quote-versions-schema session-revocation-schema invoice-payments-integrity invoice-payments-integrity; do
+for f in smart-quote-versions-schema session-revocation-schema invoice-payments-integrity invoice-payments-integrity invoice-save-atomic; do
   psql "$RESTORED_URL" -v ON_ERROR_STOP=1 -f scripts/$f.sql; done
 psql "$RESTORED_URL" -f scripts/invoice-payments-verify.sql
 psql "$RESTORED_URL" -f scripts/smart-quote-versions-verify.sql
 # then each *-rollback.sql, and re-apply
 ```
+The whole sequence (preflight, encrypted backup, restore into a scratch PostgreSQL 17, migrations one by one with verify, rollback in reverse order, re-apply, before/after data comparison) is automated in `scripts/rehearsal/run-rehearsal.sh`; section 3 of `docs/ops/DEPLOYMENT_REHEARSAL.md` has its last result.
 Run the app against the copy with the production-like environment and repeat the Step 4 smoke before touching production.
 
 ## 8. Rollback summary
 | What | How | Loses |
 |---|---|---|
 | Backend | Redeploy previous Railway deployment | Nothing (schema is additive) |
-| Payment guard | `invoice-payments-integrity-rollback.sql` | Guard only; data untouched |
+| Atomic invoice save | `invoice-save-atomic-rollback.sql` | Function only; edits revert to the non-atomic path (safe on one replica) |
+| Payment guard | `invoice-payments-integrity-rollback.sql` (run `invoice-save-atomic-rollback.sql` first) | Guard only; data untouched |
+| **Backend rollback AFTER the guard is applied** | First roll back 5d and 5c, THEN redeploy the previous Railway deployment | Otherwise the old backend answers 500 to payments (rehearsal J13, old backend / new schema) |
 | Session revocation | `session-revocation-rollback.sql` | Revocation records; previously revoked tokens become valid until they expire |
 | Smart Quote versions | `smart-quote-versions-rollback.sql` (backs rows up first) | Nothing; `...-restore.sql` brings history back |
 | Credentials | There is no rollback for a revoked key; keep old values only as long as the overlap needs | n/a |
