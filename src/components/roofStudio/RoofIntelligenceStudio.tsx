@@ -1957,7 +1957,7 @@ function drawPolygonDashed(ctx: CanvasRenderingContext2D, verts: Point2D[], S: (
   ctx.setLineDash([]);
 }
 
-function drawSegment(ctx: CanvasRenderingContext2D, line: StudioLine, S: (p: Point2D) => Point2D, stroke: string) {
+function drawSegment(ctx: CanvasRenderingContext2D, line: Pick<StudioLine, "start" | "end"> & Partial<StudioLine>, S: (p: Point2D) => Point2D, stroke: string) {
   const a = S(line.start);
   const b = S(line.end);
   ctx.beginPath();

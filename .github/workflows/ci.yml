@@ -1,0 +1,113 @@
+name: CI
+
+# Three independent jobs. A failure in one never stops the others, and nothing here uses continue-on-error.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Typecheck (tsc --noEmit)
+        run: npm run typecheck
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Web build (the UI must call the same origin, never a baked-in host)
+        env:
+          VITE_API_BASE_URL: ""
+        run: npx vite build
+      - name: Server bundle
+        run: npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
+
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Run all suites (each one independently; summary lists passed, failed, skipped and tracked)
+        run: npm run test:ci
+      - name: Upload per-suite logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-report
+          path: ci-report/
+          retention-days: 14
+
+  # Suites that need Docker (they start their own Postgres containers) or a scratch Postgres server.
+  # Here a skipped suite is a FAILURE: GitHub's runners provide Docker, so "Docker unavailable" means something is wrong.
+  docker-suites:
+    name: docker-suites (PostgreSQL ${{ matrix.pg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [16, 17]
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      MIGRATION_TEST_PSQL: "-h 127.0.0.1 -p 5432 -U postgres"
+      REQUIRE_DB_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Docker and Postgres versions
+        run: |
+          docker version --format 'docker {{.Server.Version}}'
+          psql --version
+      - name: Run Docker / database suites (each independently; a skip fails)
+        run: node scripts/ci/run-suites.mjs --group=docker
+      - name: Upload per-suite logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-report-docker-pg${{ matrix.pg }}
+          path: ci-report-docker/
+          retention-days: 14

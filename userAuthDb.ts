@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { getSupabase, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
+import { getSupabase, isReservedStaffUsername, isSupabaseActive, resolveAppUserRole, type Database } from "./dbManager";
 import {
   isLocalDatabaseAuthFallbackEnabled,
   isSupabaseConnectivityError,
@@ -43,6 +43,21 @@ function expiresHours(h: number) {
   return new Date(Date.now() + h * 3600 * 1000).toISOString();
 }
 
+/** users.session_epoch (0 when the column does not exist yet or was never bumped). */
+export function sessionEpochOf(row: any): number {
+  const n = Number(row?.session_epoch ?? 0);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Patch fragment that revokes every earlier token of a user. Empty when the session_epoch column does not exist yet
+ * (Supabase/PostgREST rows then have no such key), so suspending an account never fails before the migration runs.
+ */
+function epochBumpPatch(row: any): Record<string, unknown> {
+  if (isSupabaseActive() && !("session_epoch" in (row || {}))) return {};
+  return { session_epoch: sessionEpochOf(row) + 1 };
+}
+
 export function mapUserRow(row: any) {
   return {
     id: row.id,
@@ -71,7 +86,8 @@ export function publicAppUrl(path: string) {
 }
 
 export async function sendAuthEmail(to: string, subject: string, html: string) {
-  console.log("[Auth Email]", { to, subject, html: html.slice(0, 200) });
+  // The body carries one-time reset / verification links: keep them out of production logs.
+  console.log("[Auth Email]", process.env.NODE_ENV === "production" ? { to, subject } : { to, subject, html: html.slice(0, 200) });
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.AUTH_EMAIL_FROM || "Sunchaser <noreply@sunchaser-energy.com>";
   if (!apiKey) return { sent: false, logged: true };
@@ -191,6 +207,15 @@ export async function authenticateUser(
   password: string,
   localDb?: Database
 ) {
+  return (await authenticateUserWithCredentials(username, password, localDb)).user;
+}
+
+/** Same as authenticateUser, also returning the stored password hash the password was checked against (never send it to a client). */
+export async function authenticateUserWithCredentials(
+  username: string,
+  password: string,
+  localDb?: Database
+) {
   const row = await findUserByUsername(username, localDb);
   if (!row || !verifyPassword(password, String(row.password || ""))) {
     throw new UserAuthError("Invalid credentials.", 401);
@@ -221,13 +246,13 @@ export async function authenticateUser(
         phone: row.phone,
       }, localDb);
       const refreshed = await getUserById(row.id, localDb);
-      if (refreshed) return mapUserRow(refreshed);
+      if (refreshed) return { user: mapUserRow(refreshed), passwordHash: String(row.password || ""), sessionEpoch: sessionEpochOf(row) };
     } catch (err) {
       console.error("[Auth] client CRM profile backfill failed", err);
     }
   }
 
-  return mapUserRow(row);
+  return { user: mapUserRow(row), passwordHash: String(row.password || ""), sessionEpoch: sessionEpochOf(row) };
 }
 
 export async function registerUser(
@@ -257,7 +282,7 @@ export async function registerUser(
   if (!canSelfRegister(role)) {
     throw new UserAuthError(`${role} cannot self-register. Contact Super Admin.`);
   }
-  if (await findUserByUsername(username, localDb)) {
+  if (isReservedStaffUsername(username) || (await findUserByUsername(username, localDb))) {
     throw new UserAuthError("Username already taken.");
   }
   if (await findUserByEmail(email, localDb)) {
@@ -322,9 +347,8 @@ export async function registerUser(
     row.customer_id = profile.customerId;
   }
 
-  let verificationUrl: string | null = null;
   if (verificationToken) {
-    verificationUrl = publicAppUrl(`/verify-email?token=${verificationToken}`);
+    const verificationUrl = publicAppUrl(`/verify-email?token=${verificationToken}`);
     await sendAuthEmail(
       email,
       "Verify your Sunchaser account",
@@ -335,7 +359,6 @@ export async function registerUser(
   return {
     user: mapUserRow(row),
     needsApproval,
-    verificationUrl,
     message: needsApproval
       ? "Registration submitted. Verify your email, then wait for Super Admin approval."
       : "Registration complete. You can sign in now.",
@@ -404,7 +427,8 @@ export async function requestPasswordReset(email: string, localDb?: Database) {
     "Reset your Sunchaser password",
     `<p>Reset password: <a href="${resetUrl}">${resetUrl}</a></p><p>Link expires in 2 hours.</p>`
   );
-  return { ok: true, message: "If that email exists, a reset link was sent.", resetUrl };
+  // The link is only ever delivered by e-mail. Returning it here would let anyone who knows an address reset that account.
+  return { ok: true, message: "If that email exists, a reset link was sent." };
 }
 
 export async function resetPasswordWithToken(
@@ -441,7 +465,9 @@ export async function resetPasswordWithToken(
     updated_at: new Date().toISOString(),
   };
   if (isSupabaseActive()) {
-    await getSupabase()!.from("users").update(patch).eq("id", row.id);
+    // Never tell someone their password changed (and that an old, possibly stolen, session is gone) if the write failed.
+    const { error } = await getSupabase()!.from("users").update(patch).eq("id", row.id);
+    if (error) throw new UserAuthError("Could not update the password. Please try again.", 503);
   } else {
     Object.assign(row, patch);
   }
@@ -506,6 +532,7 @@ export async function rejectUser(
     account_status: "Rejected",
     rejected_reason: reason || "Registration rejected by administrator.",
     updated_at: new Date().toISOString(),
+    ...epochBumpPatch(await getUserById(targetUserId, localDb)),
   };
   await updateUserRow(targetUserId, patch, localDb);
   return { ok: true, message: "User rejected." };
@@ -840,6 +867,17 @@ export async function updateUserByAdmin(
 ) {
   await assertSuperAdminActor(actorId, actorUsername, localDb);
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  // Suspending/rejecting/returning to Pending, and the explicit "revoke sessions" option, end every earlier session,
+  // so re-approving the account later does not bring old (possibly copied) tokens back to life.
+  const revokesSessions =
+    body.revokeSessions === true || ["Suspended", "Rejected", "Pending"].includes(String(body.accountStatus || ""));
+  if (revokesSessions) {
+    const current = await getUserById(targetUserId, localDb);
+    if (body.revokeSessions === true && isSupabaseActive() && !("session_epoch" in current)) {
+      throw new UserAuthError("Revoking sessions is not available yet (session revocation migration not applied).", 503);
+    }
+    Object.assign(patch, epochBumpPatch(current));
+  }
   if (body.accountStatus) patch.account_status = body.accountStatus;
   if (body.role) patch.role = body.role;
   if (body.name) patch.name = body.name;
@@ -848,6 +886,15 @@ export async function updateUserByAdmin(
   await updateUserRow(targetUserId, patch, localDb);
   const row = await getUserById(targetUserId, localDb);
   return mapUserRow(row);
+}
+
+/** Ends every session of one user ("sign out of all devices" / admin revoke). Needs the session_epoch migration. */
+export async function revokeAllSessions(userId: string, localDb?: Database) {
+  const row = await getUserById(userId, localDb);
+  if (isSupabaseActive() && !("session_epoch" in row)) {
+    throw new UserAuthError("Signing out of all devices is not available yet.", 503);
+  }
+  await updateUserRow(userId, { ...epochBumpPatch(row), updated_at: new Date().toISOString() }, localDb);
 }
 
 async function updateUserRow(id: string, patch: Record<string, unknown>, localDb?: Database) {

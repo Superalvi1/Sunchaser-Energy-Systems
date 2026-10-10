@@ -182,6 +182,14 @@ export default function TechnicalStaffApp({
     }
   };
 
+  const photoUrlFields: [string, string, (v: string) => void][] = [
+    ["Before photo URL", beforePhotoUrl, setBeforePhotoUrl],
+    ["After photo URL", afterPhotoUrl, setAfterPhotoUrl],
+    ["Inverter screen photo URL", inverterPhotoUrl, setInverterPhotoUrl],
+    ["DB / breaker photo URL", dbPhotoUrl, setDbPhotoUrl],
+    ["Customer signature photo URL (optional)", customerSignatureUrl, setCustomerSignatureUrl],
+  ];
+
   if (selectedJobId && selectedJob) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
@@ -246,18 +254,12 @@ export default function TechnicalStaffApp({
                 placeholder="What you did on site..."
               />
 
-              {[
-                ["Before photo URL", beforePhotoUrl, setBeforePhotoUrl],
-                ["After photo URL", afterPhotoUrl, setAfterPhotoUrl],
-                ["Inverter screen photo URL", inverterPhotoUrl, setInverterPhotoUrl],
-                ["DB / breaker photo URL", dbPhotoUrl, setDbPhotoUrl],
-                ["Customer signature photo URL (optional)", customerSignatureUrl, setCustomerSignatureUrl],
-              ].map(([label, val, setVal]) => (
-                <div key={label as string}>
+              {photoUrlFields.map(([label, val, setVal]) => (
+                <div key={label}>
                   <label className="block text-xs text-slate-400 font-semibold mb-1">{label}</label>
                   <input
-                    value={val as string}
-                    onChange={(e) => (setVal as (v: string) => void)(e.target.value)}
+                    value={val}
+                    onChange={(e) => setVal(e.target.value)}
                     className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-3 text-sm"
                     placeholder="https://..."
                   />

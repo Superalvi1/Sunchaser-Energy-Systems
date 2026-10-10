@@ -44,6 +44,9 @@ export default function CustomerDocumentUploader({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Retrying the same file reuses its upload id, so a response lost after the server saved it
+  // returns the saved document instead of creating a second copy.
+  const uploadIds = useRef(new Map<string, string>());
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const resetSelection = useCallback(() => {
@@ -79,9 +82,14 @@ export default function CustomerDocumentUploader({
 
     try {
       const base64Data = await readFileAsDataUrl(picked, setProgress);
+      const fileKey = `${customerId.trim()}|${documentType}|${picked.name}|${picked.size}|${picked.lastModified}`;
+      if (!uploadIds.current.has(fileKey)) {
+        uploadIds.current.set(fileKey, globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
+      }
       const doc = await uploadAdminCustomerDocumentWithProgress(
         staffUser,
         {
+          clientUploadId: uploadIds.current.get(fileKey),
           customerId: customerId.trim(),
           base64Data,
           fileName: picked.name,

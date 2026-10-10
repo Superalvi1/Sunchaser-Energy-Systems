@@ -1,0 +1,143 @@
+{
+  "_comment": "Required suites fail the build. Tracked suites are known-failing or need infrastructure CI does not have; they run, are reported with their reason, and never turn green silently. A tracked suite that starts passing is flagged so it can be promoted. The 'docker' group runs only in the CI job that provides Docker and a Postgres service; there a skip is a failure.",
+  "required": [
+    {
+      "script": "test:crm-repair",
+      "area": "quotation persistence, payments ledger, uploads signature, session renewal, phone matching"
+    },
+    {
+      "script": "test:authorization",
+      "area": "auth and route permissions"
+    },
+    {
+      "script": "test:phase-1b1",
+      "area": "route policy, AI draft cannot auto-save, 30 chained suites"
+    },
+    {
+      "script": "test:phase-1b2a",
+      "area": "ownership / permissions"
+    },
+    {
+      "script": "test:phase-1b2b",
+      "area": "ownership / permissions"
+    },
+    {
+      "script": "test:phase-1b2c",
+      "area": "ownership / permissions"
+    },
+    {
+      "script": "test:phase-1b3a",
+      "area": "finance ownership"
+    },
+    {
+      "script": "test:phase-1b3b",
+      "area": "finance ownership"
+    },
+    {
+      "script": "test:client-crm-link",
+      "area": "customer / portal linking"
+    },
+    {
+      "script": "test:public-quotation",
+      "area": "public Smart Quote"
+    },
+    {
+      "script": "test:public-lead-gateway",
+      "area": "public lead intake"
+    },
+    {
+      "script": "test:smart-quote-pdf",
+      "area": "Smart Quote PDF"
+    },
+    {
+      "script": "test:quotation-engine",
+      "area": "quotation engine"
+    },
+    {
+      "script": "test:quote-commercial",
+      "area": "quotation pricing"
+    },
+    {
+      "script": "test:invoice-ready-route",
+      "area": "invoices"
+    },
+    {
+      "script": "test:whatsapp-sales-agent",
+      "area": "WhatsApp AI agent approval rules"
+    }
+  ],
+  "tracked": [
+    {
+      "script": "test:marketplace-live-suppliers-phase1",
+      "reason": "pageFingerprint() uses ids only, so a second page with the same ids but newer content is treated as a repeated page; test expects both pages. Production sync logic, left unchanged pending owner decision."
+    },
+    {
+      "script": "test:startup-smoke",
+      "reason": "needs a built dist/server.cjs and database credentials"
+    }
+  ],
+  "docker": [
+    {
+      "script": "test:invoice-atomic-pg",
+      "area": "atomic invoice save against real PostgreSQL (16 and 17)"
+    },
+    {
+      "script": "test:smart-quote-migration",
+      "area": "Smart Quote migration applied for real: idempotent, RLS, lock timeout, rollback, restore"
+    },
+    {
+      "script": "test:marketplace-ws0",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws1",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws2-atomicity",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws3",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws4",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws-map-0",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ceo-auto-import",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-catalogue-manager-pg",
+      "area": "marketplace / database suite that starts its own Postgres container",
+      "tracked": true,
+      "reason": "Fails on a real Docker run with CATALOGUE_RESPONSE_INVALID in catalogueRepository.listProducts (test line 870, >=1100-product pagination). The PR touches no marketplace file; until now the suite only ever printed SKIP. Marketplace is a founding-company module outside this release. Needs its own investigation."
+    },
+    {
+      "script": "test:marketplace-ceo-auto-import-pg",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ceo-auto-import-privileges",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws5",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws6a",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:marketplace-ws6b",
+      "area": "marketplace / database suite that starts its own Postgres container"
+    }
+  ]
+}

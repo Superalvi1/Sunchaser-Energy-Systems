@@ -1029,6 +1029,22 @@ await test("Phase 2A: autoLinkInboundLead links existing CRM lead when duplicate
   assert.equal(link?.linkedEntityId, "lead_crm_existing_456");
 });
 
+await test("Phase 2A: a phone shared by several CRM leads is suggested to staff but never auto-linked", async () => {
+  const repos = createInMemoryWhatsAppInboxRepositories();
+  seedConversation(repos.store, { id: "c_shared" });
+  const services = createWhatsAppInboxServices(repos, {
+    createLead: async () => ({ leadId: "lead_new_999" }),
+    findDuplicate: async () => ({ linkedEntityType: "lead", linkedEntityId: "lead_first_on_number", ambiguous: true }),
+  });
+  const res = await services.crmLinks.autoLinkInboundLead("c_shared");
+  assert.equal(res.leadId, "");
+  assert.equal(res.created, false);
+  assert.equal(await services.crmLinks.getLink("c_shared", admin()), null);
+  // Staff still receive the suggestion when they promote the conversation themselves.
+  const manual = await services.crmLinks.createLeadFromConversation("c_shared", { actor: admin() });
+  assert.equal(manual.kind, "duplicate_suggestion");
+});
+
 await test("Inbound enquiry stays in inbox until staff explicitly promote it", async () => {
   const repos = createInMemoryWhatsAppInboxRepositories();
   seedConversation(repos.store, { id: "c_new" });

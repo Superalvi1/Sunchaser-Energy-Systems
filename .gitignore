@@ -14,3 +14,7 @@ coverage/
 /var/data/whatsapp-web-auth/
 whatsapp-web-auth/
 **/.whatsapp-web-auth/
+
+# CI reports
+ci-report/
+ci-report-docker/

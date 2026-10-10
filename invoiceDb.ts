@@ -37,12 +37,43 @@ import {
 } from "./src/lib/invoiceFromLead.ts";
 import { isInvoiceArchived } from "./src/lib/invoices.ts";
 import { syncCostingSheetFromInvoice } from "./internalCostingDb.js";
+import {
+  balanceAfterLedger,
+  confirmedPaymentId,
+  findRecentDuplicatePayment,
+  ledgerGuardKind,
+  isTransientDbError,
+  ledgerTotal,
+  NON_COLLECTIBLE_INVOICE_STATUSES,
+  normalizeClientRequestId,
+  overpaymentError,
+  parsePaymentAmount,
+  paymentIdFor,
+  paymentRequestConflict,
+  roundMoney,
+  type LedgerGuardKind,
+} from "./server/finance/paymentLedger.ts";
+import { withInvoiceLock } from "./server/finance/invoiceLock.ts";
+
+const PAYMENT_INSERT_ATTEMPTS = 3;
 
 export class InvoiceDbError extends Error {
   statusCode: number;
-  constructor(message: string, statusCode = 400) {
+  /** Stable machine-readable reason for clients (e.g. DUPLICATE_PAYMENT_SUSPECTED, PAYMENT_REQUEST_CONFLICT). */
+  code?: string;
+  constructor(message: string, statusCode = 400, code?: string) {
     super(message);
     this.statusCode = statusCode;
+    if (code) this.code = code;
+  }
+}
+
+/** The optional database guard (scripts/invoice-payments-integrity.sql) refused a write. */
+export class LedgerGuardRejection extends Error {
+  kind: LedgerGuardKind;
+  constructor(kind: LedgerGuardKind, message: string) {
+    super(message);
+    this.kind = kind;
   }
 }
 
@@ -268,6 +299,45 @@ async function loadItems(invoiceId: string, localDb?: Database): Promise<Invoice
     .map(mapItemRow);
 }
 
+function toInvoiceItemRow(invoiceId: string, it: InvoiceLineItem, idx: number) {
+  return {
+    id: it.id || `item-${Date.now()}-${idx}`,
+    invoice_id: invoiceId,
+    sort_order: idx,
+    item_name: it.itemName || it.description,
+    description: it.description || it.itemName || "Item",
+    qty: it.qty,
+    unit: it.unit || "pcs",
+    rate: it.rate,
+    tax_percent: it.taxPercent,
+    discount_amount: it.discountAmount,
+    line_total: it.lineTotal,
+    product_id: it.productId || null,
+    notes: it.notes || null,
+  };
+}
+
+/** Write the new lines before removing old ones, so a failed save never leaves an empty invoice. */
+async function replaceInvoiceItemRows(invoiceId: string, itemRows: ReturnType<typeof toInvoiceItemRow>[]) {
+  const client = getSupabase()!;
+  if (itemRows.length) {
+    const { error: upsertError } = await client.from("invoice_items").upsert(itemRows, { onConflict: "id" });
+    if (upsertError) {
+      console.error(`[InvoiceItems] upsert for ${invoiceId} failed: ${upsertError.code || ""} ${upsertError.message}`);
+      if (isTransientDbError(upsertError)) throw new InvoiceDbError("This invoice is being updated by someone else. Wait a moment and try again.", 503, "INVOICE_BUSY");
+      throw new InvoiceDbError("Invoice items could not be saved. Nothing was changed; try again.", 500, "INVOICE_ITEMS_WRITE_FAILED");
+    }
+  }
+  const keep = itemRows.map((r) => r.id);
+  let removal = client.from("invoice_items").delete().eq("invoice_id", invoiceId);
+  if (keep.length) removal = removal.not("id", "in", `(${keep.map((id) => `"${String(id).replace(/"/g, "")}"`).join(",")})`);
+  const { error: deleteError } = await removal;
+  if (deleteError) {
+    console.error(`[InvoiceItems] cleanup for ${invoiceId} failed: ${deleteError.code || ""} ${deleteError.message}`);
+    throw new InvoiceDbError("Removed invoice items could not be deleted. Reload the invoice and save again.", 500, "INVOICE_ITEMS_WRITE_FAILED");
+  }
+}
+
 async function loadPayments(invoiceId: string, localDb?: Database) {
   if (isSupabaseActive()) {
     const { data, error } = await getSupabase()!
@@ -285,21 +355,89 @@ async function loadPayments(invoiceId: string, localDb?: Database) {
 
 async function recalcPaidTotals(invoiceId: string, localDb?: Database) {
   const payments = await loadPayments(invoiceId, localDb);
-  return payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+  // Rounded: an unrounded float sum stored 201.32999999999998 for a ledger of 201.33.
+  return ledgerTotal(payments);
 }
 
+/** Returns false when a row with the same id already exists (a replayed submission). */
 async function insertPaymentRow(
   payRow: Record<string, unknown>,
   localDb?: Database
-) {
+): Promise<boolean> {
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("invoice_payments").insert(payRow);
+    let error: any = null;
+    for (let attempt = 0; attempt < PAYMENT_INSERT_ATTEMPTS; attempt++) {
+      ({ error } = await getSupabase()!.from("invoice_payments").insert(payRow));
+      if (!error || !isTransientDbError(error)) break;
+      await new Promise((resolve) => setTimeout(resolve, 80 * 2 ** attempt + Math.floor(Math.random() * 60)));
+    }
+    if (error && isTransientDbError(error)) {
+      throw new InvoiceDbError("This invoice is being updated by someone else. Wait a moment and try again; nothing was recorded twice.", 503, "INVOICE_BUSY");
+    }
+    if (error?.code === "23505") return false;
+    if (error?.code === "23503") {
+      throw new InvoiceDbError("Invoice not found. It may have been deleted while the payment was being recorded.", 404, "INVOICE_NOT_FOUND");
+    }
+    const guard = ledgerGuardKind(error);
+    if (guard) throw new LedgerGuardRejection(guard, String(error?.message || guard));
     if (error) throw error;
-  } else {
-    const db = localDb as any;
-    db.invoicePayments = db.invoicePayments || [];
-    db.invoicePayments.push(payRow);
+    return true;
   }
+  const db = localDb as any;
+  db.invoicePayments = db.invoicePayments || [];
+  if (db.invoicePayments.some((r: any) => r.id === payRow.id)) return false;
+  db.invoicePayments.push(payRow);
+  return true;
+}
+
+/** Persist paid/balance/status derived from the payment ledger. */
+async function persistLedgerTotals(
+  invoiceId: string,
+  grandTotal: number,
+  dueDate: string | null | undefined,
+  username: string,
+  localDb?: Database
+) {
+  let paidTotal = 0;
+  // Write, then re-read the ledger: if another request added a payment in between, this write may be stale, so
+  // write again. Every writer does the same, so the last one to finish leaves the header equal to the ledger.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    paidTotal = await recalcPaidTotals(invoiceId, localDb);
+    if (isSupabaseActive()) {
+      // The caller's total may predate a concurrent edit; the stored one is what the balance must follow.
+      const { data: current } = await getSupabase()!.from("invoices").select("grand_total, due_date").eq("id", invoiceId).maybeSingle();
+      if (current) {
+        grandTotal = Number((current as any).grand_total ?? grandTotal);
+        dueDate = (current as any).due_date ?? dueDate;
+      }
+    }
+    const patch = {
+      paid_amount: paidTotal,
+      balance_due: balanceAfterLedger(grandTotal, paidTotal),
+      payment_status: derivePaymentStatus(grandTotal, paidTotal, dueDate ?? null),
+      updated_at: new Date().toISOString(),
+      updated_by: username,
+    };
+    if (isSupabaseActive()) {
+      const { error } = await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
+      if (error && isTransientDbError(error) && attempt < PAYMENT_INSERT_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 80 * 2 ** attempt + Math.floor(Math.random() * 60)));
+        continue;
+      }
+      if (error) {
+        // The raw database message stays in the server log; the client gets a stable code.
+        console.error(`[InvoiceLedger] header refresh of ${invoiceId} failed: ${error.code || ""} ${error.message}`);
+        throw new InvoiceDbError("The payment is recorded, but the invoice balance could not be refreshed. Reload the invoice.", 500, "BALANCE_REFRESH_FAILED");
+      }
+    } else {
+      const db = localDb as any;
+      const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
+      if (idx >= 0) Object.assign(db.invoices[idx], patch);
+      break;
+    }
+    if ((await recalcPaidTotals(invoiceId, localDb)) === paidTotal) break;
+  }
+  return paidTotal;
 }
 
 /** Auto-insert audit row when invoice is saved with paidAmount > 0 and no payments yet. */
@@ -318,7 +456,8 @@ async function ensureInitialPaymentRow(
   if (existing.length > 0) return;
 
   const payRow = {
-    id: `pay-init-${Date.now()}`,
+    // One opening row per invoice, even if two saves race.
+    id: `pay-init-${invoiceId}`,
     invoice_id: invoiceId,
     amount: opts.paidAmount,
     payment_method: coercePaymentMethod(opts.paymentMode),
@@ -329,7 +468,14 @@ async function ensureInitialPaymentRow(
     recorded_by: opts.createdBy,
     created_at: new Date().toISOString(),
   };
-  await insertPaymentRow(payRow, localDb);
+  try {
+    await insertPaymentRow(payRow, localDb);
+  } catch (err) {
+    // The database guard only accepts an opening row as the FIRST ledger row. Losing that race means another request
+    // already recorded payments, so there is nothing left to open.
+    if (err instanceof LedgerGuardRejection && err.kind === "invalid_payment") return;
+    throw err;
+  }
 }
 
 export async function listAdminInvoices(
@@ -407,14 +553,14 @@ export async function loadInvoiceRecordById(
       .select("*")
       .eq("id", invoiceId)
       .single();
-    if (error || !data) throw new InvoiceDbError("Invoice not found.", 404);
+    if (error || !data) throw new InvoiceDbError("Invoice not found.", 404, "INVOICE_NOT_FOUND");
     const items = await loadItems(invoiceId, localDb);
     const payments = await loadPayments(invoiceId, localDb);
     return mapInvoiceRow(data, items, payments);
   }
 
   const row = ((localDb as any)?.invoices || []).find((r: any) => r.id === invoiceId);
-  if (!row) throw new InvoiceDbError("Invoice not found.", 404);
+  if (!row) throw new InvoiceDbError("Invoice not found.", 404, "INVOICE_NOT_FOUND");
   return mapInvoiceRow(row, await loadItems(invoiceId, localDb), await loadPayments(invoiceId, localDb));
 }
 
@@ -630,6 +776,60 @@ export async function createAdminInvoice(
   return created;
 }
 
+/** The version (updated_at) of the invoice the caller's form was loaded from; null when the client sends none. */
+function parseExpectedVersion(body: Record<string, unknown>): string | null {
+  const raw = body.expectedUpdatedAt ?? body.expected_updated_at;
+  if (raw === undefined || raw === null || raw === "") return null;
+  const text = String(raw);
+  if (Number.isNaN(Date.parse(text))) {
+    throw new InvoiceDbError("expectedUpdatedAt is not a valid timestamp.", 400, "INVOICE_VERSION_INVALID");
+  }
+  return text;
+}
+
+/**
+ * Saves header + lines + ledger-derived totals through the invoice_save_atomic database function: one transaction,
+ * the invoice row locked, optional stale-version check, header/lines consistency verified before commit.
+ * Returns "unavailable" when the function is not installed so the previous path can run.
+ */
+async function saveInvoiceAtomically(
+  invoiceId: string,
+  expectedVersion: string | null,
+  patch: Record<string, unknown>,
+  itemRows: ReturnType<typeof toInvoiceItemRow>[] | null
+): Promise<"saved" | "unavailable"> {
+  const { updated_at: _u, balance_due: _b, payment_status: _p, ...header } = patch;
+  const { error } = await getSupabase()!.rpc("invoice_save_atomic", {
+    p_invoice_id: invoiceId,
+    p_expected_updated_at: expectedVersion,
+    p_patch: header,
+    p_items: itemRows,
+  });
+  if (!error) return "saved";
+  const message = String(error.message || "");
+  const code = String(error.code || "");
+  if (code === "PGRST202" || code === "42883" || /could not find the function/i.test(message)) return "unavailable";
+  if (message.startsWith("invoice_conflict")) {
+    throw new InvoiceDbError("This invoice was changed by someone else after you opened it. Nothing was saved; reload the invoice and apply your change again.", 409, "INVOICE_CONFLICT");
+  }
+  if (message.startsWith("invoice_busy") || isTransientDbError(error)) {
+    throw new InvoiceDbError("This invoice is being updated by someone else. Wait a moment and try again.", 503, "INVOICE_BUSY");
+  }
+  if (message.startsWith("invoice_total_below_payments")) {
+    throw new InvoiceDbError("The invoice total cannot be lower than payments already recorded. Refresh the invoice and review its lines.", 422, "TOTAL_BELOW_PAYMENTS");
+  }
+  if (message.startsWith("invoice_item_id_conflict")) {
+    throw new InvoiceDbError("A line item id belongs to a different invoice. Reload the invoice and try again.", 409, "INVOICE_ITEM_ID_CONFLICT");
+  }
+  if (message.startsWith("invoice_not_found")) throw new InvoiceDbError("Invoice not found.", 404, "INVOICE_NOT_FOUND");
+  if (message.startsWith("invoice_patch_invalid")) throw new InvoiceDbError("The invoice change was malformed. Nothing was saved.", 400, "INVOICE_PATCH_INVALID");
+  console.error(`[InvoiceEdit] atomic save of ${invoiceId} failed: ${code} ${message}`);
+  if (message.startsWith("invoice_totals_inconsistent")) {
+    throw new InvoiceDbError("The invoice lines and totals did not agree, so nothing was saved. Reload the invoice and try again.", 500, "INVOICE_TOTALS_INCONSISTENT");
+  }
+  throw new InvoiceDbError("The invoice change could not be saved. Nothing was changed; reload the invoice and try again.", 500, "INVOICE_WRITE_FAILED");
+}
+
 export async function updateAdminInvoice(
   actor: RequestActor,
   invoiceId: string,
@@ -669,39 +869,68 @@ export async function updateAdminInvoice(
     localDb = localDbOrInvoiceId as Database | undefined;
   }
 
+  // Edits and payments on one invoice queue behind each other inside this process.
+  return withInvoiceLock(invoiceId, () => updateAdminInvoiceLocked(actor, invoiceId, body, localDb));
+}
+
+async function updateAdminInvoiceLocked(
+  actor: RequestActor,
+  invoiceId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+): Promise<InvoiceRecord> {
   const username = actor.username;
   const existing = await getAdminInvoiceById(actor, invoiceId, localDb);
 
   const rawItems = body.items as InvoiceLineItem[] | undefined;
+  let itemRows: ReturnType<typeof toInvoiceItemRow>[] | null = null;
   let patch: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
     updated_by: username,
   };
 
-  if (rawItems) {
-    const totals = computeInvoiceTotals(
-      rawItems,
-      Number(body.discountAmount ?? body.discount_amount ?? 0)
+  // Recorded payments decide what was paid; a stale form value must not overwrite the ledger.
+  const ledger = await loadPayments(invoiceId, localDb);
+  const totals = rawItems
+    ? computeInvoiceTotals(rawItems, Number(body.discountAmount ?? body.discount_amount ?? 0))
+    : null;
+  const grandTotal = totals ? totals.grandTotal : existing.grandTotal;
+  const requestedPaid = body.paidAmount !== undefined || body.paid_amount !== undefined
+    ? roundMoney(Number(body.paidAmount ?? body.paid_amount ?? 0))
+    : existing.paidAmount;
+  const paidAmount = ledger.length ? ledgerTotal(ledger) : requestedPaid;
+  // Only an edit that changes the total or paid amount is checked; legacy overpaid invoices stay editable.
+  const changesMoney = grandTotal !== existing.grandTotal || (!ledger.length && requestedPaid !== existing.paidAmount);
+  if (paidAmount > grandTotal && changesMoney) {
+    throw new InvoiceDbError(
+      ledger.length
+        ? `The invoice total (PKR ${grandTotal.toLocaleString("en-PK")}) cannot be lower than payments already recorded (PKR ${paidAmount.toLocaleString("en-PK")}).`
+        : "Paid amount cannot exceed the invoice total.",
+      422,
+      ledger.length ? "TOTAL_BELOW_PAYMENTS" : "PAID_EXCEEDS_TOTAL"
     );
-    const paidAmount =
-      body.paidAmount !== undefined || body.paid_amount !== undefined
-        ? Number(body.paidAmount ?? body.paid_amount ?? 0)
-        : existing.paidAmount;
-    const balanceDue = Math.max(0, totals.grandTotal - paidAmount);
+  }
+  if (totals || body.paidAmount !== undefined || body.paid_amount !== undefined) {
+    patch = {
+      ...patch,
+      paid_amount: paidAmount,
+      balance_due: balanceAfterLedger(grandTotal, paidAmount),
+      payment_status: derivePaymentStatus(
+        grandTotal,
+        paidAmount,
+        sanitizeDate(body.dueDate ?? body.due_date ?? existing.dueDate),
+        body.paymentStatus as any
+      ),
+    };
+  }
+
+  if (rawItems && totals) {
     patch = {
       ...patch,
       subtotal: totals.subtotal,
       discount_amount: totals.discountAmount,
       tax_amount: totals.taxAmount,
       grand_total: totals.grandTotal,
-      paid_amount: paidAmount,
-      balance_due: balanceDue,
-      payment_status: derivePaymentStatus(
-        totals.grandTotal,
-        paidAmount,
-        sanitizeDate(body.dueDate ?? body.due_date),
-        body.paymentStatus as any
-      ),
     };
 
     const amountWords =
@@ -709,45 +938,15 @@ export async function updateAdminInvoice(
       amountInWordsPkr(totals.grandTotal);
     patch.amount_in_words = amountWords;
 
-    const itemRows = totals.items.map((it, idx) => ({
-      id: it.id || `item-${Date.now()}-${idx}`,
-      invoice_id: invoiceId,
-      sort_order: idx,
-      item_name: it.itemName || it.description,
-      description: it.description || it.itemName || "Item",
-      qty: it.qty,
-      unit: it.unit || "pcs",
-      rate: it.rate,
-      tax_percent: it.taxPercent,
-      discount_amount: it.discountAmount,
-      line_total: it.lineTotal,
-      product_id: it.productId || null,
-      notes: it.notes || null,
-    }));
+    itemRows = totals.items.map((it, idx) => toInvoiceItemRow(invoiceId, it, idx));
 
-    if (isSupabaseActive()) {
-      await getSupabase()!.from("invoice_items").delete().eq("invoice_id", invoiceId);
-      if (itemRows.length) await getSupabase()!.from("invoice_items").insert(itemRows);
-    } else {
+    if (!isSupabaseActive()) {
       const db = localDb as any;
       db.invoiceItems = (db.invoiceItems || []).filter(
         (r: any) => (r.invoice_id || r.invoiceId) !== invoiceId
       );
       db.invoiceItems.push(...itemRows);
     }
-  }
-
-  if (body.paidAmount !== undefined || body.paid_amount !== undefined) {
-    const paidAmount = Number(body.paidAmount ?? body.paid_amount ?? 0);
-    const balanceDue = Math.max(0, Math.round((existing.grandTotal - paidAmount) * 100) / 100);
-    patch.paid_amount = paidAmount;
-    patch.balance_due = balanceDue;
-    patch.payment_status = derivePaymentStatus(
-      existing.grandTotal,
-      paidAmount,
-      sanitizeDate(body.dueDate ?? body.due_date ?? existing.dueDate),
-      body.paymentStatus as any
-    );
   }
 
   if (!existing.customerId) {
@@ -817,9 +1016,45 @@ export async function updateAdminInvoice(
     );
   }
 
-  if (isSupabaseActive()) {
+  const atomic = isSupabaseActive()
+    ? await saveInvoiceAtomically(invoiceId, parseExpectedVersion(body), patch, itemRows)
+    : "local";
+  if (atomic === "saved") {
+    // Header, lines and ledger totals were written in one database transaction (scripts/invoice-save-atomic.sql).
+  } else if (isSupabaseActive()) {
+    // The function is not installed: previous, non-atomic path.
+    if (itemRows) await replaceInvoiceItemRows(invoiceId, itemRows);
     const { error } = await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
-    if (error) throw error;
+    if (error) {
+      if (ledgerGuardKind(error) === "total_below_payments") {
+        // The lines were already replaced above; put the previous lines back so lines and total still agree.
+        if (itemRows) {
+          try {
+            await replaceInvoiceItemRows(invoiceId, existing.items.map((it, idx) => toInvoiceItemRow(invoiceId, it, idx)));
+          } catch (restoreErr: any) {
+            console.error(`[InvoiceEdit] could not restore lines of ${invoiceId} after a refused edit: ${restoreErr?.message || restoreErr}`);
+          }
+        }
+        throw new InvoiceDbError(
+          "The invoice total cannot be lower than payments already recorded. A payment was recorded while this edit was being saved; refresh the invoice and review its lines.",
+          422,
+          "TOTAL_BELOW_PAYMENTS"
+        );
+      }
+      if (isTransientDbError(error)) {
+        throw new InvoiceDbError("This invoice is being updated by someone else. Wait a moment and try again.", 503, "INVOICE_BUSY");
+      }
+      throw error;
+    }
+    // A payment recorded after the ledger was read above would leave a stale paid amount in this write.
+    // Only when the ledger HAS rows: a legacy invoice with a paid amount but no rows gets its opening row below, and
+    // re-summing an empty ledger here used to overwrite that paid amount with 0 (header 0, ledger 50,000).
+    if (patch.paid_amount !== undefined) {
+      const after = await loadPayments(invoiceId, localDb);
+      if (after.length > 0 && ledgerTotal(after) !== roundMoney(Number(patch.paid_amount))) {
+        await persistLedgerTotals(invoiceId, grandTotal, sanitizeDate(patch.due_date ?? existing.dueDate), username, localDb);
+      }
+    }
   } else {
     const db = localDb as any;
     const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
@@ -861,7 +1096,7 @@ export async function recordInvoicePayment(
   invoiceId: string,
   body: Record<string, unknown>,
   localDb?: Database
-): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord }>;
+): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord; replayed: boolean }>;
 export async function recordInvoicePayment(
   userId: string,
   username: string,
@@ -869,7 +1104,7 @@ export async function recordInvoicePayment(
   invoiceId: string,
   body: Record<string, unknown>,
   localDb?: Database
-): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord }>;
+): Promise<{ payment: Record<string, unknown>; invoice: InvoiceRecord; replayed: boolean }>;
 export async function recordInvoicePayment(
   actorOrUserId: RequestActor | string,
   invoiceIdOrUsername: string,
@@ -895,17 +1130,85 @@ export async function recordInvoicePayment(
     localDb = localDbOrInvoiceId as Database | undefined;
   }
 
+  // One payment at a time per invoice inside this process; the database guard covers other processes.
+  return withInvoiceLock(invoiceId, () => recordInvoicePaymentLocked(actor, invoiceId, body, localDb));
+}
+
+async function recordInvoicePaymentLocked(
+  actor: RequestActor,
+  invoiceId: string,
+  body: Record<string, unknown>,
+  localDb?: Database
+) {
   const username = actor.username;
   await FinanceOwnershipResolver.assertInvoiceModuleOwnedByActor(actor, invoiceId, localDb);
-  await getAdminInvoiceById(actor, invoiceId, localDb);
-  const amount = Number(body.amount || 0);
-  if (amount <= 0) throw new InvoiceDbError("Payment amount must be positive.");
+  const before = await getAdminInvoiceById(actor, invoiceId, localDb);
+  const invoiceStatus = String(before.invoiceStatus || "").toLowerCase();
+  if ((NON_COLLECTIBLE_INVOICE_STATUSES as readonly string[]).includes(invoiceStatus)) {
+    throw new InvoiceDbError(`This invoice is marked ${invoiceStatus} and cannot take payments.`, 409, "INVOICE_NOT_COLLECTIBLE");
+  }
+  const amount = parsePaymentAmount(body.amount);
+  if (amount === null || !(amount > 0)) throw new InvoiceDbError("Payment amount must be positive.", 400, "PAYMENT_INVALID");
+
+  const clientRequestId = normalizeClientRequestId(body.clientRequestId);
+  // Legacy clients (no request id) are protected by the duplicate guard; the user can confirm a genuine second payment.
+  const confirmDuplicate = !clientRequestId && body.confirmDuplicate === true;
+  const paymentMethod = coercePaymentMethod((body.paymentMethod || body.payment_method) as string | undefined);
+  const paymentDate = sanitizeDate(body.paymentDate ?? body.payment_date) ?? new Date().toISOString().slice(0, 10);
+  const referenceNumber = String(body.referenceNumber || body.reference_number || "").trim() || null;
+  const notes = String(body.notes || "").trim() || null;
+  const nowMs = Date.now();
+  const payId = confirmDuplicate
+    ? confirmedPaymentId()
+    : paymentIdFor({ invoiceId, clientRequestId, amount, paymentMethod, paymentDate, referenceNumber, notes, recordedBy: username, nowMs });
+  // Only fields the caller sent are compared when a request id is reused, so a leaner retry is still a retry.
+  const sent = (...keys: string[]) => keys.some((k) => body[k] !== undefined && body[k] !== null);
+  const requested = {
+    amount,
+    paymentMethod: sent("paymentMethod", "payment_method") ? paymentMethod : undefined,
+    paymentDate: sanitizeDate(body.paymentDate ?? body.payment_date) ? paymentDate : undefined,
+    referenceNumber: sent("referenceNumber", "reference_number") ? referenceNumber : undefined,
+    notes: sent("notes") ? notes : undefined,
+  };
+
+  // Legacy invoices may carry a paid amount without ledger rows; record it before adding more.
+  await ensureInitialPaymentRow(invoiceId, { paidAmount: before.paidAmount, paymentMode: before.paymentMode, invoiceDate: before.invoiceDate, createdBy: username }, localDb);
+  const ledger = await loadPayments(invoiceId, localDb);
+  const duplicateSuspected = () =>
+    new InvoiceDbError(
+      "An identical payment was recorded moments ago. Refresh the invoice before recording it again, or add a reference to tell the payments apart.",
+      409,
+      "DUPLICATE_PAYMENT_SUSPECTED"
+    );
+  const replay = async () => {
+    const existing = (await loadPayments(invoiceId, localDb)).find((p) => p.id === payId);
+    if (!clientRequestId) throw duplicateSuspected();
+    if (!existing) {
+      throw new InvoiceDbError("The earlier attempt could not be confirmed. Refresh the invoice to see what was recorded before trying again.", 409, "PAYMENT_NOT_CONFIRMED");
+    }
+    // A request id names one payment. Reusing it for a different payment is a conflict, never a silent success.
+    const conflict = paymentRequestConflict(existing, requested);
+    if (conflict) {
+      throw new InvoiceDbError(
+        `This payment request id was already used for a different payment (${conflict}). Refresh the invoice to see what was recorded; to record this payment as well, submit it again as a new entry.`,
+        409,
+        "PAYMENT_REQUEST_CONFLICT"
+      );
+    }
+    await persistLedgerTotals(invoiceId, before.grandTotal, before.dueDate, username, localDb);
+    return { payment: existing as Record<string, unknown>, invoice: await getAdminInvoiceById(actor, invoiceId, localDb), replayed: true };
+  };
+  if (ledger.some((p) => p.id === payId)) return replay();
+  if (!clientRequestId && !confirmDuplicate && findRecentDuplicatePayment(ledger, { amount, paymentMethod, paymentDate, referenceNumber, notes, recordedBy: username, nowMs })) {
+    throw duplicateSuspected();
+  }
+  const overpaid = overpaymentError(amount, before.grandTotal, ledgerTotal(ledger));
+  if (overpaid) throw new InvoiceDbError(overpaid, 422, "PAYMENT_EXCEEDS_BALANCE");
 
   let receiptUrl = body.receiptUrl || body.receipt_url || null;
   let receiptStoragePath = body.receiptStoragePath || body.receipt_storage_path || null;
   if (body.base64Receipt && body.fileName) {
-    const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
-    const cid = inv.customerId || "general";
+    const cid = before.customerId || "general";
     const up = await uploadFileToCustomerStorage(
       cid,
       String(body.base64Receipt),
@@ -916,47 +1219,46 @@ export async function recordInvoicePayment(
     receiptStoragePath = up.storagePath;
   }
 
-  const payId = `pay-${Date.now()}`;
   const payRow = {
     id: payId,
     invoice_id: invoiceId,
     amount,
-    payment_method: coercePaymentMethod(
-      (body.paymentMethod || body.payment_method) as string | undefined
-    ),
-    payment_date:
-      sanitizeDate(body.paymentDate ?? body.payment_date) ??
-      new Date().toISOString().slice(0, 10),
-    reference_number: body.referenceNumber || body.reference_number || null,
+    payment_method: paymentMethod,
+    payment_date: paymentDate,
+    reference_number: referenceNumber,
     receipt_url: receiptUrl,
     receipt_storage_path: receiptStoragePath,
-    notes: body.notes || null,
+    notes,
     recorded_by: username,
-    created_at: new Date().toISOString(),
+    created_at: new Date(nowMs).toISOString(),
   };
 
-  await insertPaymentRow(payRow, localDb);
-
-  const paidTotal = await recalcPaidTotals(invoiceId, localDb);
-  const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
-  const balanceDue = Math.max(0, inv.grandTotal - paidTotal);
-  const paymentStatus = derivePaymentStatus(inv.grandTotal, paidTotal, inv.dueDate);
-
-  const patch = {
-    paid_amount: paidTotal,
-    balance_due: balanceDue,
-    payment_status: paymentStatus,
-    updated_at: new Date().toISOString(),
-    updated_by: username,
-  };
-
-  if (isSupabaseActive()) {
-    await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
-  } else {
-    const db = localDb as any;
-    const idx = (db.invoices || []).findIndex((r: any) => r.id === invoiceId);
-    if (idx >= 0) Object.assign(db.invoices[idx], patch);
+  let inserted: boolean;
+  try {
+    inserted = await insertPaymentRow(payRow, localDb);
+  } catch (err) {
+    if (!(err instanceof LedgerGuardRejection)) throw err;
+    // A retry of a stored payment can be refused when its first copy used up the balance: that is a replay.
+    if ((await loadPayments(invoiceId, localDb)).some((p) => p.id === payId)) return replay();
+    if (err.kind === "overpayment") {
+      // Another request got in first. Re-read so the message states the balance as it is now.
+      const fresh = await loadInvoiceRecordById(invoiceId, localDb);
+      throw new InvoiceDbError(
+        overpaymentError(amount, fresh.grandTotal, ledgerTotal(fresh.payments || [])) ||
+          "This payment would take the invoice above its total. Refresh the invoice and try again.",
+        422,
+        "PAYMENT_EXCEEDS_BALANCE"
+      );
+    }
+    if (err.kind === "not_collectible") throw new InvoiceDbError("This invoice cannot take payments in its current state.", 409, "INVOICE_NOT_COLLECTIBLE");
+    if (err.kind === "opening_balance_missing") {
+      throw new InvoiceDbError("This invoice already shows a paid amount that has no payment row yet. Refresh the invoice and try again.", 409, "OPENING_BALANCE_MISSING");
+    }
+    throw new InvoiceDbError("Payment amount must be positive.", 400, "PAYMENT_INVALID");
   }
+  if (!inserted) return replay();
+
+  const paidTotal = await persistLedgerTotals(invoiceId, before.grandTotal, before.dueDate, username, localDb);
 
   try {
     await syncCostingSheetFromInvoice(invoiceId, paidTotal, localDb);
@@ -964,7 +1266,7 @@ export async function recordInvoicePayment(
     console.warn("[CostingPaymentSync]", err?.message || err);
   }
 
-  return { payment: payRow, invoice: await getAdminInvoiceById(actor, invoiceId, localDb) };
+  return { payment: payRow, invoice: await getAdminInvoiceById(actor, invoiceId, localDb), replayed: false };
 }
 
 export async function fetchCustomerPortalInvoicesMe(
@@ -1232,7 +1534,8 @@ export async function bulkDeleteAdminInvoices(
       await deleteAdminInvoice(actor, id, { confirmText: "DELETE" }, localDb);
       deleted.push(id);
     } catch (err: any) {
-      failed.push({ id, error: err?.message || "Delete failed." });
+      if (!(err instanceof InvoiceDbError) && !(err instanceof StaffPortalAuthError)) console.error(`[InvoiceDelete] ${id}: ${err?.code || ""} ${err?.message || err}`);
+      failed.push({ id, error: err instanceof InvoiceDbError || err instanceof StaffPortalAuthError ? err.message : "Delete failed." });
     }
   }
   return { deleted, failed };
@@ -1286,6 +1589,9 @@ export async function archiveAdminInvoice(
 
   if (isSupabaseActive()) {
     const { error } = await getSupabase()!.from("invoices").update(patch).eq("id", invoiceId);
+    if (error && isTransientDbError(error)) {
+      throw new InvoiceDbError("This invoice is being updated by someone else. Wait a moment and try again.", 503, "INVOICE_BUSY");
+    }
     if (error) throw error;
   } else {
     const db = localDb as any;
@@ -1341,6 +1647,15 @@ export async function deleteAdminInvoice(
     localDb = localDbOrInvoiceId as Database | undefined;
   }
 
+  return withInvoiceLock(invoiceId, () => deleteAdminInvoiceLocked(actor, invoiceId, body, localDb));
+}
+
+async function deleteAdminInvoiceLocked(
+  actor: RequestActor,
+  invoiceId: string,
+  body: { confirmText?: string },
+  localDb?: Database
+): Promise<{ ok: boolean; message: string }> {
   if (actor.role !== "Super Admin") {
     throw new StaffPortalAuthError("Only Super Admin can permanently delete invoices.", 403);
   }
@@ -1351,10 +1666,10 @@ export async function deleteAdminInvoice(
   const inv = await getAdminInvoiceById(actor, invoiceId, localDb);
   const payments = await loadPayments(invoiceId, localDb);
   if (payments.length > 0) {
-    throw new InvoiceDbError("Cannot delete an invoice that has payment records.", 409);
+    throw new InvoiceDbError("Cannot delete an invoice that has payment records.", 409, "INVOICE_HAS_PAYMENTS");
   }
   if (Number(inv.paidAmount || 0) > 0) {
-    throw new InvoiceDbError("Cannot delete an invoice with recorded payments.", 409);
+    throw new InvoiceDbError("Cannot delete an invoice with recorded payments.", 409, "INVOICE_HAS_PAYMENTS");
   }
 
   try {
@@ -1364,9 +1679,22 @@ export async function deleteAdminInvoice(
   }
 
   if (isSupabaseActive()) {
-    await getSupabase()!.from("invoice_items").delete().eq("invoice_id", invoiceId);
-    await getSupabase()!.from("invoice_payments").delete().eq("invoice_id", invoiceId);
-    const { error } = await getSupabase()!.from("invoices").delete().eq("id", invoiceId);
+    // No unconditional payment delete here: it would also destroy a payment recorded after the check above.
+    // The invoice goes first so a refusal (the database guard in scripts/invoice-payments-integrity.sql rejects
+    // the delete when a payment slipped in) leaves its lines intact; the foreign key cascades the lines otherwise.
+    const client = getSupabase()!;
+    let { error } = await client.from("invoices").delete().eq("id", invoiceId);
+    if (!ledgerGuardKind(error) && error?.code === "23503") {
+      // Schemas without ON DELETE CASCADE on invoice_items still need the lines removed first.
+      await client.from("invoice_items").delete().eq("invoice_id", invoiceId);
+      ({ error } = await client.from("invoices").delete().eq("id", invoiceId));
+    }
+    if (ledgerGuardKind(error) === "has_payments") {
+      throw new InvoiceDbError("Cannot delete an invoice that has payment records.", 409, "INVOICE_HAS_PAYMENTS");
+    }
+    if (error && isTransientDbError(error)) {
+      throw new InvoiceDbError("This invoice is being updated by someone else. Wait a moment and try again.", 503, "INVOICE_BUSY");
+    }
     if (error) throw error;
   } else {
     const db = localDb as any;

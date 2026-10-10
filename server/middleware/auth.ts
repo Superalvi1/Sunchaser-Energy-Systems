@@ -4,6 +4,7 @@ import {
   actorToLegacyUser,
   hydrateActorFromJwt,
   readBearerToken,
+  type AuthSessionInfo,
   type RequestActor,
 } from "./actor.ts";
 import { isMigratedProtectedRoute, isProtectedApiPath } from "./routePolicy.ts";
@@ -27,8 +28,9 @@ type RequireAuthDeps = {
   resolveLocalDb: () => Database;
 };
 
-function applyActorToRequest(req: Request, actor: RequestActor): void {
+function applyActorToRequest(req: Request, actor: RequestActor, session?: AuthSessionInfo): void {
   req.actor = actor;
+  req.authSession = session;
   req.user = actorToLegacyUser(actor);
 }
 
@@ -60,10 +62,11 @@ export function createRequireAuth(deps: RequireAuthDeps) {
         res.status((hydrated as any).status).json({ error: (hydrated as any).error });
         return;
       }
-      applyActorToRequest(req, hydrated.actor);
+      applyActorToRequest(req, hydrated.actor, hydrated.session);
       next();
     } catch {
-      sendUnauthorized(res);
+      // Could not read the session/account store: fail closed with a retryable status, not a sign-out.
+      res.status(503).json({ error: "Authentication service temporarily unavailable." });
     }
   };
 }

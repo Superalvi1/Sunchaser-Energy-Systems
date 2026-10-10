@@ -9,6 +9,9 @@ export function normalizeApiPathname(pathname: string): string {
 
 const CUSTOMER_ALLOWED_EXACT = new Set([
   "/api/auth/me",
+  "/api/auth/refresh",
+  "/api/auth/logout",
+  "/api/auth/logout-all",
   "/api/customer-portal",
   "/api/ai/chat",
   "/api/learning",

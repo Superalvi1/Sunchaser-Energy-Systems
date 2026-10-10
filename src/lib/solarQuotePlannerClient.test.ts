@@ -58,18 +58,7 @@ check(
   })()
 );
 
-check(
-  "SalesTeamApp AI apply handler does not auto-save quotation",
-  (() => {
-    const source = readFileSync(join(__dirname, "../components/SalesTeamApp.tsx"), "utf8");
-    const handlerChunk = source.slice(source.indexOf("handleApplyAiQuoteDraft"), source.indexOf("handleApplyAiQuoteDraft") + 600);
-    return (
-      handlerChunk.includes("setBoqRows") &&
-      !handlerChunk.includes("handleSaveQuote") &&
-      !handlerChunk.includes("on创造Quote") &&
-      !handlerChunk.includes("create-quote")
-    );
-  })()
-);
+// "AI apply handler does not auto-save" used to be a 600-character source slice that broke when the handler grew.
+// It is now enforced by src/lib/aiDraftNoAutoSave.test.ts (parses the real handler, allowlists its calls).
 
 console.log(`\nsolarQuotePlannerClient tests: ${pass} passed`);

@@ -22,6 +22,7 @@ import {
   type ServiceMaintenanceSummary,
 } from "../lib/clientPortalService";
 import { NO_DATA, displayOrNoData } from "../lib/clientPortalDisplay";
+import { pickOption } from "../lib/optionGuards";
 
 interface ClientPortalServiceProps {
   user: User;
@@ -37,7 +38,7 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
   const [submitting, setSubmitting] = useState(false);
   const [serviceType, setServiceType] = useState<(typeof SERVICE_TYPES)[number]>("Cleaning");
   const [preferredDate, setPreferredDate] = useState("");
-  const [preferredTime, setPreferredTime] = useState(SERVICE_TIME_SLOTS[0]);
+  const [preferredTime, setPreferredTime] = useState<(typeof SERVICE_TIME_SLOTS)[number]>(SERVICE_TIME_SLOTS[0]);
   const [notes, setNotes] = useState("");
   const [deliveryPhotos, setDeliveryPhotos] = useState<any[]>([]);
   const [handoverComplete, setHandoverComplete] = useState(false);
@@ -155,7 +156,10 @@ export default function ClientPortalService({ user }: ClientPortalServiceProps) 
             <label className="text-[10px] font-mono text-slate-500 uppercase">Preferred time</label>
             <select
               value={preferredTime}
-              onChange={(e) => setPreferredTime(e.target.value)}
+              onChange={(e) => {
+                const next = pickOption(SERVICE_TIME_SLOTS, e.target.value);
+                if (next) setPreferredTime(next);
+              }}
               className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
             >
               {SERVICE_TIME_SLOTS.map((slot) => (
