@@ -113,11 +113,38 @@ Rollback: redeploy the previous Railway deployment (no schema change yet).
 | M4 | `invoice-save-atomic.sql` | function exists, not executable by anon/authenticated; edit one test invoice from two tabs: second save answers 409 | `invoice-save-atomic-rollback.sql` |
 Each applies in milliseconds (largest measured 54 ms) and gives up after a 5 s lock timeout without changing anything. No restart is needed; the app notices M1, M2 and M4 by itself.
 
-### Step 6. Credential remediation (G2) — private sheet, not in this repository
-Order, access needed and downtime window are in the owner's private action sheet. The plan here only fixes the order relative to the rest: after Steps 2-5, before any Android release.
+### Step 6. Credential remediation (G2) — the owner's private action sheet carries the console-by-console details and the tick-boxes
+Do it after Step 5 so that a rotation problem is never confused with a deployment problem. Order matters:
 
-### Step 7. Android (G5) — private sheet
-Debug and release APK/AAB from CI are all signed with the key that was committed to the repository; no release goes to Play with it. Which key Play holds is a Play Console fact (App integrity page).
+| # | Item | How | Effect |
+|---|---|---|---|
+| 6a | Make the repository private (or keep it public and treat everything in it as burned) | GitHub settings | Does not revoke anything already copied |
+| 6b | Supabase projects named in `.env.production` and the tracked archive | Revoke or rotate service-role and anon keys, JWT secrets and database passwords in every project that ever held them; delete projects that are no longer used | Kills any live copy of those keys |
+| 6c | AI provider keys (Gemini, others) used by the CRM and in the archive | Revoke in each provider console; set new keys on Railway | AI features pause until set |
+| 6d | `JWT_SECRET` | New value on the CRM service | **Every user must sign in again** (a feature here, not a fault) |
+| 6e | `RAILWAY_OBJECT_PROXY_SECRET` | New value; put the old one in `RAILWAY_OBJECT_PROXY_SECRET_PREVIOUS` for a short overlap so existing signed document links keep working, then remove it | Links signed with the old secret stop working after the overlap |
+| 6f | `PUBLIC_LEAD_API_KEY`, `WHATSAPP_APP_SECRET`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, Meta tokens | Rotate in Meta and Railway together | Short WhatsApp interruption |
+| 6g | Railway S3 bucket and Postgres credentials | Rotate if any copy was shared | Brief reconnect |
+| 6h | Accounts created by the old verification scripts, default staff accounts seeded from `database.json` | Check the production `users` table for usernames `admin`, `manager`, `sales`, `surveyor`, `installer`, `admin2`, `inventory`, `support`, `technician`, `allauddin`, `raza` and for the 3-character seed password; disable or reset any that exist | Closes known default-credential paths |
+| 6i | Remove tracked secrets and data from `HEAD` (`.env.production`, `sunchaser-crm.zip`, `database.json`, `backups/*.json`, the keystore) | Normal commit; a history purge is a separate, optional G6 step (see the owner's private sheet) | Does not substitute for 6b to 6h |
+
+For every item: record who rotated it, when, and which service was restarted. Do not paste values into chat or tickets.
+
+### Step 7. Android: signing and testing (G5 for any Play action)
+Fact: all artifacts of the release-candidate build were signed with the committed keystore,
+SHA-256 `F6:74:51:24:CD:66:E3:83:89:3A:C7:98:78:C0:8F:65:B5:4B:BA:B3:2C:A1:DB:24:B3:5D:0C:90:36:35:D8:94` (read from the build log).
+The artifact **listing** (names, sizes, digests) is public without login; the repository is public, so treat the downloads as obtainable by any GitHub account.
+1. In Play Console, App integrity: compare the **app signing** and **upload** certificate fingerprints with the value above. The decision tree is in
+   the signing plan (the owner's private signing notes in the signing patch, kept in the working notes until applied).
+   - Likely case (repo wording suggests it): the committed key is the **upload** key. Recovery: create a new upload key, request an upload-key reset. Installed apps are unaffected.
+   - If it is the **app signing** key, or the app is not on Play, or Play App Signing is off: stop and decide, those cases are materially worse.
+2. Do not create a new listing or a new package name, and do not generate a new key without a Play-approved reset.
+3. Move signing to GitHub environment secrets (fail-closed Gradle config in the signing plan) once the new upload key exists; delete the keystore from `HEAD`.
+4. Test builds (internal testing track only, after the new upload key is accepted) on at least one physical Android 13+ device and one older device:
+   open the app 3 times (stays signed in), sign out then reopen (must show sign-in), sign out offline (local state cleared), sign in as two roles,
+   anonymous Smart Quote, staff link quote, create an invoice and record a payment twice with the same request (one row), upload and download a document,
+   rotate the phone, kill the app mid-upload.
+5. Release to production tracks only after Steps 1 to 6 and the device checklist pass (G5).
 
 ### Step 8. After deployment
 Watch error rate and `/health`. Re-run `invoice-payments-verify.sql` after the first real invoices. Open items: Section 3.
