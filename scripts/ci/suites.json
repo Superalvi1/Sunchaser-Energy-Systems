@@ -117,7 +117,7 @@
       "script": "test:marketplace-catalogue-manager-pg",
       "area": "marketplace / database suite that starts its own Postgres container",
       "tracked": true,
-      "reason": "Fails on a real Docker run with CATALOGUE_RESPONSE_INVALID in catalogueRepository.listProducts (test line 870, >=1100-product pagination). The PR touches no marketplace file; until now the suite only ever printed SKIP. Marketplace is a founding-company module outside this release. Needs its own investigation."
+      "reason": "Failed with CATALOGUE_RESPONSE_INVALID ('list row shape invalid'). Cause established: the test's PostgreSQL adapter called the old mp_public_catalogue_list function while the repository calls mp_public_catalogue_list_v2 (different row shape, and bigint totals arrive as strings from node-pg), so it was never a catalogue-size limit. The adapter is fixed (67/67 checks pass locally against a real PostgreSQL 16 with 1100+ products); kept tracked until a CI Docker run confirms, then promote to required."
     },
     {
       "script": "test:marketplace-ceo-auto-import-pg",

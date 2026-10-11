@@ -109,11 +109,11 @@ with objs as (
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where c.relkind in ('v', 'm') and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
   union all
-  select 'relation_acls', format('%s.%s acl=%s', n.nspname, c.relname, coalesce(c.relacl::text, ''))
+  select 'relation_acls', format('%s.%s acl=%s', n.nspname, c.relname, coalesce(c.relacl, acldefault((case c.relkind when 'S' then 's' else 'r' end)::"char", c.relowner))::text)
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where c.relkind in ('r', 'p', 'v', 'm', 'S') and n.nspname !~ '^pg_' and n.nspname <> 'information_schema'
   union all
-  select 'schema_acls', format('%s owner=%s acl=%s', nspname, pg_get_userbyid(nspowner), coalesce(nspacl::text, ''))
+  select 'schema_acls', format('%s owner=%s acl=%s', nspname, pg_get_userbyid(nspowner), coalesce(nspacl, acldefault('n'::"char", nspowner))::text)
   from pg_namespace where nspname !~ '^pg_' and nspname <> 'information_schema'
   union all
   select 'default_acls', format('role=%s schema=%s type=%s acl=%s', pg_get_userbyid(defaclrole), coalesce(defaclnamespace::regnamespace::text, ''), defaclobjtype, defaclacl::text)

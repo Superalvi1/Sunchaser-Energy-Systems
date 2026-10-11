@@ -102,6 +102,13 @@ jobs:
         run: |
           docker version --format 'docker {{.Server.Version}}'
           psql --version
+      - name: Pre-pull the image the marketplace suites start (retries; a failed pull is reported here, not as a suite failure)
+        run: |
+          for i in 1 2 3 4; do
+            docker pull postgres:16-alpine && exit 0
+            echo "pull attempt $i failed; retrying"; sleep $((i * 5))
+          done
+          echo "::error::could not pull postgres:16-alpine after 4 attempts"; exit 1
       - name: Run Docker / database suites (each independently; a skip fails)
         run: node scripts/ci/run-suites.mjs --group=docker
       - name: Upload per-suite logs

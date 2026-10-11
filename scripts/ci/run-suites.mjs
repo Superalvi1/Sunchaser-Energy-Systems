@@ -52,7 +52,7 @@ for (const j of jobs) {
   fs.writeFileSync(path.join(outDir, `${j.script.replace(/[^\w.-]/g, "_")}.log`), r.out);
   results.push({ script: j.script, kind: j.kind, status, seconds: Math.round(r.ms / 1000), area: j.area, reason: j.reason });
   console.log(`${status.toUpperCase()} (${Math.round(r.ms / 1000)}s)`);
-  if (status !== "pass") console.log(r.out.split("\n").filter(Boolean).slice(-6).map((l) => "    " + l.slice(0, 200)).join("\n"));
+  if (status !== "pass") console.log(r.out.split("\n").filter(Boolean).slice(-40).map((l) => "    " + l.slice(0, 200)).join("\n"));
 }
 
 const bad = results.filter((r) => r.kind === "required" && r.status !== "pass");

@@ -1,6 +1,6 @@
 # Deployment rehearsal: results and decision
 
-Status: **rehearsal on synthetic data and a disposable stack. Nothing was applied to production.** Everything below is labelled
+Status: **rehearsal on synthetic data and disposable stacks. Nothing was applied to production, and the real production backup file has not been restored yet (no access, section 6).** Updated 11 Oct 2026. Everything below is labelled
 EXECUTED (a command ran and its output was read), INSPECTED (read, not run) or NOT VERIFIED. Customer figures and invoice numbers are
 deliberately not written here (public repository); they were given to the owner privately.
 
@@ -58,75 +58,87 @@ Reading the evidence:
 The anonymous-quote row is not conclusive for the old code (the old code creates a lead per quote by design; the matching defect needs an existing lead matched by
 phone, covered by `j10-smartquote-link.mjs`, 60/60).
 
-## 3. PostgreSQL 17 backup/restore drill and migration rehearsal (EXECUTED on a stand-in, see limits)
+## 3. Backup, restore and migration rehearsal on PostgreSQL 17.11 (EXECUTED)
 
-`scripts/rehearsal/run-rehearsal.sh`: read-only preflights on the source, encrypted backup with the repository tooling (two age recipients, no plaintext dump
-left on disk), restore into a **real PostgreSQL 17.10 server**, manifest comparison, deliberate-corruption detection, the four migrations one by one with their verify
-scripts and a before/after comparison of every pre-existing table, all rollbacks in reverse order, re-apply. Last run: **32 PASS, 0 FAIL** (source: 906 synthetic
-invoices incl. 49 overpaid-legacy and 2 header/ledger mismatches).
+Toolchain: PostgreSQL **17.11** server, `pg_dump`, `pg_restore`, `psql` (conda-forge build; the same version production reports in its PostgREST log). Earlier runs used a 16-to-17 stand-in; they are superseded.
 
-Findings the drill produced (each fixed in the tooling or recorded):
+`scripts/rehearsal/build-prod-like-source.sh` builds the source in the state the owner described after the 9 Oct accounts reset: accounting tables empty (0 invoices, 0 items,
+0 payments), recovery copies in schema `crm_recovery` (prefix `accounts_reset_20261009_`), leads, users and the rest untouched. Synthetic data only.
 
-1. **A source with an orphan payment row cannot be restored** (`pg_restore` stops on the foreign key; the target stays empty - the tool fails closed). The invoice
-   preflight reports orphans as REVIEW; for the backup/restore plan an orphan count above 0 on a foreign-keyed table is a blocker until the owner decides about the row.
-2. **Cross-major restore (16 to 17) shows one manifest difference:** relation ACL text, because PostgreSQL 17 adds the MAINTAIN privilege letter and stores owner-only
-   ACLs as NULL. The script accepts exit 3 only when that is the sole difference **and** the ACLs are identical after normalisation (a first version of that check passed
-   vacuously because of a SQL typo; it now requires a non-empty hash and was re-run). A 17-to-17 restore, the production case, needs no such tolerance.
-3. A single changed cell in the restored copy is detected (`public.users` row hash). Rows and hashes of all pre-existing tables are identical after each migration (the
-   `users` hash changes by design: session-revocation adds a column). Rollback returns every table, definition and (normalised) ACL to the restored state; re-apply
-   reproduces the first forward result. Every migration ran in under 60 ms on this data.
-4. The Smart Quote verify script has one environmental row ("PostgREST is listening for schema reloads") that cannot pass without PostgREST attached; the app smoke covers it.
+`scripts/rehearsal/run-rehearsal.sh`, source = that PostgreSQL 17.11 database, scratch = a second PostgreSQL 17.11 server: **0 FAIL**.
+* three read-only preflights: 0 BLOCKER rows;
+* encrypted backup (two age recipients, no plaintext dump left on disk) restored: `MANIFEST MATCH: 106 tables, 7973 rows, every definition hash and sequence position verified`;
+* one changed cell in the restored copy is detected; a repeat restore is clean;
+* M1, M2, M3, M4 applied one by one (13 to 54 ms each), each verified; row counts and row hashes of all pre-existing tables unchanged after each;
+* all four rolled back in reverse order: every table, definition and (normalised) ACL equals the restored state; re-applied: identical to the first forward run.
 
-App smoke on the migrated PostgreSQL 17 copy (EXECUTED): J13 all 13 observations safe, 0 unsafe, 0 degraded; J12 200 rounds, 0 inconsistent.
+Same script in **tarball mode** (`REHEARSAL_FROM_TARBALL=...`), fed an archive in the exact format the existing daily production job writes (`database.dump` from `pg_dump --format=custom`
+plus `globals.sql`, tarred): restore, preflights on the restored copy, M1-M4 apply/verify/rollback/re-apply: **0 FAIL**. This is the procedure for the real file (plan, Step 2);
+the real file itself has not been restored.
 
-NOT VERIFIED here: a dump taken **from** a PostgreSQL 17 server (the sandbox has no `pg_dump` 17 and no Docker daemon; apt.postgresql.org is blocked). The source was
-PostgreSQL 16.15 with a 16 client; the scratch server is the official PostgreSQL 17.10 server binaries from the `@embedded-postgres` npm package (a third-party
-repackaging, not the `postgres:17-alpine` image). The tooling's version guard refuses a 16 client for a 17 source (tested with simulated versions only). The CI
-`docker-suites` job now runs on `postgres:17` for the SQL itself.
+Findings the drill produced, all fixed in the tooling or recorded:
+1. A source with an orphan payment row cannot be restored (`pg_restore` stops on the foreign key; the target stays empty). The restore fails closed.
+2. `manifest.sql` compared raw ACL text, so an owner-only ACL stored as NULL (restored) differed from the same ACL stored explicitly (source) after a `REVOKE` (seen on `crm_recovery`). It now compares effective ACLs.
+3. 16-to-17 restores differ only by PostgreSQL 17's MAINTAIN privilege letter; the 16-to-17 mode accepts that and nothing else. Not needed for 17-to-17.
+4. A first version of the cross-major ACL check passed vacuously because of a SQL typo; it now requires a non-empty hash.
+5. The Smart Quote verify script has one environmental row ("PostgREST is listening for schema reloads") that needs PostgREST attached; the app journeys below cover it.
 
-## 4. Replica and invoice counts from read-only discovery
+### Journeys (EXECUTED, fresh PostgreSQL 17.11 stack with M1-M4 applied, PostgREST 12.2.3, S3 stand-in, two app instances)
 
-| Fact | How found | Result |
+| Journey | Result |
+|---|---|
+| Smart Quote: new client, edit, save, PDF, revision, lost response, mobile double tap (`j1-smartquote`) | 16 pass |
+| Staff CRM: lead list, saved versions, PDF download (`j1-staff-crm`) | 6 pass |
+| Quotation -> invoice -> partial payment, retries, over-payment, audit (`j6-finance`) | 8 pass |
+| Portal user linked to a client (`link-portal`) | 1 pass |
+| Document upload, rejected types, interrupted/retried uploads, refresh, re-login, cross-customer (`j3-documents`) | 14 pass |
+| Client rename keeps invoices, documents and portal (`j5-rename`) | 7 pass |
+| Sessions: reopen, expiry, suspension, logout (`j7-session`) | 8 pass |
+| WhatsApp inbound -> no automatic lead -> explicit conversion (`j4-whatsapp`) | 10 pass |
+| Parallel payments, retries, edit/delete races (`j8-payment-concurrency`) | 11 pass |
+| Smart Quote link tokens incl. browser section (`j10-smartquote-link`) | 69 pass |
+| Independent verification (`final-verify`) | 54 pass |
+| Compatibility matrix (`j13`) | 13 observations, 0 unsafe, 0 degraded |
+| Concurrent invoice edits, 300 rounds (`j12`) | 0 inconsistent |
+| Two instances x 40 rounds x 6 parallel payments | 0 overpaid, 0 header/ledger mismatch |
+
+Not run: `j9-logout` (needs control of the PostgREST process; it passed 51/2-skipped on PostgreSQL 16 earlier), the Android WebView on a device.
+An earlier attempt to run the browser journeys on the *restored copy* failed for reasons of the copy, not of the code (leftover rows from earlier test runs, missing
+environment file); it is listed so it is not read as a pass.
+
+## 4. Production facts established read-only
+
+See `docs/ops/PRODUCTION_TOPOLOGY.md`. In short: 1 CRM replica; PostgREST is the service named `sunchaser-migration-job` (image tag `latest`); PostgreSQL 17.11; a daily
+backup job exists and has produced a verified upload every day since 26 Sep; the accounting tables were emptied on 9 Oct (reported by the owner), so the two invoices that
+disagreed with their payments are no longer a blocker and the invoice count is zero for the accounting tables.
+
+## 5. Failing or excluded suites, reported separately from the passing checks
+
+| Suite | Group | Status | Cause / note |
+|---|---|---|---|
+| `test:marketplace-live-suppliers-phase1` | default, tracked | **FAILS** | `pageFingerprint()` uses ids only, so a second page with the same ids but newer content looks repeated; the test expects both pages. Production sync logic left unchanged pending an owner decision. |
+| `test:startup-smoke` | default, tracked | **NOT RUN in CI** | needs a built bundle and database credentials |
+| `test:marketplace-catalogue-manager-pg` | docker, tracked | **FAILED; cause found, fix awaiting CI** | The earlier explanation ("fails at >= 1100-product pagination") was wrong. The error is `list row shape invalid`: the repository calls `mp_public_catalogue_list_v2`, the test's adapter ran the older `mp_public_catalogue_list` (different row shape) and node-pg returns `bigint` totals as strings. Reproduced locally, adapter corrected (it now runs the real v2 function), then **67 of 67 checks pass against a real PostgreSQL 16 with more than 1,100 products, in pages of 500**. Docker is not available in this sandbox, so it stays tracked until a CI Docker run passes, then it should be promoted. |
+| `test:marketplace-ws0` | docker, required | **Failed once on PostgreSQL 17 CI job, passed on retry; cause NOT established** | It starts its own `postgres:16-alpine` container, so the CI service version is not involved. It was the first suite in that job to pull that image. The runner printed only the last 6 lines of output (an exception object). The runner now prints 40 lines, and the job pre-pulls the image with retries, so the next occurrence names its cause. Treat as unexplained until then. |
+
+**Does the catalogue-size failure affect the current catalogue? No.** (1) The failure was in the test, not in the repository. (2) The repository pages 500 at a time and stops on a short page; the v2 SQL returns a
+sentinel row when a page is empty, so an exact multiple of 500 products is also safe (INSPECTED; 1,100 products EXECUTED). (3) The last catalogue size seen was 768 products (a 25 Sep log line), below 1,000. (4) The v2 functions are a
+manual-apply contract (`marketplace-ws1-public-rpc-contract.sql`) with zero products activated; whether production has them depends on the owner's marketplace work, which this release does not touch.
+
+## 6. Access still missing, and the simplest secure way to supply it
+
+| Missing | Why I cannot proceed | Simplest secure next step |
 |---|---|---|
-| CRM replicas | Railway read-only API (`describe-service`, `environment-status`) | **1 configured, 1 running, 0 crashed** (region sfo). Service `sunchaser-crm-private-smoke` serves `crm.sunchaserenergy.co`, builds `main` of this repository, health check `/health`. |
-| Database | same | `postgres-staging`, image `postgres:17-alpine`, 1 replica, 1 GB volume, no public domain |
-| Names | same | The project is called "Sunchaser Railway **Staging**" and the services "staging" / "private-smoke", yet they serve the production domains. Worth the owner confirming that this IS production. |
-| PostgREST | same | No PostgREST service appears in this project (the CRM has `RAILWAY_POSTGREST_URL` set). Where it runs is **not established**. The project "Sunchaser Railway Data" has no services. |
-| Invoice count | **not obtainable read-only with the access available**: the Railway API has no SQL, the sandbox cannot reach the production host (proxy 403), and the app API needs a login (credentials stay on hold) | The invoice preflight prints it (`invoices (total rows)`). A lower bound can be inferred from numbering in production logs (invoice numbers up to the single digits for 2026) - an inference, not a count. |
-| Existing data issue | production service logs (read-only) | The application itself logs `[PartyLedger] paid_amount mismatch` for **two real invoices** whose stored paid amount differs from the sum of their payment rows (one by a factor of ten). The payment guard does not rewrite them until a money field is next written; the owner must decide per invoice which figure is right **before** the guard goes live. |
-
-## 5. Failing suites, reported separately from the passing checks
-
-Passing checks (EXECUTED in CI on the pushed commit, and locally): typecheck, web build, `test:crm-repair` and the other required suites, 13 of 14 Docker suites (now plus the new
-`test:invoice-atomic-pg`, 7/7 on 16 and 17).
-
-**Excluded and failing - not counted as passed anywhere above:**
-
-| Suite | Group | Status | Reason (from `scripts/ci/suites.json`) |
-|---|---|---|---|
-| `test:marketplace-catalogue-manager-pg` | docker, tracked | **FAILS** on a real Docker run | `CATALOGUE_RESPONSE_INVALID` in `catalogueRepository.listProducts` (>= 1100-product pagination). No marketplace file is touched by this release; marketplace is outside it. Needs its own investigation. |
-| `test:marketplace-live-suppliers-phase1` | default, tracked | **FAILS** | `pageFingerprint()` uses ids only; production sync logic left unchanged pending an owner decision. |
-| `test:startup-smoke` | default, tracked | **NOT RUN in CI** | needs a built bundle and database credentials. |
-
-These do not exercise any code changed by this release. They remain visible in every CI report; the release is not "green" in the sense of having no failing suite.
-
-## 6. Exact access and approvals needed to run the rehearsal against production data
-
-| # | What | Why | Gate |
-|---|---|---|---|
-| 1 | Owner decision on the backup method (plan section 2: A to D), ideally D: the owner's own machine with `railway connect postgres` and a **PostgreSQL 17** client | the only way to take a 17-to-17 dump and see the real invoice count | G1 |
-| 2 | A read-only database login (or the owner running the three `*-preflight.sql` files and sending back the output) | invoice count, orphan rows, header/ledger disagreements, role names, idle transactions | G3 (read-only) |
-| 3 | A scratch PostgreSQL 17 server (second Railway Postgres in a separate project, or a local `postgres:17` container) | the restore target; never the production service | G1 |
-| 4 | age public keys for two recipients (private keys stay with the owner) | encrypted backup | G1 |
-| 5 | Confirmation that `crm-private-smoke` / `postgres-staging` are the production services, and where PostgREST runs | replica/volume facts above were read from these | none |
-| 6 | Owner decision per mismatched invoice (section 4) | the guard will rewrite the stored paid amount from the ledger on the next money write | before 5c |
-
-Not requested and not needed for the rehearsal: any credential rotation, merge, production write, migration or Android action.
+| The actual production backup file | The Railway bucket host is blocked by this sandbox's egress policy; bucket credentials would also have to pass through this session | Owner downloads the latest `database-backups/<stamp>/sunchaser-postgres.tar.gz` to an encrypted disk of their own machine and runs `run-rehearsal.sh` in tarball mode against a local `postgres:17` container (plan Step 2). They send back only the PASS/FAIL lines and the preflight verdict table (no row values) |
+| A PostgreSQL 17 scratch server on the owner's side | none here for production data | `docker run -d -p 5433:5432 -e POSTGRES_PASSWORD=... postgres:17-alpine` on the owner's machine, deleted afterwards |
+| Production PostgREST version / image digest | the variable list and logs do not print it | Railway dashboard, service `sunchaser-migration-job`, latest deployment details; pin the tag to it |
+| Whether `RAILWAY_POSTGREST_URL` points at that service | I did not read variable values (they sit next to secrets) | Owner reads the one variable in the dashboard, or confirms the service-to-service reference |
+| Play Console and provider consoles (private sheet) | owner-only | see the private action sheet |
 
 ## 7. Decision
 
 | Question | Answer |
 |---|---|
-| Deploy PR #111 (+ new commits) to production now? | **NO-GO.** No production backup exists and no restore from production data has been seen to work; the invoice count and two mismatched invoices are undecided; the leaked-key and credential items are untouched; the sandbox cannot take a PostgreSQL 17 dump. |
-| Is the code ready for the owner-run rehearsal? | **GO.** Order is fixed by evidence, all four migrations apply, verify, roll back and re-apply cleanly on a restored copy on PostgreSQL 17, and the app passes the compatibility matrix on it. |
-| What turns NO-GO into GO for production | Items 1 to 4 and 6 of section 6, a clean `run-rehearsal.sh` against a copy of the real data, then the owner's approval at gates G1, G3 and G4. |
+| Merge / migrate / rotate / release now? | **NO.** Gates G1-G6 are all still closed, and the one verification that matters most (restoring the real backup) has not been possible. |
+| Is the code ready for the owner-run restore rehearsal and then for the staged deployment? | **YES, subject to the Step 2 result.** All four migrations apply, verify, roll back and re-apply on PostgreSQL 17.11; every executed journey passes on PostgreSQL 17.11; order and rollback order are fixed by evidence. |
+| What turns this into a GO for production | Step 2 with 0 failures on the real archive; PostgREST pinned; owner approval at G3 and G4 for each step in `DEPLOYMENT_PLAN.md`. |

@@ -6,14 +6,16 @@
 #   RESTORE_PGHOST=... RESTORE_PGPORT=... RESTORE_PGUSER=... [RESTORE_PGPASSWORD=...] \
 #   REHEARSAL_DIR=/path/for/reports  bash scripts/rehearsal/run-rehearsal.sh
 #
+# Alternative: REHEARSAL_FROM_TARBALL=/path/sunchaser-postgres.tar.gz (an existing production-format backup) replaces the source (SRC_* then unused).
 # The source is only ever read (pg_dump inside pg-backup.sh, read-only preflights). The scratch server must be a different server
 # from the source; the restored database is named restore_rehearsal and is dropped and re-created on every run.
 # Exit status = number of FAIL lines. Output: one PASS/FAIL line per check, reports under $REHEARSAL_DIR.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-: "${SRC_PGHOST:?}" "${SRC_PGPORT:?}" "${SRC_PGUSER:?}" "${SRC_PGDATABASE:?}" "${RESTORE_PGHOST:?}" "${RESTORE_PGPORT:?}" "${RESTORE_PGUSER:?}" "${REHEARSAL_DIR:?}"
-[ "$SRC_PGHOST:$SRC_PGPORT" != "$RESTORE_PGHOST:$RESTORE_PGPORT" ] || { echo "refusing: source and scratch server are the same"; exit 2; }
+: "${RESTORE_PGHOST:?}" "${RESTORE_PGPORT:?}" "${RESTORE_PGUSER:?}" "${REHEARSAL_DIR:?}"
+if [ -z "${REHEARSAL_FROM_TARBALL:-}" ]; then : "${SRC_PGHOST:?}" "${SRC_PGPORT:?}" "${SRC_PGUSER:?}" "${SRC_PGDATABASE:?}"; fi
+[ -n "${REHEARSAL_FROM_TARBALL:-}" ] || [ "$SRC_PGHOST:$SRC_PGPORT" != "$RESTORE_PGHOST:$RESTORE_PGPORT" ] || { echo "refusing: source and scratch server are the same"; exit 2; }
 mkdir -p "$REHEARSAL_DIR/keys" "$REHEARSAL_DIR/backup" "$REHEARSAL_DIR/logs"; chmod 700 "$REHEARSAL_DIR" "$REHEARSAL_DIR/keys"
 DB=restore_rehearsal
 TAB=$'\t'
@@ -34,10 +36,36 @@ aclmd5() { TGT psql -X -qAt -d "$DB" -c "$ACLQ"; }   # ACLs normalised across ma
 manifest() { TGT psql -X -q -d "$DB" -F "$TAB" -f "$REPO/scripts/backup/manifest.sql" 2>/dev/null | LC_ALL=C sort | grep -v '^info'; }
 
 echo "== 0. versions"
-SRC_VER="$(SRC psql -X -qAt -d "$SRC_PGDATABASE" -c 'show server_version')"; TGT_VER="$(TGT psql -X -qAt -d postgres -c 'show server_version')"
+if [ -n "${REHEARSAL_FROM_TARBALL:-}" ]; then SRC_VER="tarball"; else SRC_VER="$(SRC psql -X -qAt -d "$SRC_PGDATABASE" -c 'show server_version')"; fi; TGT_VER="$(TGT psql -X -qAt -d postgres -c 'show server_version')"
 echo "source server $SRC_VER | scratch server $TGT_VER | client $(psql --version | awk '{print $3}') | pg_dump $(pg_dump --version | awk '{print $3}')"
 check "scratch server is PostgreSQL 17" "$([ "${TGT_VER%%.*}" = 17 ] && echo ok || echo bad)" "$TGT_VER"
 
+if [ -n "${REHEARSAL_FROM_TARBALL:-}" ]; then
+echo "== 1-3. restore the EXISTING production-format backup (tar.gz holding database.dump + globals.sql) into the scratch server"
+# The daily Railway backup job writes exactly this format (pg_dump -Fc + pg_dumpall --globals-only --no-role-passwords, tarred). The file is
+# customer data: keep it on an encrypted disk, delete it afterwards. Only the scratch server is written; no source database is contacted.
+WORK="$REHEARSAL_DIR/tarball"; rm -rf "$WORK"; mkdir -p "$WORK"; chmod 700 "$WORK"
+tar -xzf "$REHEARSAL_FROM_TARBALL" -C "$WORK"
+check "backup archive contains database.dump and globals.sql" "$([ -s "$WORK/database.dump" ] && [ -s "$WORK/globals.sql" ] && echo ok || echo bad)"
+DUMP_VER="$(pg_restore --list "$WORK/database.dump" 2>/dev/null | sed -n 's/^; Dumped from database version: //p' | head -1)"
+echo "dump was taken from server $DUMP_VER; restoring with pg_restore $(pg_restore --version | awk '{print $3}')"
+check "pg_restore can read the archive (client at least as new as the dump)" "$(pg_restore --list "$WORK/database.dump" >/dev/null 2>&1 && echo ok || echo bad)"
+TGT psql -X -q -d postgres -f "$WORK/globals.sql" > "$REHEARSAL_DIR/logs/globals.out" 2>&1   # roles that already exist report errors; harmless
+TGT psql -X -qAt -d postgres -c "drop database if exists $DB with (force)" -c "create database $DB" >/dev/null
+TGT pg_restore --exit-on-error --single-transaction --no-password --dbname="$DB" "$WORK/database.dump" > "$REHEARSAL_DIR/logs/pg_restore.out" 2>&1
+check "pg_restore into the scratch PostgreSQL 17 finished (constraints validated, single transaction)" "$([ $? = 0 ] && echo ok || echo bad)" "$(tail -1 "$REHEARSAL_DIR/logs/pg_restore.out" | cut -c1-120)"
+[ "$FAILS" = 0 ] || { echo "cannot continue: the backup could not be restored"; exit "$FAILS"; }
+TGT psql -X -q -d "$DB" -c analyze >/dev/null
+TGT psql -X -d "$DB" -F "$TAB" -At -c "select schemaname||'.'||relname, n_live_tup from pg_stat_user_tables order by 1" > "$REHEARSAL_DIR/restored-row-counts.tsv"
+echo "restored: $(wc -l < "$REHEARSAL_DIR/restored-row-counts.tsv") tables; schemas: $(TGT psql -X -qAt -d "$DB" -c "select string_agg(nspname, ',' order by nspname) from pg_namespace where nspname !~ '^pg_' and nspname <> 'information_schema'")"
+echo "== read-only preflights on the RESTORED COPY"
+for f in smart-quote-versions-preflight session-revocation-preflight invoice-payments-preflight; do
+  TGT psql -X -v ON_ERROR_STOP=1 -d "$DB" -f "$REPO/scripts/$f.sql" > "$REHEARSAL_DIR/logs/$f.out" 2>&1
+  rc=$?; blockers="$(grep -cE '\| BLOCKER +\|' "$REHEARSAL_DIR/logs/$f.out" || true)"
+  check "preflight $f on the restored copy" "$([ $rc = 0 ] && [ "$blockers" = 0 ] && echo ok || echo bad)" "exit $rc, BLOCKER rows: $blockers"
+done
+sed -n '/=== 1. VERDICT ===/,/=== 2/p' "$REHEARSAL_DIR/logs/invoice-payments-preflight.out" | head -30
+else
 echo "== 1. read-only preflights on the SOURCE"
 for f in smart-quote-versions-preflight session-revocation-preflight invoice-payments-preflight; do
   SRC psql -X -v ON_ERROR_STOP=1 -d "$SRC_PGDATABASE" -f "$REPO/scripts/$f.sql" > "$REHEARSAL_DIR/logs/$f.out" 2>&1
@@ -80,6 +108,7 @@ RESTORE_PGHOST="$RESTORE_PGHOST" RESTORE_PGPORT="$RESTORE_PGPORT" RESTORE_PGUSER
 r2=$?; [ $r2 = 3 ] && [ "$(grep -E "^[<>] " "$REHEARSAL_DIR/logs/restore2.out" | grep -vc "defs.relation_acls")" = 0 ] && r2=0
 check "restore repeated cleanly after the detection test" "$([ $r2 = 0 ] && echo ok || echo bad)"
 
+fi
 manifest > "$REHEARSAL_DIR/m0-restored.tsv"; A0="$(aclmd5)"
 ROWS_BEFORE="$(grep -c '^table' "$REHEARSAL_DIR/m0-restored.tsv")"
 echo "restored copy: $ROWS_BEFORE tables"

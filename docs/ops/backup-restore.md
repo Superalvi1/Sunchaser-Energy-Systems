@@ -1,6 +1,6 @@
 # Backup and restore runbook (PROPOSED)
 
-Status: proposed files, **nothing here has been applied to production**. Every step that touches production (creating a service,
+Status: proposed files, **nothing here has been applied to production**. Note: a separate daily backup job already runs in production (see `PRODUCTION_TOPOLOGY.md`); these tools add encryption, credential separation, an off-site copy and verified restores to it. Every step that touches production (creating a service,
 variables, buckets, a database role, running a dump) needs the owner's explicit approval; see "Approvals" at the end.
 
 Scope: the CRM PostgreSQL database (Railway PostgreSQL 17, service `postgres-staging`, fronted by PostgREST) and the object store
@@ -146,8 +146,8 @@ against the local test store.
 | Data-loss detection: deleted row, changed value with equal row count, dropped policy/trigger, dump missing rows vs the manifest | TESTED, all exit 3 |
 | Consistent manifest under concurrent writes | TESTED |
 | Credential separation: CRM credentials cannot read the backup bucket; backup credentials cannot delete or touch the CRM bucket; altered body rejected | TESTED against a test store that enforces this policy; **real Railway bucket behaviour NOT_VERIFIED** (Railway documents per-bucket credentials, not per-prefix) |
-| Version guard (PG16 client vs 17 server) | TESTED with simulated version output; a real PG17 server/client **NOT_VERIFIED** |
-| `pg_dump` 17 / `postgres:17-alpine` image build / Alpine busybox behaviour of the scripts | NOT_VERIFIED (no PG17 binaries, no Docker daemon) |
+| Version guard (PG16 client vs 17 server) | TESTED with simulated version output. A real PostgreSQL **17.11** server and client now also exercised the whole flow 17-to-17 (11 Oct 2026, `scripts/rehearsal/run-rehearsal.sh`: MANIFEST MATCH 106 tables / 7,973 rows). The guard against an older client was not exercised on a real 17 server |
+| `pg_dump` 17 behaviour | TESTED (17.11 conda-forge build). The `postgres:17-alpine` image build and Alpine busybox behaviour of the scripts remain NOT_VERIFIED (no Docker daemon) |
 | Restoring the real production schema (142 public tables, `*_backup_20260606` tables, production-only objects) | NOT_VERIFIED: no production access; only the tracked-SQL reconstruction (104 tables) was used |
 | Locale/ICU: production collation and provider unknown | NOT_VERIFIED (the script refuses ICU-provider databases rather than guess) |
 
