@@ -45,8 +45,7 @@ PostgreSQL 17.11  (postgres-staging)
 * PostgREST exposes schema `public` only (INSPECTED in its log: `db-schemas=public`). Schemas such as `crm_recovery` are therefore not reachable through the API.
 * PostgREST logged "166 Relations, 65 RPCs" when it last started (9 Oct 05:21 UTC, before the accounts reset). It reloads its schema cache on the `notify pgrst`
   that every migration in this release sends.
-* **Risk:** the image tag is `latest`. Every redeploy or restart may pull a different PostgREST version. This release was tested with 12.2.3. Pin the tag to the
-  version that is running today (Railway deployment details show the image digest) before the migrations are applied.
+* **Risk:** the image tag is `latest`. Every redeploy or restart may pull a different PostgREST version. `latest` has been **v16.4 since 24 Sep 2026**, so the 9 Oct deployment almost certainly runs it (INFERRED; not read). The release was tested with 12.2.3 and, in full, with 16.4. The pin, its digest, the compatibility checks and the rollback are in `POSTGREST_PIN.md`.
 
 ## 3. The existing backup job (this corrects earlier statements that no production backup existed)
 

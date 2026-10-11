@@ -2,7 +2,7 @@
 
 Status: **plan only. Nothing in this document has been run in production.** Every production step needs the owner's explicit approval at its gate.
 Merging to `main` deploys the CRM (Railway builds `main`). Public-safe: variable names and files, never secret values.
-Where things run: `docs/ops/PRODUCTION_TOPOLOGY.md`. Rehearsal evidence: `docs/ops/DEPLOYMENT_REHEARSAL.md`.
+Where things run: `PRODUCTION_TOPOLOGY.md`. Rehearsal evidence: `DEPLOYMENT_REHEARSAL.md`. Every claim with its evidence class: `EVIDENCE_LEDGER.md`. The restore rehearsal for your Mac: `MAC_RESTORE_REHEARSAL.md`. PostgREST pin: `POSTGREST_PIN.md`.
 
 ## 1. What the release contains
 
@@ -71,7 +71,7 @@ a physical Android device; the Play Console key roles; the credentials' current 
 
 ### Step 0. Decisions only the owner can make
 1. Merge order. **Recommended:** PR #112 (reset-link fix, no migration) first; PR #111 already contains its commit, so there is no conflict afterwards.
-2. Pin the PostgREST image to the version running today (Railway deployment details show it). Needs a Railway change: G3-class, do it before M1.
+2. Pin the PostgREST image (`POSTGREST_PIN.md`: `postgrest/postgrest:v16.4`, digest recorded there; production almost certainly runs it already and the journeys pass on it). Needs a Railway change: G3-class, do it before M1 and not in the same window as any migration.
 3. Backup storage: separate bucket + credentials + encryption (adopt `pg-backup.sh` next to the existing job), or accept the current job as is.
 4. Replicas: stay at 1 until M3 is live.
 5. Confirm which Railway services are production (the project and several service names say "staging" / "smoke").
@@ -81,7 +81,7 @@ Merge PR #112; Railway deploys it. Smoke: `POST /api/auth/forgot-password` for a
 Rollback: redeploy the previous Railway deployment. Afterwards review recent password changes and consider a Super Admin password change.
 
 ### Step 2. A restore you have seen work, from the real daily backup (G1)
-The daily job already produces `database-backups/<stamp>/sunchaser-postgres.tar.gz`. What is missing is a restore.
+The daily job already produces `database-backups/<stamp>/sunchaser-postgres.tar.gz`. What is missing is a restore. **Copy-and-paste procedure for your Mac: `MAC_RESTORE_REHEARSAL.md`** (it does 1-2 below and returns a short PASS/FAIL block). The numbered steps are the same thing done by hand.
 1. Download the **latest** archive to the owner's machine (bucket console or `aws s3 cp`, read-only credential; Step 5.2 lists the simplest secure ways). Keep it on an encrypted disk.
 2. On a machine with PostgreSQL **17** client tools and a scratch PostgreSQL 17 server (never the production service):
    ```bash

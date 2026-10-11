@@ -83,9 +83,11 @@ Findings the drill produced, all fixed in the tooling or recorded:
 4. A first version of the cross-major ACL check passed vacuously because of a SQL typo; it now requires a non-empty hash.
 5. The Smart Quote verify script has one environmental row ("PostgREST is listening for schema reloads") that needs PostgREST attached; the app journeys below cover it.
 
-### Journeys (EXECUTED, fresh PostgreSQL 17.11 stack with M1-M4 applied, PostgREST 12.2.3, S3 stand-in, two app instances)
+### Journeys (EXECUTED, fresh PostgreSQL 17.11 stack with M1-M4 applied, S3 stand-in, two app instances)
 
-| Journey | Result |
+Run with `scripts/rehearsal/run-journeys.sh`, once with PostgREST 12.2.3 (the version used for most earlier testing) and once with **PostgREST 16.4**, the version production most probably runs (`POSTGREST_PIN.md`). Both: 0 failing journeys.
+
+| Journey | Result on 16.4 (all except the browser logout line were also run with 12.2.3 with identical counts) |
 |---|---|
 | Smart Quote: new client, edit, save, PDF, revision, lost response, mobile double tap (`j1-smartquote`) | 16 pass |
 | Staff CRM: lead list, saved versions, PDF download (`j1-staff-crm`) | 6 pass |
@@ -98,13 +100,16 @@ Findings the drill produced, all fixed in the tooling or recorded:
 | Parallel payments, retries, edit/delete races (`j8-payment-concurrency`) | 11 pass |
 | Smart Quote link tokens incl. browser section (`j10-smartquote-link`) | 69 pass |
 | Independent verification (`final-verify`) | 54 pass |
+| **Server-side logout / logout-all / rotation / revocation incl. the PostgREST-restart scenarios (`j9-logout`)** | **53 pass, 0 fail** (earlier on PostgreSQL 16: 51 pass, 2 skipped; the two skipped scenarios are now executed) |
+| Browser logout, web UI in desktop Chromium (`j9-logout-browser`) | 7 pass |
 | Compatibility matrix (`j13`) | 13 observations, 0 unsafe, 0 degraded |
 | Concurrent invoice edits, 300 rounds (`j12`) | 0 inconsistent |
 | Two instances x 40 rounds x 6 parallel payments | 0 overpaid, 0 header/ledger mismatch |
 
-Not run: `j9-logout` (needs control of the PostgREST process; it passed 51/2-skipped on PostgreSQL 16 earlier), the Android WebView on a device.
-An earlier attempt to run the browser journeys on the *restored copy* failed for reasons of the copy, not of the code (leftover rows from earlier test runs, missing
-environment file); it is listed so it is not read as a pass.
+Not run: logout inside the Android WebView on a physical device, and any other physical-device test. (An earlier attempt to run the browser journeys on a *restored copy*, and a first run against 16.4 on a re-used stack, failed for harness reasons - used data, a rate-limit
+override - not code reasons; a fresh stack passes. Listed so those failures are not mistaken for passes.)
+
+The status of every claim, with its evidence class, is in `EVIDENCE_LEDGER.md`.
 
 ## 4. Production facts established read-only
 

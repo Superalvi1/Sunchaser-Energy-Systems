@@ -1,6 +1,6 @@
 // Minimal S3 stand-in that VERIFIES AWS Signature V4 and applies per-credential bucket/method policy. For isolated tests only.
 // It exists to prove that pg-backup.sh's curl --aws-sigv4 uploads are correctly signed and that backup credentials are separate from
-// the CRM bucket credentials. It is not a complete S3 implementation (no LIST, no multipart, path-style only).
+// the CRM bucket credentials. It is not a complete S3 implementation (LIST of ListObjectsV2 only, no multipart, path-style only).
 // usage: S3V_PORT=9525 node s3-verify-mock.mjs <objects dir> <cert dir containing key.pem + cert.pem>   (credentials via env, see below)
 import https from "node:https";
 import fs from "node:fs";
@@ -52,6 +52,17 @@ https.createServer({ key: fs.readFileSync(`${certDir}/key.pem`), cert: fs.readFi
     if (!cred.methods.includes(req.method)) return fail(403, "AccessDenied", `${req.method} is not permitted for this credential`);
     const file = `${dir}/${encodeURIComponent(bucket + "/" + objectKey)}`;
     if (req.method === "PUT") { fs.writeFileSync(file, body); console.log(`PUT ${bucket}/${objectKey} ${body.length}B sig-ok`); res.writeHead(200, { ETag: `"${createHash("md5").update(body).digest("hex")}"` }); return res.end(); }
+    if (req.method === "GET" && objectKey === "" && url.searchParams.get("list-type") === "2") {
+      // ListObjectsV2 (enough for fetch-latest-production-backup.sh): keys under the requested prefix, no pagination.
+      const prefix = url.searchParams.get("prefix") || "";
+      const items = fs.readdirSync(dir).map((f) => decodeURIComponent(f)).filter((k) => k.startsWith(bucket + "/" + prefix)).sort().map((k) => {
+        const st = fs.statSync(`${dir}/${encodeURIComponent(k)}`);
+        return `<Contents><Key>${k.slice(bucket.length + 1)}</Key><LastModified>${st.mtime.toISOString()}</LastModified><Size>${st.size}</Size></Contents>`;
+      });
+      console.log(`LIST ${bucket}/${prefix} ${items.length} keys sig-ok`);
+      res.writeHead(200, { "content-type": "application/xml" });
+      return res.end(`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>${bucket}</Name><Prefix>${prefix}</Prefix><KeyCount>${items.length}</KeyCount><IsTruncated>false</IsTruncated>${items.join("")}</ListBucketResult>`);
+    }
     if (!fs.existsSync(file)) return fail(404, "NoSuchKey", "not found");
     const data = fs.readFileSync(file);
     console.log(`${req.method} ${bucket}/${objectKey} ${data.length}B sig-ok`);

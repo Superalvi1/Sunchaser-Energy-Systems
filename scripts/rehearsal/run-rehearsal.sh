@@ -16,6 +16,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 : "${RESTORE_PGHOST:?}" "${RESTORE_PGPORT:?}" "${RESTORE_PGUSER:?}" "${REHEARSAL_DIR:?}"
 if [ -z "${REHEARSAL_FROM_TARBALL:-}" ]; then : "${SRC_PGHOST:?}" "${SRC_PGPORT:?}" "${SRC_PGUSER:?}" "${SRC_PGDATABASE:?}"; fi
 [ -n "${REHEARSAL_FROM_TARBALL:-}" ] || [ "$SRC_PGHOST:$SRC_PGPORT" != "$RESTORE_PGHOST:$RESTORE_PGPORT" ] || { echo "refusing: source and scratch server are the same"; exit 2; }
+case "$RESTORE_PGHOST" in /*|localhost|127.0.0.1) ;; *) echo "refusing: the scratch server must be a local unix socket directory, localhost or 127.0.0.1 (got a remote host)"; exit 2;; esac
 mkdir -p "$REHEARSAL_DIR/keys" "$REHEARSAL_DIR/backup" "$REHEARSAL_DIR/logs"; chmod 700 "$REHEARSAL_DIR" "$REHEARSAL_DIR/keys"
 DB=restore_rehearsal
 TAB=$'\t'
@@ -65,6 +66,16 @@ for f in smart-quote-versions-preflight session-revocation-preflight invoice-pay
   check "preflight $f on the restored copy" "$([ $rc = 0 ] && [ "$blockers" = 0 ] && echo ok || echo bad)" "exit $rc, BLOCKER rows: $blockers"
 done
 sed -n '/=== 1. VERDICT ===/,/=== 2/p' "$REHEARSAL_DIR/logs/invoice-payments-preflight.out" | head -30
+echo "== recovery schema and accounting tables in the restored copy (counts only, no values)"
+CRQ="select n.nspname||'.'||c.relname||E'\t'||(xpath('/row/c/text()', query_to_xml(format('select count(*) c from %I.%I', n.nspname, c.relname), false, true, '')))[1]::text from pg_class c join pg_namespace n on n.oid=c.relnamespace where c.relkind='r' and n.nspname='crm_recovery' order by 1"
+TGT psql -X -qAt -d "$DB" -c "$CRQ" > "$REHEARSAL_DIR/crm-recovery-counts.tsv" 2>/dev/null
+CRN="$(wc -l < "$REHEARSAL_DIR/crm-recovery-counts.tsv" | tr -d ' ')"
+check "schema crm_recovery is present in the backup and was restored (the recovery copies are preserved)" "$([ "${CRN:-0}" -gt 0 ] && echo ok || echo bad)" "$CRN table(s)"
+sed 's/^/    /' "$REHEARSAL_DIR/crm-recovery-counts.tsv"
+ACC="$(TGT psql -X -qAt -d "$DB" -F ' ' -c "select 'invoices='||(select count(*) from public.invoices)||' invoice_items='||(select count(*) from public.invoice_items)||' invoice_payments='||(select count(*) from public.invoice_payments)")"
+check "accounting tables in the backup are empty, as after the 9 Oct reset (nothing from crm_recovery is back in public)" "$([ "$ACC" = "invoices=0 invoice_items=0 invoice_payments=0" ] && echo ok || echo bad)" "$ACC  (if this is FAIL the backup predates the reset or records were restored: return the block unchanged)"
+CRREF="$(grep -l 'crm_recovery' "$REPO"/scripts/smart-quote-versions-*.sql "$REPO"/scripts/session-revocation-*.sql "$REPO"/scripts/invoice-payments-integrity*.sql "$REPO"/scripts/invoice-save-atomic*.sql 2>/dev/null | wc -l | tr -d ' ')"
+check "none of the migration or rollback scripts mentions crm_recovery (they cannot read or restore those records)" "$([ "$CRREF" = 0 ] && echo ok || echo bad)" "$CRREF file(s)"
 else
 echo "== 1. read-only preflights on the SOURCE"
 for f in smart-quote-versions-preflight session-revocation-preflight invoice-payments-preflight; do
@@ -115,9 +126,9 @@ echo "restored copy: $ROWS_BEFORE tables"
 
 apply() { # name file [verify-file]
   local name="$1" file="$2"
-  local t0; t0=$(date +%s.%N)
+  local t0; t0=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
   TGT psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -f "$REPO/scripts/$file" > "$REHEARSAL_DIR/logs/apply-$name.out" 2>&1
-  local rc=$? ms; ms=$(awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN{printf "%d", (b-a)*1000}')
+  local rc=$? ms; ms=$(perl -MTime::HiRes=time -e 'printf "%d", (time - $ARGV[0]) * 1000' "$t0")
   check "apply $name" "$([ $rc = 0 ] && echo ok || echo bad)" "${ms} ms"
 }
 verify_sql() { # label file expected-problem-pattern
@@ -168,6 +179,9 @@ done
 manifest > "$REHEARSAL_DIR/m3-final.tsv"; A3="$(aclmd5)"
 d="$(diff <(grep -v '^table' "$REHEARSAL_DIR/m1-migrated.tsv" | grep -v relation_acls) <(grep -v '^table' "$REHEARSAL_DIR/m3-final.tsv" | grep -v relation_acls) | wc -l)"
 check "final state equals the first forward run (definitions exactly, ACLs normalised)" "$([ "$d" = 0 ] && [ -n "$A1" ] && [ "$A1" = "$A3" ] && echo ok || echo bad)" "$d differing definition lines; ACL md5 $A1 vs $A3"
+diff <(grep -E '^table.crm_recovery' "$REHEARSAL_DIR/m0-restored.tsv") <(grep -E '^table.crm_recovery' "$REHEARSAL_DIR/m3-final.tsv") > "$REHEARSAL_DIR/crm-recovery.diff"
+CRBASE="$(grep -cE '^table.crm_recovery' "$REHEARSAL_DIR/m0-restored.tsv" | tr -d ' ')"
+if [ "${CRBASE:-0}" -gt 0 ]; then check "crm_recovery tables (rows and hashes) are identical after all migrations, rollbacks and re-applies" "$([ ! -s "$REHEARSAL_DIR/crm-recovery.diff" ] && echo ok || echo bad)" "$CRBASE table(s) compared"; fi
 
 echo "== summary: $FAILS FAIL"
 exit "$FAILS"
