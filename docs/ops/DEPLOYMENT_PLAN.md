@@ -54,7 +54,7 @@ a physical Android device; the Play Console key roles; the credentials' current 
 | PostgREST image tag is `latest` | A restart can change the version under a tested release | **Pin before M1** (owner action) |
 | Existing backup: unencrypted, probably same bucket/credentials as documents, no off-Railway copy, never restore-tested | Backups are less safe than they look | Closed only by Step 2 |
 | `GET /api/admin/invoices` returns 500 at about 3,300 invoices | Irrelevant while the table is empty (post-reset) | Open, revisit when invoices grow |
-| Marketplace suites: `marketplace-live-suppliers-phase1` fails (tracked); `startup-smoke` not run in CI (tracked); `marketplace-catalogue-manager-pg` was failing because its **test adapter** called the old RPC (fixed, needs a CI Docker run to be promoted) | Marketplace is outside this release; the catalogue-size theory was wrong | Tracked, listed in every CI report |
+| Marketplace suites: `marketplace-live-suppliers-phase1` fails (tracked); `startup-smoke` not run in CI (tracked). `marketplace-catalogue-manager-pg` is fixed and required (its **test adapter** called the old RPC; the catalogue-size theory was wrong). `marketplace-ws0` failed once on the PostgreSQL 17 job and passed on retry; **cause not established** | Marketplace is outside this release | Tracked, listed in every CI report |
 
 ## 4. Gates
 
