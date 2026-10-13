@@ -1,4 +1,4 @@
-import { autoSizerEnabled } from "../lib/workspaceModules";
+import { autoSizerEnabled, companySettingsEnabled } from "../lib/workspaceModules";
 import React, { useEffect, useState } from "react";
 import {
   TrendingUp,
@@ -37,6 +37,7 @@ import PartyLedgerStaff from "./PartyLedgerStaff";
 import FinanceDashboardStaff from "./FinanceDashboardStaff";
 import ProjectOperationsDashboardStaff from "./ProjectOperationsDashboardStaff";
 import BrandingSettings from "./BrandingSettings";
+import CompanySettingsScreen from "./CompanySettingsScreen";
 import { canViewProjectProfit } from "../lib/projectFinance";
 import { canCreateInvoice } from "../lib/invoices";
 import { canViewFinanceDashboard } from "../lib/financeDashboard";
@@ -1695,6 +1696,7 @@ export default function AdminApp({
             onOpenInvoiceConsumed={() => setInvoiceEditId(null)}
           />
         )}
+        {activeSegment === 'company-settings' && companySettingsEnabled() && <CompanySettingsScreen />}
         {activeSegment === 'branding' && showBranding && (
           <BrandingSettings staffUser={staffUser} />
         )}

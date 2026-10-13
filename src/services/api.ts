@@ -1,4 +1,4 @@
-import { setWorkspaceModules } from "../lib/workspaceModules";
+import { getPlatformInfo, setPlatformInfo, setWorkspaceBrand, setWorkspaceModules, setWorkspaceNeutral } from "../lib/workspaceModules";
 import { setAuthoringIdentityNeutral } from "../lib/quoteAuthoring";
 import { Lead, Ticket, AppState, Quote, User, Product } from "../types";
 import {
@@ -193,7 +193,9 @@ export async function fetchAppState(): Promise<AppState> {
     }
     const state = await res.json();
     setWorkspaceModules(state?.modules);
+    setWorkspaceNeutral(state?.documentIdentity?.neutral === true);
     setAuthoringIdentityNeutral(state?.documentIdentity?.neutral === true);
+    if (state?.modules) void refreshWorkspaceBrand(); // multi-company: the workspace carries the company's own name and logo
     return state;
   } catch (err) {
     if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
@@ -2496,6 +2498,40 @@ export async function fetchAdminWhatsAppLogs(userId: string, username: string) {
   return res.json();
 }
 
+/** The sign-in screens call themselves "Sunchaser Sync" when the server hosts several companies (nothing else is learned from it). */
+export async function loadPlatformInfo(): Promise<void> {
+  try {
+    const res = await apiFetch("/api/auth/platform-info");
+    const data = await res.json().catch(() => ({}));
+    setPlatformInfo(res.ok ? { multiCompany: data.multiCompany === true, platformName: String(data.platformName || "Sunchaser Sync") } : null);
+  } catch {
+    setPlatformInfo(null);
+  }
+}
+
+/** Reads the signed-in company's own branding for the workspace header (staff and customers alike). */
+export async function refreshWorkspaceBrand(): Promise<void> {
+  try {
+    const b: any = await fetchCompanyBranding();
+    setWorkspaceBrand({ companyName: String(b?.companyName || ""), logoUrl: String(b?.logoUrl || "") });
+    setWorkspaceNeutral(b?.legacyDefaults === false); // only a company other than Sunchaser has its Sunchaser defaults switched off
+  } catch {
+    /* the header keeps what it had */
+  }
+}
+
+/** Called once someone is signed in: on the multi-company platform the workspace takes the company's name and logo. */
+export async function initWorkspaceIdentity(): Promise<void> {
+  await loadPlatformInfo();
+  if (getPlatformInfo()?.multiCompany) await refreshWorkspaceBrand();
+}
+
+/** Called at sign-out: nothing of one company's identity stays on screen for the next person. */
+export function clearWorkspaceIdentity(): void {
+  setWorkspaceBrand(null);
+  setWorkspaceNeutral(false);
+}
+
 export async function fetchCompanyBranding() {
   const res = await apiFetch("/api/branding");
   const data = await res.json().catch(() => ({}));
@@ -3511,3 +3547,31 @@ export async function fetchMarketplaceAutoImportListings(_staff?: {
     }>;
   };
 }
+
+// ---- Company settings (pilot companies): branding, bank accounts, terms, prices, with an audit history
+export type CompanySettingsView = {
+  companyId: string;
+  branding: Record<string, any>;
+  bankAccounts: Array<{ id?: string; bankName: string; accountTitle: string; accountNumber: string; iban: string; branchCode: string; isActive: boolean; showOnInvoice: boolean; sortOrder: number }>;
+  terms: string[];
+  priceSettings: { currencySettings: string; taxSettings: string; quoteValidityDays: number | null };
+  permissions: { canEdit: boolean; role: string };
+};
+export type CompanySettingsHistoryEntry = { id: string; section: string; summary: string; by: string; role: string | null; at: string; before: unknown; after: unknown };
+
+async function companySettingsJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(path, init);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as any)?.error || `Request failed (${res.status}).`);
+  return body as T;
+}
+
+export const fetchCompanySettings = () => companySettingsJson<CompanySettingsView>("/api/company/settings");
+export const fetchCompanySettingsHistory = () =>
+  companySettingsJson<{ available: boolean; history: CompanySettingsHistoryEntry[] }>("/api/company/settings/history?limit=100");
+export const saveCompanySettingsSection = (section: "branding" | "bank-accounts" | "terms" | "prices", body: Record<string, unknown>) =>
+  companySettingsJson<Record<string, any>>(`/api/company/settings/${section}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });

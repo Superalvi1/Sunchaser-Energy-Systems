@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getSupabase, isSupabaseActive } from "../../dbManager.js";
+import { getSupabase, getSystemSupabase, isSupabaseActive } from "../../dbManager.js";
 import { getCompanyBranding, saveCompanyBrandingChecked } from "../../brandingDb.ts";
 import { getCompanyContext } from "./companyContext.ts";
 import { scopedSettingKey, usesNeutralIdentity } from "./companyIdentity.ts";
@@ -16,6 +16,10 @@ import { FOUNDING_COMPANY_ID } from "./multiCompany.ts";
  *   PUT /api/company/settings/bank-accounts      same
  *   PUT /api/company/settings/terms              same
  *   PUT /api/company/settings/prices             same (currency, tax note, quotation validity; equipment prices are the company's products)
+ *   GET /api/company/settings/history            same roles: who changed which section, when, and the values before and after (newest first)
+ *
+ * Every successful change writes a row to company_settings_audit (append-only, migration t7). If that write fails the change itself stays
+ * (it already happened) and the response says auditRecorded:false and the failure is logged; before t7 is applied nothing is recorded.
  *
  * Quotations that were already saved keep the settings they were saved with (server/saas/settingsSnapshot.ts); changing a value here
  * changes later quotations only.
@@ -109,6 +113,43 @@ function companyIdOf(): string {
   return ctx?.kind === "company" ? ctx.companyId : FOUNDING_COMPANY_ID;
 }
 
+type AuditSection = "branding" | "bank_accounts" | "terms" | "prices";
+
+/** Records who changed what. Never throws: the change it describes has already been made. Returns whether the row was written. */
+export async function recordSettingsAudit(req: Request, section: AuditSection, summary: string, before: unknown, after: unknown): Promise<boolean> {
+  try {
+    const actor = (req as any).actor || {};
+    const { error } = await getSystemSupabase()!.from("company_settings_audit").insert({
+      id: `csa_${randomUUID()}`,
+      company_id: companyIdOf(),
+      section,
+      actor_user_id: actor.id || null,
+      actor_username: String(actor.username || actor.name || "unknown"),
+      actor_role: actor.role || null,
+      summary,
+      before_value: before ?? null,
+      after_value: after ?? null,
+    });
+    if (error) throw new Error(error.message);
+    return true;
+  } catch (err) {
+    console.error("[company-settings] audit row not written:", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+/** A short description of what differs, never the values themselves (those are in the before/after columns). */
+export function describeChange(section: AuditSection, before: any, after: any): string {
+  if (section === "branding") {
+    const keys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])].filter((k) => JSON.stringify(before?.[k] ?? "") !== JSON.stringify(after?.[k] ?? ""));
+    return keys.length ? `Branding changed: ${keys.join(", ")}` : "Branding saved (no value changed)";
+  }
+  if (section === "bank_accounts") return `Bank accounts changed: ${(before || []).length} -> ${(after || []).length} account(s)`;
+  if (section === "terms") return `Terms changed: ${(before || []).length} -> ${(after || []).length} clause(s)`;
+  const keys = Object.keys(after || {}).filter((k) => JSON.stringify(before?.[k] ?? "") !== JSON.stringify(after?.[k] ?? ""));
+  return keys.length ? `Price settings changed: ${keys.join(", ")}` : "Price settings saved (no value changed)";
+}
+
 function requireWriter(req: Request, res: Response): boolean {
   const role = String((req as any).actor?.role || "");
   if (!WRITE_ROLES.has(role)) {
@@ -183,10 +224,28 @@ function fail(res: Response, err: unknown) {
 }
 
 export function registerCompanySettingsRoutes(app: Express): void {
-  app.get("/api/company/settings", async (_req, res) => {
+  app.get("/api/company/settings", async (req, res) => {
     try {
       if (!isSupabaseActive()) return res.status(503).json({ error: "Company settings need the database." });
-      return res.json(await loadCompanySettings());
+      const role = String((req as any).actor?.role || "");
+      return res.json({ ...(await loadCompanySettings()), permissions: { canEdit: WRITE_ROLES.has(role), role } });
+    } catch (err) { return fail(res, err); }
+  });
+
+  app.get("/api/company/settings/history", async (req, res) => {
+    if (!requireWriter(req, res)) return;
+    try {
+      const limit = Math.min(200, Math.max(1, Math.floor(Number(req.query.limit)) || 50));
+      const { data, error } = await getSystemSupabase()!.from("company_settings_audit").select("*")
+        .eq("company_id", companyIdOf()).order("created_at", { ascending: false }).limit(limit);
+      if (error) {
+        if (/does not exist|schema cache|PGRST205|42P01/.test(`${error.code} ${error.message}`)) return res.json({ history: [], available: false });
+        throw new Error(error.message);
+      }
+      return res.json({
+        available: true,
+        history: (data || []).map((r: any) => ({ id: r.id, section: r.section, summary: r.summary, by: r.actor_username, role: r.actor_role, at: r.created_at, before: r.before_value, after: r.after_value })),
+      });
     } catch (err) { return fail(res, err); }
   });
 
@@ -194,9 +253,11 @@ export function registerCompanySettingsRoutes(app: Express): void {
     if (!requireWriter(req, res)) return;
     try {
       if (!isSupabaseActive()) return res.status(503).json({ error: "Company settings need the database." });
+      const before = await getCompanyBranding();
       const saved = await saveCompanyBrandingChecked(cleanBrandingInput(req.body) as any);
       await mirrorBrandingToPdfSettings(getSupabase()!, saved as any);
-      return res.json({ branding: saved });
+      const auditRecorded = await recordSettingsAudit(req, "branding", describeChange("branding", before, saved), before, saved);
+      return res.json({ branding: saved, auditRecorded });
     } catch (err) { return fail(res, err); }
   });
 
@@ -207,6 +268,7 @@ export function registerCompanySettingsRoutes(app: Express): void {
       const accounts = cleanBankAccountsInput(req.body);
       const supabase = getSupabase()!;
       const { data: existing } = await supabase.from("bank_accounts").select("id");
+      const beforeAccounts = await listBankAccounts(supabase);
       const rows = accounts.map((a) => ({
         id: a.id || `bank_${randomUUID()}`,
         bank_name: a.bankName, account_title: a.accountTitle, account_number: a.accountNumber, iban: a.iban,
@@ -222,7 +284,9 @@ export function registerCompanySettingsRoutes(app: Express): void {
         const { error } = await supabase.from("bank_accounts").delete().in("id", stale);
         if (error) throw new Error(error.message);
       }
-      return res.json({ bankAccounts: await listBankAccounts(supabase) });
+      const afterAccounts = await listBankAccounts(supabase);
+      const auditRecorded = await recordSettingsAudit(req, "bank_accounts", describeChange("bank_accounts", beforeAccounts, afterAccounts), beforeAccounts, afterAccounts);
+      return res.json({ bankAccounts: afterAccounts, auditRecorded });
     } catch (err) { return fail(res, err); }
   });
 
@@ -233,6 +297,7 @@ export function registerCompanySettingsRoutes(app: Express): void {
       const terms = cleanTermsInput(req.body);
       const supabase = getSupabase()!;
       const { data: existing } = await supabase.from("company_terms").select("id");
+      const beforeTerms = await listTerms(supabase);
       const rows = terms.map((t, i) => ({ id: `term_${randomUUID()}`, term_text: t, sort_order: i + 1 }));
       if (rows.length) {
         const { error } = await supabase.from("company_terms").insert(rows);
@@ -243,7 +308,9 @@ export function registerCompanySettingsRoutes(app: Express): void {
         const { error } = await supabase.from("company_terms").delete().in("id", stale);
         if (error) throw new Error(error.message);
       }
-      return res.json({ terms: await listTerms(supabase) });
+      const afterTerms = await listTerms(supabase);
+      const auditRecorded = await recordSettingsAudit(req, "terms", describeChange("terms", beforeTerms, afterTerms), beforeTerms, afterTerms);
+      return res.json({ terms: afterTerms, auditRecorded });
     } catch (err) { return fail(res, err); }
   });
 
@@ -257,7 +324,9 @@ export function registerCompanySettingsRoutes(app: Express): void {
       const next = { ...current, ...patch };
       const { error } = await supabase.from("settings").upsert({ key: scopedSettingKey("global"), value: next }, { onConflict: "key" });
       if (error) throw new Error(error.message);
-      return res.json({ priceSettings: { currencySettings: next.currencySettings ?? "", taxSettings: next.taxSettings ?? "", quoteValidityDays: next.quoteValidityDays ?? null } });
+      const view = (v: Record<string, any>) => ({ currencySettings: v.currencySettings ?? "", taxSettings: v.taxSettings ?? "", quoteValidityDays: v.quoteValidityDays ?? null });
+      const auditRecorded = await recordSettingsAudit(req, "prices", describeChange("prices", view(current), view(next)), view(current), view(next));
+      return res.json({ priceSettings: view(next), auditRecorded });
     } catch (err) { return fail(res, err); }
   });
 }

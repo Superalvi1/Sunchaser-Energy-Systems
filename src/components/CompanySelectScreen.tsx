@@ -1,3 +1,4 @@
+import { PlatformWordmark, usePlatformInfo } from "./PlatformMark";
 import React, { useState } from "react";
 import { Building2, Loader2 } from "lucide-react";
 import { selectCompany, type LoginCompany } from "../services/api";
@@ -10,6 +11,7 @@ export default function CompanySelectScreen({ companies, currentCompanyId, onSel
   onSelected: (user: User, companyId: string) => void | Promise<void>;
   onCancel?: () => void;
 }) {
+  const platformName = usePlatformInfo()?.platformName || "Sunchaser Sync"; // this screen exists only on the multi-company platform
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const choose = async (c: LoginCompany) => {
@@ -25,6 +27,7 @@ export default function CompanySelectScreen({ companies, currentCompanyId, onSel
     <main className="min-h-screen grid place-items-center bg-slate-950 px-6 text-slate-100" data-testid="company-select">
       <section className="w-full max-w-md space-y-4">
         <header className="text-center space-y-1">
+          <PlatformWordmark name={platformName} />
           <h1 className="text-xl font-bold">Choose a company</h1>
           <p className="text-sm text-slate-400">You work for more than one company. Pick the one to open.</p>
         </header>

@@ -86,8 +86,9 @@ const RULES: Rule[] = [
   { prefix: "/api/notifications", scope: "company" },
   { prefix: "/api/inventory/", scope: "company" },
   { prefix: "/api/branding", scope: "company" },
-  { prefix: "/api/conversations", scope: "company" },
-  { prefix: "/api/inbox", scope: "company" },
+  // The WhatsApp inbox needs a WhatsApp connection, which exists for the founding company only (/api/admin/whatsapp, /api/whatsapp-agent).
+  { prefix: "/api/conversations", scope: "founding_only" },
+  { prefix: "/api/inbox", scope: "founding_only" },
   { prefix: "/api/interactive-proposals", scope: "company" },
 ];
 

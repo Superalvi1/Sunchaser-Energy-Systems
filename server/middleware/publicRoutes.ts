@@ -13,6 +13,8 @@ const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   { method: "GET", path: "/health" },
   { method: "POST", path: "/api/auth/login" },
   { method: "POST", path: "/api/auth/register" },
+  // Which product the sign-in screen belongs to (multi-company platform or a single company). Names only; no company data.
+  { method: "GET", path: "/api/auth/platform-info" },
   { method: "POST", path: "/api/auth/verify-email" },
   { method: "GET", path: "/api/auth/verify-email" },
   { method: "POST", path: "/api/auth/forgot-password" },

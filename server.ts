@@ -1557,6 +1557,12 @@ app.use("/api/auth", (_req, res, next) => {
 });
 
 // 1. Auth — login, register, verify, reset, admin user management
+/** What the sign-in and company-selection screens should call themselves. The platform name is a product name, not company data. */
+app.get("/api/auth/platform-info", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.json(isMultiCompanyEnabled() ? { multiCompany: true, platformName: "Sunchaser Sync" } : { multiCompany: false });
+});
+
 app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body;
   const normalizedUsername = String(username || "").trim().toLowerCase();

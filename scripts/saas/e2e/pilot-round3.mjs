@@ -226,5 +226,44 @@ const newLead = (c, tag) => c.api("/api/leads", { method: "POST", body: JSON.str
 // leave the subscriptions in a clean, valid state for the other journeys
 psql(`update saas_subscriptions set current_period_end='${dayStr(30)}', limit_overrides='{}'::jsonb where company_id in ('co_alpha','co_beta')`);
 
+// ------------------------------------------------------------------ F. company settings: permissions and audit history
+console.log("\nF. company settings: permissions and history");
+for (const c of Object.values(CO)) {
+  const gs = await json(await c.salesApi("/api/company/settings"));
+  check(`${c.id}: a sales user can read the settings but is told it cannot edit`, gs.permissions?.canEdit === false && gs.permissions?.role === "Sales Executive");
+  const gsa = await json(await c.api("/api/company/settings"));
+  check(`${c.id}: the administrator is told it can edit`, gsa.permissions?.canEdit === true);
+  const forbidden = [
+    await c.salesApi("/api/company/settings/branding", { method: "PUT", body: JSON.stringify({ companyName: "HACK" }) }),
+    await c.salesApi("/api/company/settings/bank-accounts", { method: "PUT", body: JSON.stringify({ accounts: [] }) }),
+    await c.salesApi("/api/company/settings/terms", { method: "PUT", body: JSON.stringify({ terms: [] }) }),
+    await c.salesApi("/api/company/settings/prices", { method: "PUT", body: JSON.stringify({ currencySettings: "x" }) }),
+    await c.salesApi("/api/company/settings/history"),
+  ];
+  check(`${c.id}: a sales user is refused every change and the history (${forbidden.map((r) => r.status).join(",")})`, forbidden.every((r) => r.status === 403));
+  check(`${c.id}: nothing was changed by the refused calls`, !JSON.stringify(await json(await c.api("/api/company/settings"))).includes("HACK"));
+}
+for (const c of Object.values(CO)) {
+  const marker = `${c.id}-${RUN}`;
+  const r1 = await json(await c.api("/api/company/settings/branding", { method: "PUT", body: JSON.stringify({ companyName: c.name, officeAddress: `Office ${marker}`, terms: c.terms }) }));
+  const r2 = await json(await c.api("/api/company/settings/bank-accounts", { method: "PUT", body: JSON.stringify({ accounts: [acct(`AuditBank${marker}`, 333)] }) }));
+  const r3 = await json(await c.api("/api/company/settings/terms", { method: "PUT", body: JSON.stringify({ terms: [`Clause one ${marker}`, `Clause two ${marker}`] }) }));
+  const r4 = await json(await c.api("/api/company/settings/prices", { method: "PUT", body: JSON.stringify({ currencySettings: "PKR", taxSettings: `Tax note ${marker}`, quoteValidityDays: 21 }) }));
+  check(`${c.id}: four changes by the administrator each recorded an audit row`, [r1, r2, r3, r4].every((r) => r.auditRecorded === true));
+  const h = await json(await c.api("/api/company/settings/history?limit=20"));
+  const mine = (h.history || []).filter((e) => JSON.stringify(e).includes(marker));
+  check(`${c.id}: the history lists the changes, newest first, with who, when, section and before/after`, h.available === true && mine.length === 4 && mine[0].section === "prices" && mine.every((e) => e.by === c.user && e.role && e.at && e.summary) && new Date(h.history[0].at) >= new Date(h.history[1].at), JSON.stringify(h).slice(0, 300));
+  const bank = mine.find((e) => e.section === "bank_accounts");
+  check(`${c.id}: the bank-account entry holds the account before and after the change`, Array.isArray(bank?.before) && JSON.stringify(bank?.after).includes(`AuditBank${marker}`) && /->/.test(bank?.summary));
+  check(`${c.id}: every history row is stored under ${c.id}`, psql(`select count(*) from company_settings_audit where company_id <> '${c.id}' and (summary like '%${marker}%' or after_value::text like '%${marker}%')`) === "0");
+  check(`${c.id}: the history cannot be edited or deleted, even by the database owner`, (() => { for (const q of [`update company_settings_audit set summary='x' where company_id='${c.id}'`, `delete from company_settings_audit where company_id='${c.id}'`]) { try { psql(q); return false; } catch {} } return true; })());
+}
+{
+  const ha = JSON.stringify(await json(await CO.alpha.api("/api/company/settings/history?limit=200"))), hb = JSON.stringify(await json(await CO.beta.api("/api/company/settings/history?limit=200")));
+  check("neither company's history contains the other's entries", !ha.includes(`co_beta-${RUN}`) && !hb.includes(`co_alpha-${RUN}`) && ha.includes(`co_alpha-${RUN}`) && hb.includes(`co_beta-${RUN}`));
+  const fs = await FOUNDING.api("/api/company/settings/history");
+  check(`the history endpoint answers the founding company too, with its own (empty or own) history (${fs.status})`, fs.status === 200 && !JSON.stringify(await json(fs)).includes(RUN));
+}
+
 console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);
