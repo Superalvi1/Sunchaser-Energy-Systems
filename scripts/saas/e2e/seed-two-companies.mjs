@@ -18,7 +18,7 @@ if (process.argv.includes("--cleanup")) {
   // Remove everything the journeys created for the two synthetic companies (rows, memberships, users, companies).
   const here = path.dirname(fileURLToPath(import.meta.url));
   const classes = JSON.parse(fs.readFileSync(path.join(here, "..", "table-classification.json"), "utf8")).tables;
-  const tenant = Object.entries(classes).filter(([, v]) => ["tenant", "tenant_config", "tenant_existing_company_id"].includes(v.class)).map(([k]) => k);
+  const tenant = Object.entries(classes).filter(([, v]) => ["tenant", "tenant_config", "tenant_existing_company_id", "tenant_system"].includes(v.class)).map(([k]) => k);
   await db.query("set session_replication_role = replica");
   for (const t of tenant) {
     const has = await db.query("select 1 from information_schema.columns where table_schema='public' and table_name=$1 and column_name='company_id'", [t]);
