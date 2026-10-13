@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { QuotationEngineError } from "./QuotationModels.ts";
 import {
   buildSolarProduct,
+  buildSolarProductInput,
   createInMemoryProductCatalog,
   createSolarProduct,
   InMemoryProductCatalog,
@@ -25,22 +26,22 @@ check("isSolarProductCategory rejects unknown", !isSolarProductCategory("widget"
 check("isSolarProductUnit accepts piece", isSolarProductUnit("piece"));
 check("isSolarProductUnit rejects unknown", !isSolarProductUnit("gallon"));
 
-check("valid product passes validation", validateSolarProduct(buildSolarProduct()).ok);
+check("valid product passes validation", validateSolarProduct(buildSolarProductInput()).ok);
 check("valid product trims id", (() => {
-  const r = validateSolarProduct(buildSolarProduct({ id: " p1 " }));
+  const r = validateSolarProduct(buildSolarProductInput({ id: " p1 " }));
   return r.ok && r.product.id === "p1";
 })());
 
-check("missing id rejected", !validateSolarProduct(buildSolarProduct({ id: "" })).ok);
-check("invalid category rejected", !validateSolarProduct(buildSolarProduct({ category: "not-a-category" as never })).ok);
-check("missing name rejected", !validateSolarProduct(buildSolarProduct({ name: "" })).ok);
-check("missing brand rejected", !validateSolarProduct(buildSolarProduct({ brand: "" })).ok);
-check("invalid unit rejected", !validateSolarProduct(buildSolarProduct({ unit: "gallon" as never })).ok);
-check("negative unitCost rejected", !validateSolarProduct(buildSolarProduct({ unitCost: -1 })).ok);
-check("negative unitPrice rejected", !validateSolarProduct(buildSolarProduct({ unitPrice: -1 })).ok);
-check("non-object specs rejected", !validateSolarProduct(buildSolarProduct({ specs: null as never })).ok);
-check("non-boolean active rejected", !validateSolarProduct(buildSolarProduct({ active: "yes" as never })).ok);
-check("zero unitCost is valid (free/bundled item)", validateSolarProduct(buildSolarProduct({ unitCost: 0 })).ok);
+check("missing id rejected", !validateSolarProduct(buildSolarProductInput({ id: "" })).ok);
+check("invalid category rejected", !validateSolarProduct(buildSolarProductInput({ category: "not-a-category" as never })).ok);
+check("missing name rejected", !validateSolarProduct(buildSolarProductInput({ name: "" })).ok);
+check("missing brand rejected", !validateSolarProduct(buildSolarProductInput({ brand: "" })).ok);
+check("invalid unit rejected", !validateSolarProduct(buildSolarProductInput({ unit: "gallon" as never })).ok);
+check("negative unitCost rejected", !validateSolarProduct(buildSolarProductInput({ unitCost: -1 })).ok);
+check("negative unitPrice rejected", !validateSolarProduct(buildSolarProductInput({ unitPrice: -1 })).ok);
+check("non-object specs rejected", !validateSolarProduct(buildSolarProductInput({ specs: null as never })).ok);
+check("non-boolean active rejected", !validateSolarProduct(buildSolarProductInput({ active: "yes" as never })).ok);
+check("zero unitCost is valid (free/bundled item)", validateSolarProduct(buildSolarProductInput({ unitCost: 0 })).ok);
 
 check("createSolarProduct returns product for valid input", createSolarProduct(buildSolarProduct()).id === "panel-longi-550");
 check(

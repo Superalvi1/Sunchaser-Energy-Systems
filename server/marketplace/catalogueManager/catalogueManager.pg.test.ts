@@ -101,6 +101,7 @@ async function main(): Promise<void> {
     await apply(client, "scripts/marketplace-catalogue-manager-core.sql");
     await apply(client, "scripts/marketplace-ceo-auto-import-product-media.sql");
     await apply(client, "scripts/marketplace-catalogue-manager-list-rpc.sql");
+    await apply(client, "scripts/marketplace-ws1-public-rpc-contract.sql");
     // Idempotent re-apply
     await apply(client, "scripts/marketplace-catalogue-manager-core.sql");
     await apply(client, "scripts/marketplace-ceo-auto-import-product-media.sql");
@@ -833,17 +834,17 @@ async function main(): Promise<void> {
     function createPgCatalogueAdapter(pgClient: pg.Client) {
       return {
         rpc(name: string, params: Record<string, unknown>): Promise<SupabaseResult> {
+          // The repository calls mp_public_catalogue_list_v2; run exactly that function (an older adapter ran the v1 function,
+          // whose rows have no `product` key, so every list call failed with "list row shape invalid").
+          if (name !== "mp_public_catalogue_list_v2") {
+            return Promise.resolve({ data: null, error: new Error(`unexpected rpc ${name}`) });
+          }
           return pgClient.query(
-            `SELECT * FROM public.mp_public_catalogue_list($1::int, $2::int, $3::boolean, $4::text, $5::text)`,
-            [
-              params.p_limit ?? null,
-              params.p_offset ?? null,
-              params.p_featured ?? null,
-              params.p_brand_slug ?? null,
-              params.p_category_slug ?? null,
-            ],
+            `SELECT * FROM public.mp_public_catalogue_list_v2($1::text, $2::text, $3::boolean, $4::int, $5::int)`,
+            [params.p_category_slug ?? null, params.p_brand_slug ?? null, params.p_featured_only ?? null, params.p_limit ?? null, params.p_offset ?? null],
           ).then(
-            (r) => ({ data: r.rows as PgRow[], error: null }),
+            // PostgREST serialises bigint as a JSON number; node-pg returns int8 as a string.
+            (r) => ({ data: r.rows.map((row) => ({ ...row, total: Number(row.total) })) as PgRow[], error: null }),
             (err: unknown) => ({ data: null, error: err }),
           );
         },
@@ -862,6 +863,8 @@ async function main(): Promise<void> {
       };
     }
 
+    // v2 is fail-closed: only products with ws1_public = true are visible. Flag the bulk set the way an owner activation would.
+    await client.query(`update public.mp_products set ws1_public = true where id like 'pbulk_%'`);
     const pgAdapter = createPgCatalogueAdapter(client);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tsRepo = createSupabaseCatalogueRepository(() => pgAdapter as any, () => true);

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   Archive,
@@ -29,6 +29,7 @@ import {
   restoreAdminParty,
 } from "../services/api";
 import { canCreateInvoice, PAYMENT_METHODS, type PartyLedgerSummary } from "../lib/invoices";
+import { newPaymentRequestId } from "../lib/invoicePayments";
 import WhatsAppActionButton from "./WhatsAppActionButton";
 import AppLogo from "./AppLogo";
 import AppModal from "./ui/AppModal";
@@ -124,6 +125,8 @@ export default function PartyLedgerStaff({
   });
   const [paySaving, setPaySaving] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
+  // Same id for retries of one submission (lost response, double click); a new id for the next payment.
+  const payRequestId = useRef<string | null>(null);
   const [partiesError, setPartiesError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
 
@@ -216,10 +219,11 @@ export default function PartyLedgerStaff({
       receiptFile: null,
     });
     setPayError(null);
+    payRequestId.current = null;
   };
 
   const submitPayment = async () => {
-    if (!paymentModal) return;
+    if (!paymentModal || paySaving) return;
     const amount = Number(payForm.amount);
     if (!amount || amount <= 0) {
       setPayError("Enter a valid amount.");
@@ -227,6 +231,7 @@ export default function PartyLedgerStaff({
     }
     setPaySaving(true);
     setPayError(null);
+    payRequestId.current ||= newPaymentRequestId();
     try {
       const body: Record<string, unknown> = {
         amount,
@@ -234,6 +239,7 @@ export default function PartyLedgerStaff({
         paymentDate: payForm.paymentDate,
         notes: payForm.notes || undefined,
         referenceNumber: payForm.referenceNumber || undefined,
+        clientRequestId: payRequestId.current,
       };
       if (payForm.receiptFile) {
         const b64 = await new Promise<string>((resolve, reject) => {
@@ -250,6 +256,7 @@ export default function PartyLedgerStaff({
         body.mimeType = payForm.receiptFile.type;
       }
       await recordAdminInvoicePayment(staffUser, paymentModal.invoiceId, body);
+      payRequestId.current = null;
       setPaymentModal(null);
       await refreshAll();
     } catch (e: any) {
@@ -929,7 +936,7 @@ export default function PartyLedgerStaff({
                 <input
                   type="number"
                   value={payForm.amount}
-                  onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
+                  onChange={(e) => { payRequestId.current = null; setPayForm((f) => ({ ...f, amount: e.target.value })); }}
                   className="w-full mt-1 bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-neutral-100"
                 />
               </div>

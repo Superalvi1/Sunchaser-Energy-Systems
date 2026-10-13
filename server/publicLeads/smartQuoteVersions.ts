@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PublicQuoteLine } from "../../src/lib/publicQuotationBuilder.ts";
 import { normalizePakistanMobile, parseSmartQuoteLeadNotes, parseSmartQuotePdfArchive, quoteSnapshot, replaceSmartQuoteBlock } from "../../src/lib/smartQuoteLead.ts";
+import { namesPlausiblyMatch } from "../../src/lib/clientIdentity.ts";
 import { toPublicLeadInput, type SmartQuoteLeadInput } from "./smartQuoteLead.ts";
 
 export type SmartQuoteVersionPdf = { fileName: string; fileUrl: string; storagePath: string; sha256: string; sizeBytes: number; savedAt: string };
@@ -36,7 +37,12 @@ export type SmartQuoteInsertResult = "inserted" | "duplicate_quote" | "duplicate
 
 export type SmartQuoteVersionStore = {
   findByQuoteNumber(quoteNumber: string): Promise<SmartQuoteVersion | null>;
+  /** Newest active lead with this phone. Kept for older callers; saving uses {@link findActiveLeadsByPhone}. */
   findActiveLeadByPhone(phone: string): Promise<SmartQuoteLeadMatch | null>;
+  /** Every active lead whose phone normalises to the same number, newest first (a number can be shared by several clients). */
+  findActiveLeadsByPhone?(phone: string): Promise<SmartQuoteLeadMatch[]>;
+  /** The active (not deleted) lead with this id, or null. Used only for sources that were verified outside this module. */
+  getActiveLead?(leadId: string): Promise<SmartQuoteLeadMatch | null>;
   latestVersionNumber(leadId: string): Promise<number>;
   insert(version: SmartQuoteVersion): Promise<SmartQuoteInsertResult>;
   listByLead(leadId: string): Promise<SmartQuoteVersion[]>;
@@ -53,8 +59,36 @@ export class SmartQuoteVersionsUnavailableError extends Error {
   }
 }
 
+/**
+ * Where a submission came from. Only the route/adapter that verified the source may pass anything but "anonymous".
+ *  - anonymous: the public web form. NEVER attaches to an existing lead, whatever the name and phone say.
+ *  - verified-lead: the caller proved it may add to this exact lead (staff-signed link token, or the portal customer's
+ *    own session). It still joins only when the quotation's phone is the lead's current phone.
+ *  - verified-phone: the phone itself was authenticated by the channel (the WhatsApp sender number, signed by Meta), so
+ *    it may join a lead on that number whose name also plausibly matches (a number can be shared by several clients).
+ */
+export type SmartQuoteSource =
+  | { kind: "anonymous" }
+  | {
+      kind: "verified-lead";
+      leadId: string;
+      via: "staff-link-token" | "portal-session";
+      /** Phone the proof was issued for (link token). The lead's CURRENT phone must still equal it, so a token cannot outlive a phone change. */
+      issuedForPhone?: string;
+    }
+  | { kind: "verified-phone"; via: "whatsapp-sender" };
+
 export type SaveSmartQuoteResult =
-  | { kind: "created" | "replay"; leadId: string; versionNumber: number; leadCreated: boolean }
+  | {
+      kind: "created" | "replay";
+      leadId: string;
+      versionNumber: number;
+      leadCreated: boolean;
+      /** True when a verified source joined an existing lead (server-side logging only; never sent to the public client). */
+      attached?: boolean;
+      /** Why a verified source was ignored and the submission treated as anonymous (server-side logging only). */
+      fallback?: "lead_unavailable" | "phone_mismatch";
+    }
   | { kind: "conflict" };
 
 /** Content identity of a quotation; the client timestamp is excluded so a retry is a replay. */
@@ -81,13 +115,62 @@ function blockVersion(notes: string): number {
   return match ? Number(match[1]) : parseSmartQuoteLeadNotes(notes) ? 1 : 0;
 }
 
+const SHARED_PHONE_PREFIX = "Shared phone number:";
+
+/** One bounded, staff-facing line per lead; the ids let an admin open the other leads and merge deliberately. */
+export function sharedPhoneNoteLine(otherLeadIds: string[]): string {
+  const ids = [...new Set(otherLeadIds)].sort();
+  const listed = ids.slice(0, 3).join(", ");
+  const more = ids.length > 3 ? ` and ${ids.length - 3} more` : "";
+  return `${SHARED_PHONE_PREFIX} also used by ${listed}${more}. Quotations are kept separate; review before merging.`;
+}
+
+/** Leads sharing the phone, from the batch method when the store has one. */
+async function leadsSharingPhone(store: SmartQuoteVersionStore, phone: string): Promise<SmartQuoteLeadMatch[]> {
+  if (store.findActiveLeadsByPhone) return store.findActiveLeadsByPhone(phone);
+  const single = await store.findActiveLeadByPhone(phone);
+  return single ? [single] : [];
+}
+
+const POSSIBLE_EXISTING_PREFIX = "Possible existing client:";
+
+function safeNoteName(name: string): string {
+  return String(name || "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "unnamed";
+}
+
+/**
+ * Staff-facing hint written ONLY on the newly created lead (never on the existing one): an unverified guess that this
+ * visitor is a client already in the CRM. Staff merge deliberately; nothing is merged for them.
+ */
+export function possibleExistingClientNoteLine(candidates: Pick<SmartQuoteLeadMatch, "id" | "name">[]): string {
+  const unique = [...new Map(candidates.map((candidate) => [candidate.id, candidate])).values()].sort((a, b) => a.id.localeCompare(b.id));
+  const listed = unique.slice(0, 3).map((candidate) => `${candidate.id} (${safeNoteName(candidate.name)})`).join(", ");
+  const more = unique.length > 3 ? ` and ${unique.length - 3} more` : "";
+  return `${POSSIBLE_EXISTING_PREFIX} ${listed}${more}, unverified (same phone, similar name). Kept as a separate lead; review before merging.`;
+}
+
+/** The lines to add to a new lead's notes for staff: strong (name agrees) and weak (phone only) hints. */
+export function newLeadReviewNoteLines(others: SmartQuoteLeadMatch[], name: string): string[] {
+  const strong = others.filter((candidate) => namesPlausiblyMatch(candidate.name, name));
+  const weak = others.filter((candidate) => !strong.includes(candidate));
+  return [...(strong.length ? [possibleExistingClientNoteLine(strong)] : []), ...(weak.length ? [sharedPhoneNoteLine(weak.map((candidate) => candidate.id))] : [])];
+}
+
+export type SmartQuoteLeadCreateContext = {
+  /** Staff-facing lines to append to the NEW lead's notes (possible existing client, shared phone). */
+  extraNoteLines: string[];
+  /** True when another lead already uses this phone; callers should not message the number on that basis alone. */
+  phoneAlreadyInCrm: boolean;
+};
+
 export async function saveSmartQuoteSubmission(
   input: SmartQuoteLeadInput,
   deps: {
     store: SmartQuoteVersionStore;
-    createLead(input: SmartQuoteLeadInput, leadId: string): Promise<{ leadId: string; customerId: string | null }>;
+    createLead(input: SmartQuoteLeadInput, leadId: string, context: SmartQuoteLeadCreateContext): Promise<{ leadId: string; customerId: string | null }>;
     now?: () => Date;
   },
+  source: SmartQuoteSource = { kind: "anonymous" },
 ): Promise<SaveSmartQuoteResult> {
   const { store } = deps;
   const fingerprint = smartQuoteFingerprint(input);
@@ -99,18 +182,47 @@ export async function saveSmartQuoteSubmission(
   const existing = await store.findByQuoteNumber(input.quoteNumber);
   if (existing) return replayOrConflict(existing);
 
-  let lead = await store.findActiveLeadByPhone(input.phone);
+  // The phone lookup runs for every submission, matched or not, so the work (and what is written) is the same shape.
+  const sharing = await leadsSharingPhone(store, input.phone);
+  const newLeadId = deterministicSmartQuoteLeadId(input.quoteNumber);
+
+  // Only a source verified outside this function may join an existing lead. Anything else, including an unusable
+  // verified source, behaves exactly like a brand-new client.
+  let lead: SmartQuoteLeadMatch | null = null;
+  let fallback: "lead_unavailable" | "phone_mismatch" | undefined;
+  if (source.kind === "verified-lead") {
+    const target = (await store.getActiveLead?.(source.leadId)) ?? null;
+    if (!target) fallback = "lead_unavailable";
+    else if (
+      normalizePakistanMobile(target.phone) !== normalizePakistanMobile(input.phone) ||
+      (source.issuedForPhone !== undefined && normalizePakistanMobile(target.phone) !== normalizePakistanMobile(source.issuedForPhone))
+    ) fallback = "phone_mismatch";
+    else lead = target;
+  } else if (source.kind === "verified-phone") {
+    lead = sharing.find((candidate) => candidate.id !== newLeadId && namesPlausiblyMatch(candidate.name, input.name)) ?? null;
+  }
+
   let leadCreated = false;
   if (!lead) {
-    const created = await deps.createLead(input, deterministicSmartQuoteLeadId(input.quoteNumber));
+    const others = sharing.filter((candidate) => candidate.id !== newLeadId);
+    let created: { leadId: string; customerId: string | null };
+    try {
+      created = await deps.createLead(input, newLeadId, { extraNoteLines: newLeadReviewNoteLines(others, input.name), phoneAlreadyInCrm: others.length > 0 });
+    } catch (error) {
+      // A concurrent identical first submission may have created this very lead between our lookup and our insert.
+      const winner = (await leadsSharingPhone(store, input.phone)).find((candidate) => candidate.id === newLeadId);
+      if (!winner) throw error;
+      created = { leadId: winner.id, customerId: winner.customerId };
+    }
     lead = { id: created.leadId, customerId: created.customerId, notes: "", name: input.name, phone: input.phone, city: input.city ?? null };
     leadCreated = true;
   } else {
     await preserveLegacyQuotation(store, lead, input.quoteNumber);
   }
+  const attached = !leadCreated;
 
   const createdAt = (deps.now?.() ?? new Date()).toISOString();
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 15; attempt++) {
     const versionNumber = (await store.latestVersionNumber(lead.id)) + 1;
     const result = await store.insert({
       id: `sqv-${createHash("sha256").update(input.quoteNumber).digest("hex").slice(0, 32)}`,
@@ -140,9 +252,13 @@ export async function saveSmartQuoteSubmission(
       const winner = await store.findByQuoteNumber(input.quoteNumber);
       return winner ? replayOrConflict(winner) : { kind: "conflict" };
     }
-    if (result === "duplicate_version") continue;
+    if (result === "duplicate_version") {
+      // Another revision of this lead took the number: back off briefly (jittered) so a burst of parallel revisions settles.
+      await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * 10 * (attempt + 1))));
+      continue;
+    }
     await promoteLatestBlock(store, lead.id, smartQuoteVersionNotes(input, versionNumber), versionNumber);
-    return { kind: "created", leadId: lead.id, versionNumber, leadCreated };
+    return { kind: "created", leadId: lead.id, versionNumber, leadCreated, attached, ...(fallback ? { fallback } : {}) };
   }
   throw new Error("Could not allocate a quotation version. Please retry.");
 }
@@ -189,13 +305,14 @@ async function preserveLegacyQuotation(store: SmartQuoteVersionStore, lead: Smar
 
 /** Keep the CRM lead's summary pointing at its newest version without touching staff notes. */
 async function promoteLatestBlock(store: SmartQuoteVersionStore, leadId: string, block: string, versionNumber: number) {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 12; attempt++) {
     const current = await store.readLeadNotes(leadId);
     if (current === null) return;
     const currentQuote = parseSmartQuoteLeadNotes(current)?.quoteNumber;
     if (currentQuote && blockVersion(current) > versionNumber) return;
     if (currentQuote && currentQuote === parseSmartQuoteLeadNotes(block)?.quoteNumber && /^Version: /m.test(current)) return;
     if (await store.replaceLeadNotes(leadId, current, replaceSmartQuoteBlock(current, block))) return;
+    await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * 8 * (attempt + 1))));
   }
   throw new Error("Lead changed repeatedly while saving the quotation summary. Please retry.");
 }
@@ -244,27 +361,38 @@ function check<T>(result: { data: T; error: any }): T {
 
 export function createPostgrestSmartQuoteVersionStore(client: SupabaseClient): SmartQuoteVersionStore {
   const table = () => client.from("smart_quote_versions");
+  const findActiveLeadsByPhone = async (phone: string): Promise<SmartQuoteLeadMatch[]> => {
+    const canonical = normalizePakistanMobile(phone);
+    if (!canonical) return [];
+    // Prefilter: the last seven digits in order with anything between them, so "0301-123-45-67" is a candidate too.
+    // The decision is the full normalised equality below, so the prefilter can add candidates but never matches.
+    const pattern = `%${canonical.slice(-7).split("").join("%")}%`;
+    const rows = check(
+      await client
+        .from("leads")
+        .select("id,name,phone,location,customer_id,notes,created_at")
+        .is("deleted_at", null)
+        .ilike("phone", pattern)
+        .order("created_at", { ascending: false })
+        .limit(200),
+    ) as VersionRow[];
+    return (rows || [])
+      .filter((row) => normalizePakistanMobile(String(row.phone || "")) === canonical)
+      .map((row) => ({ id: row.id, customerId: row.customer_id ?? null, notes: String(row.notes || ""), name: String(row.name || ""), phone: String(row.phone || ""), city: row.location || null }));
+  };
   return {
     async findByQuoteNumber(quoteNumber) {
       const row = check(await table().select("*").eq("quote_number", quoteNumber).maybeSingle());
       return row ? fromRow(row) : null;
     },
+    findActiveLeadsByPhone,
     async findActiveLeadByPhone(phone) {
-      const canonical = normalizePakistanMobile(phone);
-      if (!canonical) return null;
-      const rows = check(
-        await client
-          .from("leads")
-          .select("id,name,phone,location,customer_id,notes,created_at")
-          .is("deleted_at", null)
-          .ilike("phone", `%${canonical.slice(-4)}%`)
-          .order("created_at", { ascending: false })
-          .limit(200),
-      ) as VersionRow[];
-      const match = (rows || []).find((row) => normalizePakistanMobile(String(row.phone || "")) === canonical);
-      return match
-        ? { id: match.id, customerId: match.customer_id ?? null, notes: String(match.notes || ""), name: String(match.name || ""), phone: String(match.phone || ""), city: match.location || null }
-        : null;
+      return (await findActiveLeadsByPhone(phone))[0] ?? null;
+    },
+    async getActiveLead(leadId) {
+      const row = check(await client.from("leads").select("id,name,phone,location,customer_id,notes,deleted_at").eq("id", leadId).maybeSingle()) as VersionRow | null;
+      if (!row || row.deleted_at) return null;
+      return { id: row.id, customerId: row.customer_id ?? null, notes: String(row.notes || ""), name: String(row.name || ""), phone: String(row.phone || ""), city: row.location || null };
     },
     async latestVersionNumber(leadId) {
       const row = check(await table().select("version_number").eq("lead_id", leadId).order("version_number", { ascending: false }).limit(1).maybeSingle()) as VersionRow | null;

@@ -89,6 +89,7 @@ import {
   type PdfQualityMode,
   getAuthoringTemplateMeta,
   resolveAuthoringPageType,
+  type AuthoringPageType,
   sanitizeQuoteEditorHtml,
 } from "../lib/quoteAuthoring";
 import {
@@ -200,6 +201,44 @@ const QUICK_QUOTE_LEAD: Lead = {
   createdAt: new Date().toISOString(),
   notes: "Ephemeral quotation context. Never persist as a CRM lead.",
   quotes: [],
+};
+
+/**
+ * Unsaved edits of one quote-template page. Every field is optional because a page only carries the fields the
+ * author has changed; the saved values come from the stored page and its parsed extended settings.
+ */
+type LocalTemplatePageState = {
+  title?: string;
+  body_text?: string;
+  body_html?: string;
+  image_url?: string;
+  bg_image_url?: string;
+  is_enabled?: boolean;
+  saveStatus?: 'Saved' | 'Unsaved' | 'Saving...';
+  authoringPageType?: AuthoringPageType;
+  layoutMode?: string;
+  coverLayoutMode?: string;
+  densityMode?: string;
+  fontFamily?: string;
+  fontSize?: string;
+  lineHeight?: string;
+  paragraphSpacing?: string;
+  paddingTop?: string;
+  paddingBottom?: string;
+  contentWidth?: string;
+  textAlign?: string;
+  headingColor?: string;
+  bodyColor?: string;
+  imageSections?: any[];
+  bodyImages?: any[];
+  headerMode?: string; headerText?: string; headerLogoUrl?: string; headerLogoSize?: string; headerLineColor?: string; headerAlignment?: string;
+  footerMode?: string; footerText?: string; footerLineColor?: string; footerAlignment?: string;
+  watermarkUrl?: string; watermarkOpacity?: number; watermarkPosition?: string;
+  sigCeoEnabled?: boolean; sigCeoName?: string; sigCeoTitle?: string; sigCeoUrl?: string;
+  sigSalesEnabled?: boolean; sigSalesName?: string; sigSalesTitle?: string; sigSalesUrl?: string;
+  sigTechEnabled?: boolean; sigTechName?: string; sigTechTitle?: string; sigTechUrl?: string;
+  sigLeftName?: string; sigLeftTitle?: string; sigLeftSignatureUrl?: string;
+  sigRightName?: string; sigRightTitle?: string; sigRightSignatureUrl?: string;
 };
 
 export default function SalesTeamApp({
@@ -535,14 +574,7 @@ export default function SalesTeamApp({
   };
 
   // State for Quote Templates Print Preview & Save enhancements
-  const [localPageStates, setLocalPageStates] = useState<Record<string, {
-    title?: string;
-    body_text?: string;
-    image_url?: string;
-    bg_image_url?: string;
-    is_enabled?: boolean;
-    saveStatus?: 'Saved' | 'Unsaved' | 'Saving...';
-  }>>({});
+  const [localPageStates, setLocalPageStates] = useState<Record<string, LocalTemplatePageState>>({});
   const [previewPage, setPreviewPage] = useState<any | null>(null);
   const [printPageData, setPrintPageData] = useState<any | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("tmpl-1");
@@ -5166,7 +5198,7 @@ export default function SalesTeamApp({
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleDeleteProduct(p.id)}
+                                onClick={() => handleDeleteProduct(String(p.id))}
                                 className="bg-slate-900 hover:bg-slate-800 border border-slate-800 text-rose-400 p-1.5 rounded-lg cursor-pointer transition"
                                 title="Delete Product"
                               >

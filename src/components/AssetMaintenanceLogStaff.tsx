@@ -6,7 +6,8 @@ import {
   listAdminAfterSalesServiceLogs,
   upsertAdminPortalProfile,
 } from "../services/api";
-import { SERVICE_HISTORY_TYPES } from "../lib/clientPortalServiceHistory";
+import { SERVICE_HISTORY_TYPES, type ServiceHistoryType } from "../lib/clientPortalServiceHistory";
+import { pickOption } from "../lib/optionGuards";
 
 interface AssetMaintenanceLogStaffProps {
   staffUser: User;
@@ -15,7 +16,7 @@ interface AssetMaintenanceLogStaffProps {
 export default function AssetMaintenanceLogStaff({ staffUser }: AssetMaintenanceLogStaffProps) {
   const [customerId, setCustomerId] = useState("");
   const [projectId, setProjectId] = useState("");
-  const [serviceType, setServiceType] = useState(SERVICE_HISTORY_TYPES[0]);
+  const [serviceType, setServiceType] = useState<ServiceHistoryType>(SERVICE_HISTORY_TYPES[0]);
   const [serviceDate, setServiceDate] = useState("");
   const [technician, setTechnician] = useState("");
   const [description, setDescription] = useState("");
@@ -99,7 +100,10 @@ export default function AssetMaintenanceLogStaff({ staffUser }: AssetMaintenance
         />
         <select
           value={serviceType}
-          onChange={(e) => setServiceType(e.target.value)}
+          onChange={(e) => {
+            const next = pickOption(SERVICE_HISTORY_TYPES, e.target.value);
+            if (next) setServiceType(next);
+          }}
           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
         >
           {SERVICE_HISTORY_TYPES.map((t) => (

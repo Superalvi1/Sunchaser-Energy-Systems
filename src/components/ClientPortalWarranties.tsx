@@ -34,7 +34,7 @@ export default function ClientPortalWarranties({ user }: ClientPortalWarrantiesP
   const [installedRegistry, setInstalledRegistry] = useState<any[]>([]);
   const [handover, setHandover] = useState<any | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [component, setComponent] = useState(WARRANTY_COMPONENT_TYPES[0].label);
+  const [component, setComponent] = useState<string>(WARRANTY_COMPONENT_TYPES[0].label);
   const [equipmentId, setEquipmentId] = useState("");
   const [issueDescription, setIssueDescription] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");

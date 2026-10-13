@@ -28,7 +28,7 @@ const STATIC_ALLOWED_ORIGINS = new Set<string>([
 
 const ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
 const ALLOW_HEADERS =
-  "Content-Type, Authorization, Accept, Origin, X-Requested-With, X-Public-Lead-Key, Idempotency-Key";
+  "Content-Type, Authorization, Accept, Origin, X-Requested-With, X-Public-Lead-Key, Idempotency-Key, X-Smart-Quote-Link";
 
 function parseEnvOrigins(raw: string | undefined): string[] {
   return String(raw || "")

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { pickOption } from "../lib/optionGuards";
 import { Wrench, Camera, Package, ClipboardList } from "lucide-react";
 import { User } from "../types";
 import {
@@ -26,16 +27,16 @@ export default function AfterSalesStaffTools({ staffUser }: AfterSalesStaffTools
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const [equipType, setEquipType] = useState(EQUIPMENT_TYPES[0].key);
+  const [equipType, setEquipType] = useState<(typeof EQUIPMENT_TYPES)[number]["key"]>(EQUIPMENT_TYPES[0].key);
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [serial, setSerial] = useState("");
 
-  const [photoCategory, setPhotoCategory] = useState(INSTALLATION_PHOTO_CATEGORIES[0].key);
+  const [photoCategory, setPhotoCategory] = useState<(typeof INSTALLATION_PHOTO_CATEGORIES)[number]["key"]>(INSTALLATION_PHOTO_CATEGORIES[0].key);
   const [photoUrl, setPhotoUrl] = useState("");
   const [voiceNoteUrl, setVoiceNoteUrl] = useState("");
 
-  const [serviceType, setServiceType] = useState(AFTER_SALES_SERVICE_TYPES[0]);
+  const [serviceType, setServiceType] = useState<(typeof AFTER_SALES_SERVICE_TYPES)[number]>(AFTER_SALES_SERVICE_TYPES[0]);
   const [componentChanged, setComponentChanged] = useState("");
   const [newDetails, setNewDetails] = useState("");
   const [technician, setTechnician] = useState("");
@@ -204,7 +205,10 @@ export default function AfterSalesStaffTools({ staffUser }: AfterSalesStaffTools
         </p>
         <select
           value={equipType}
-          onChange={(e) => setEquipType(e.target.value)}
+          onChange={(e) => {
+            const next = pickOption(EQUIPMENT_TYPES.map((t) => t.key), e.target.value);
+            if (next) setEquipType(next);
+          }}
           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
         >
           {EQUIPMENT_TYPES.map((t) => (
@@ -229,7 +233,10 @@ export default function AfterSalesStaffTools({ staffUser }: AfterSalesStaffTools
         </p>
         <select
           value={photoCategory}
-          onChange={(e) => setPhotoCategory(e.target.value)}
+          onChange={(e) => {
+            const next = pickOption(INSTALLATION_PHOTO_CATEGORIES.map((c) => c.key), e.target.value);
+            if (next) setPhotoCategory(next);
+          }}
           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
         >
           {INSTALLATION_PHOTO_CATEGORIES.map((c) => (
@@ -260,7 +267,10 @@ export default function AfterSalesStaffTools({ staffUser }: AfterSalesStaffTools
         <p className="text-sm font-bold">After-sales service log</p>
         <select
           value={serviceType}
-          onChange={(e) => setServiceType(e.target.value)}
+          onChange={(e) => {
+            const next = pickOption(AFTER_SALES_SERVICE_TYPES, e.target.value);
+            if (next) setServiceType(next);
+          }}
           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm"
         >
           {AFTER_SALES_SERVICE_TYPES.map((t) => (

@@ -1030,6 +1030,15 @@
   "paymentTracks": {},
   "activityLogs": [
     {
+      "id": "log-1791525244091",
+      "timestamp": "2026-10-09T05:54:04.091Z",
+      "userId": "u-test-admin",
+      "userName": "Test Super Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Role Super Admin · status Approved"
+    },
+    {
       "id": "log-1783415260075",
       "timestamp": "2026-07-07T09:07:40.075Z",
       "userId": "surveyor",

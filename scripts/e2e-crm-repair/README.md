@@ -27,12 +27,25 @@ node scripts/e2e-crm-repair/j1-staff-crm.mjs    # CRM lead list, saved versions,
 node scripts/e2e-crm-repair/j2-price-change.mjs # see header: needs a temporary catalogue price change and rebuild
 node scripts/e2e-crm-repair/j6-finance.mjs      # quotation → invoice → partial payment, retries, overpayment, audit
 node scripts/e2e-crm-repair/link-portal.mjs     # links the synthetic portal user to the j6 client
+node scripts/e2e-crm-repair/j8-payment-concurrency.mjs # parallel payments: request-id retries, overpayment race, edit/delete races, audit rows
 node scripts/e2e-crm-repair/j3-documents.mjs    # uploads: rejected types, interrupted/lost-response retries, refresh, re-login, cross-customer
 node scripts/e2e-crm-repair/j5-rename.mjs       # rename client; invoices, documents and portal stay linked
 node scripts/e2e-crm-repair/j7-session.mjs      # reopen keeps session (renewed); expiry, suspension, logout
 node scripts/e2e-crm-repair/j4-whatsapp.mjs     # signed inbound enquiry → no automatic lead → explicit conversion
+node scripts/e2e-crm-repair/j9-logout.mjs       # server-side logout/revocation; start the server with SESSION_REFRESH_GRACE_SECONDS=3 SESSION_REVOCATION_REPROBE_MS=300 REFRESH_RATE_LIMIT_MAX=500; also needs E2E_PGRST_PID, POSTGREST_BIN, E2E_STACK_DIR
+node scripts/e2e-crm-repair/j9-logout-browser.mjs # the SPA logout button (set E2E_CHROMIUM if Playwright browsers are elsewhere)
+node scripts/e2e-crm-repair/j10-smartquote-link.mjs # Smart Quote link tokens: anonymous never attaches; staff link/portal session joins; forged/expired/stale tokens; concurrency; response parity (needs JWT_SECRET)
 ```
 
 Each script prints `PASS`/`FAIL` lines, writes `<journey>-results.json` and screenshots under `$E2E_STATE_DIR`,
 and exits non-zero on any failure. Session checks run the web code that the Android WebView loads; they are
 not a physical-device test.
+
+## Payment guard review (J11)
+
+`j11-*` reproduce the independent review of `scripts/invoice-payments-integrity.sql` (see `docs/ops/payment-guard-review.md`). They need two app instances
+(`E2E_BASE_URL`, `E2E_BASE_URL_2`; a third optional via `E2E_BASE_URL_3` for the stress) and touch only the disposable stack:
+
+```bash
+E2E_BASE_URL_2=http://127.0.0.1:3804 bash scripts/e2e-crm-repair/j11-run-all.sh   # everything, in the right order
+```

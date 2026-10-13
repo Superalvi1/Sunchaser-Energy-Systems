@@ -109,6 +109,8 @@ export default function InvoiceStaff({
   const [recordingPayment, setRecordingPayment] = useState(false);
   // One id per payment submission; a retry after a timeout reuses it so the server cannot double count.
   const paymentRequestId = useRef<string | null>(null);
+  // updated_at of the invoice as last loaded into the form; the server refuses a save made on top of a newer version.
+  const loadedVersion = useRef<string | null>(null);
   const [editingItem, setEditingItem] = useState<number|null>(null);
   const [itemDraft,setItemDraft] = useState<InvoiceLineItem>(emptyLine);
   const editMobileItem=(index:number)=>{setEditingItem(index);setItemDraft({...draft.items[index]});};
@@ -285,6 +287,7 @@ export default function InvoiceStaff({
 
   const selectInvoice = (inv: any) => {
     const meta = decodeInvoiceMeta(inv.notes);
+    loadedVersion.current = inv.updatedAt || null;
     setSelectedId(inv.id);
     setEditorOpen(true);
     setEditorTab("invoice");
@@ -590,7 +593,11 @@ export default function InvoiceStaff({
     };
     try {
       if (selectedId) {
-        await updateAdminInvoice(staffUser, selectedId, body);
+        const saved = await updateAdminInvoice(staffUser, selectedId, {
+          ...body,
+          ...(loadedVersion.current ? { expectedUpdatedAt: loadedVersion.current } : {}),
+        }) as { invoice?: any };
+        loadedVersion.current = saved?.invoice?.updatedAt || loadedVersion.current;
         setMsg("Invoice saved.");
       } else {
         const res = await createAdminInvoice(staffUser, body);

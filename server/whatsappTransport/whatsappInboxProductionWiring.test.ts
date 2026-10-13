@@ -504,6 +504,26 @@ await test("createLead: duplicate pick is deterministic (oldest created_at, then
   assert.equal(suggestion!.linkedEntityId, "lead-a");
 });
 
+await test("createLead: a phone used by several active leads is flagged ambiguous; a single lead is not", async () => {
+  const wa = new InMemoryWhatsAppRepository();
+  const seeded = await seedWaConversation(wa, "923001112233");
+  const lead = (id: string, phone: string, created: string) => ({ id, phone, deleted_at: null, created_at: created });
+  const suggest = async (leads: any[]) => {
+    const opts = buildProductionInboxServiceOptions({
+      resolveLocalDb: () => ({ users: [staffUser()], leads }) as any,
+      whatsappRepo: wa,
+      persistLead: async () => { throw new Error("should not persist"); },
+    });
+    return opts.findDuplicate!({ conversationId: seeded.conversation.id, companyId: "sunchaser", actor });
+  };
+  const single = await suggest([lead("lead-1", "03001112233", "2026-01-01T00:00:00.000Z")]);
+  assert.equal(single!.linkedEntityId, "lead-1");
+  assert.equal(single!.ambiguous, false);
+  const shared = await suggest([lead("lead-1", "03001112233", "2026-01-01T00:00:00.000Z"), lead("lead-2", "+923001112233", "2026-02-01T00:00:00.000Z")]);
+  assert.equal(shared!.linkedEntityId, "lead-1", "still the oldest, as before");
+  assert.equal(shared!.ambiguous, true);
+});
+
 await test("createLead: duplicate lookup database failure does not create a lead", async () => {
   const wa = new InMemoryWhatsAppRepository();
   const seeded = await seedWaConversation(wa, "923001112233");

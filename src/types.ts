@@ -29,6 +29,9 @@ export interface Quote {
   status: 'Pending' | 'Accepted' | 'Declined';
   createdAt: string;
 
+  /** Frozen Terms & Conditions the quotation was saved with (historical freeze). Written by the quote builder, stored by dbManager. */
+  termsSnapshot?: import("./lib/quoteTermsSnapshot").QuoteTermsSnapshot;
+
   // Custom Lahore/Pakistan quotation fields
   clientName?: string;
   clientPhone?: string;

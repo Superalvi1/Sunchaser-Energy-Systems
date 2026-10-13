@@ -161,6 +161,18 @@ check("panel / inverter / battery product ids survive AI draft → BOQ", () => {
   assert.equal(rows.find((r) => r.id === "battery_row")?.catalogProductId, "web_soluna-512");
 });
 
+check("building the AI draft makes no network call and is marked draft-only", () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; throw new Error("network trapped"); }) as typeof fetch;
+  try {
+    const apply = buildCommercialDraftApply(base);
+    assert.equal(apply.draftOnly, true);
+    assert.ok(apply.boqRows.length > 0);
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = realFetch; }
+});
+
 check("website implied PKR/W is not forced as quote rate", () => {
   const apply = buildCommercialDraftApply({ ...base, panelRatePerWatt: 50 });
   const panel = apply.boqRows.find((r) => r.id === "panel_row")!;

@@ -11,7 +11,16 @@ import {
   saveSmartQuoteSubmission,
   smartQuoteVersionNotes,
   SmartQuoteVersionsUnavailableError,
+  type SmartQuoteSource,
 } from "./server/publicLeads/smartQuoteVersions.ts";
+import {
+  issueSmartQuoteLinkToken,
+  SMART_QUOTE_LINK_DEFAULT_TTL_SECONDS,
+  SMART_QUOTE_LINK_MAX_TTL_SECONDS,
+  SmartQuoteLinkUnavailableError,
+} from "./server/publicLeads/smartQuoteLinkToken.ts";
+import { hydrateActorFromJwt, readBearerToken } from "./server/middleware/actor.ts";
+import { normalizePakistanMobile } from "./src/lib/smartQuoteLead.ts";
 import { buildPublicLeadRecord } from "./server/publicLeads/publicLeadService.ts";
 import { randomUUID, createHash } from "crypto";
 
@@ -324,7 +333,7 @@ import {
   DeliveryManagementDbError,
 } from "./deliveryManagementDb.js";
 import {
-  authenticateUser,
+  authenticateUserWithCredentials,
   registerUser,
   backfillUnlinkedClientUsers,
   verifyEmailToken,
@@ -343,11 +352,21 @@ import {
   SupabaseUnavailableError,
   mapUserRow,
   findUserByUsername,
+  revokeAllSessions,
 } from "./userAuthDb.js";
 import { mergeStaffEditedLeadNotes, parseSmartQuoteLeadNotes } from "./src/lib/smartQuoteLead";
 import { describeInvoiceChange } from "./server/finance/paymentLedger.ts";
 import { quotePdfObjectKey, addPdfArchiveToNotes } from "./server/publicLeads/smartQuotePdfArchive";
-import { assertProductionJwtConfig, canRenewSession, sessionMaxAgeSeconds, sessionStartedAtSeconds, signAccessToken, verifyAccessToken } from "./server/auth/jwt.ts";
+import { assertProductionJwtConfig, canRenewSession, passwordVersion, sessionMaxAgeSeconds, signAccessToken } from "./server/auth/jwt.ts";
+import {
+  probeRevocationStore,
+  purgeExpiredRevocations,
+  refreshGraceSeconds,
+  revocationStatus,
+  revokeSessionNow,
+  rotateSession,
+  RevocationLookupError,
+} from "./server/auth/revocation.ts";
 import { createPostgrestCompanyStore, listCompanyMemberUserIds } from "./server/saas/companyStore.ts";
 import { assertMultiCompanyConfig, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
 import { getCompanyContext, runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
@@ -378,7 +397,7 @@ import {
   filterExportStateForSales,
   financeRouteLockdownErrorResponse,
 } from "./server/middleware/financeRouteLockdown.ts";
-import { loginRateLimit } from "./server/middleware/rateLimit.ts";
+import { loginRateLimit, refreshRateLimit } from "./server/middleware/rateLimit.ts";
 import { handleAiChatPost, configureAiChatRoute } from "./server/ai/chatRoute.ts";
 import {
   createPublicLeadRouter,
@@ -449,6 +468,7 @@ import {
   listAdminCustomerDocuments,
   prepareLeadCustomerProfile,
   assertCustomerAdmin,
+  assertCustomerUploadTarget,
   assignCustomerDocument,
   uploadFileToCustomerStorage,
   fetchCustomerPortalSystemMe,
@@ -535,7 +555,7 @@ async function syncQuotationVaultForLead(
 ) {
   if (!quoteId || !leadId) return;
   const customerId =
-    (await findExistingCustomerIdForLinking({ phone: lead.phone, email: lead.email }, localDb)) ||
+    (await findExistingCustomerIdForLinking({ phone: lead.phone, email: lead.email, name: lead.name }, localDb)) ||
     customerIdHint ||
     null;
   if (!customerId) return;
@@ -601,7 +621,17 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   }
   return next(err);
 });
-app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
+// Files here are staff-supplied and served before authentication on the CRM origin: never let them run script.
+app.use("/uploads", express.static(path.join(__dirname, "public", "uploads"), {
+  setHeaders: (res, filePath) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    // Raster images and PDFs cannot run script (type comes from the extension, nosniff stops sniffing); everything else
+    // (html, svg, xml ...) is sandboxed. A sandbox header would also stop Chrome's built-in PDF viewer, so PDFs are exempt.
+    if (!/\.(pdf|png|jpe?g|gif|webp)$/i.test(filePath)) {
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+    }
+  },
+}));
 
 /**
  * Stable signed capability URL for private Railway bucket objects.
@@ -619,6 +649,7 @@ app.get("/api/storage/object/:namespace/:encodedKey", async (req, res) => {
     const object = await getRailwayObject(verified.namespace, verified.key);
     if (!object) return res.status(404).json({ error: "Object not found." });
     res.setHeader("Content-Type", object.contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "private, max-age=300");
     if (object.etag) res.setHeader("ETag", object.etag);
     return res.send(object.body);
@@ -658,7 +689,9 @@ const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,mess
   const smartQuoteInput:SmartQuoteLeadInput={name:requirements.name,phone,city:requirements.city,quoteNumber,systemCapacityKw:requirements.systemCapacityKw,estimatedTotalPkr:result.totalPkr,panel:`${requirements.panelQuantity} × ${result.panel.brand} ${result.panel.watts}W`,inverter:`${requirements.inverterQuantity} × ${result.inverter.brand} ${result.inverter.capacityKw}kW`,battery:requirements.batteryId ? `${requirements.batteryQuantity} × ${result.battery.brand} ${result.battery.capacityKwh}kWh` : "Not included",structure:result.structureLabel,generatedAt,snapshot:{lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr}};
   let leadId=agentLeadId;
   try {
-    const saved=await saveSmartQuote(smartQuoteInput,{sendWelcome:false});
+    // The WhatsApp sender number is authenticated by Meta (signed webhook), so it is a verified phone; it still joins an
+    // existing lead only when that lead's name also plausibly matches. The customer-chosen name alone never attaches.
+    const saved=await saveSmartQuote(smartQuoteInput,{sendWelcome:false},{kind:"verified-phone",via:"whatsapp-sender"});
     if(saved.kind==="conflict") throw new Error("Quotation number conflict.");
     leadId=saved.leadId;
   } catch(error) {
@@ -812,21 +845,56 @@ async function persistPublicMarketingLead(
   return { leadId: newLead.id, customerId: persistedCustomerId };
 }
 
-/** Versioned Smart Quote save: one lead per client phone, one immutable row per quote number. */
-async function saveSmartQuote(input: SmartQuoteLeadInput, options: { sendWelcome?: boolean } = {}) {
+/**
+ * Versioned Smart Quote save: one immutable row per quote number. An anonymous submission always gets its own lead (keyed
+ * by quote number); it joins an existing lead only through a verified `source` (staff link token, the portal customer's
+ * own session, or the authenticated WhatsApp sender number).
+ */
+async function saveSmartQuote(input: SmartQuoteLeadInput, options: { sendWelcome?: boolean } = {}, source: SmartQuoteSource = { kind: "anonymous" }) {
   if (!isSupabaseActive()) throw new SmartQuoteVersionsUnavailableError();
   const supabase = getSupabase()!;
   return saveSmartQuoteSubmission(input, {
     store: createPostgrestSmartQuoteVersionStore(supabase),
-    createLead: async (quote, leadId) => {
+    createLead: async (quote, leadId, context) => {
       // A concurrent retry of the same first quotation may have created this lead already.
       const { data: existing } = await supabase.from("leads").select("id,customer_id,deleted_at").eq("id", leadId).maybeSingle();
       if (existing && !existing.deleted_at) return { leadId: existing.id, customerId: existing.customer_id ?? null };
-      const record = { ...buildPublicLeadRecord({ ...toPublicLeadInput(quote), notes: smartQuoteVersionNotes(quote, 1) }), id: leadId };
-      const created = await persistPublicMarketingLead(record, options);
+      const notes = [smartQuoteVersionNotes(quote, 1), ...context.extraNoteLines].join("\n");
+      const record = { ...buildPublicLeadRecord({ ...toPublicLeadInput(quote), notes }), id: leadId };
+      // The welcome message is sent detached, and never to a number that is already a CRM client on the strength of an
+      // unverified web form. Detaching keeps the request's timing the same whether or not the number matched a lead.
+      const created = await persistPublicMarketingLead(record, { ...options, sendWelcome: false });
+      if (options.sendWelcome !== false && !context.phoneAlreadyInCrm) {
+        setTimeout(() => {
+          triggerWhatsAppNotification(quote.name, quote.phone, "survey_confirmation", `☀️ Hi ${quote.name}! Thanks for contacting Sunchaser Energy. Our team will follow up shortly.`)
+            .catch((error: unknown) => console.warn("[smart-quotes] welcome notification failed:", error instanceof Error ? error.message : error));
+        }, 1000 + Math.floor(Math.random() * 3000)).unref();
+      }
       return { leadId: created.leadId, customerId: created.customerId ?? null };
     },
-  });
+  }, source);
+}
+
+/**
+ * The logged-in portal customer's own lead for a Smart Quote, or null. The session comes from the Authorization header
+ * of the public request (the public form works without it); anything but a valid Customer session is ignored. Among the
+ * customer's leads the newest one whose phone equals the quotation's phone is used, so a customer cannot be steered onto
+ * a lead for a different number.
+ */
+async function resolvePortalCustomerLeadId(req: express.Request, quote: SmartQuoteLeadInput): Promise<string | null> {
+  const token = readBearerToken(req);
+  if (!token || !isSupabaseActive()) return null;
+  const hydrated = await hydrateActorFromJwt(token, resolveAuthLocalDb());
+  if (!hydrated.ok || hydrated.actor.role !== "Customer" || !hydrated.actor.customerId) return null;
+  const { data } = await getSupabase()!
+    .from("leads")
+    .select("id,phone,created_at")
+    .eq("customer_id", hydrated.actor.customerId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  const wanted = normalizePakistanMobile(quote.phone);
+  return (data || []).find((row: any) => wanted && normalizePakistanMobile(String(row.phone || "")) === wanted)?.id ?? null;
 }
 
 // Archive the exact PDF downloaded by a guest, scoped to their captured quotation.
@@ -892,7 +960,8 @@ app.use(
   "/api/public",
   createPublicLeadRouter({
     persistLead: persistPublicMarketingLead,
-    saveSmartQuote: (input) => saveSmartQuote(input),
+    saveSmartQuote: (input, source) => saveSmartQuote(input, {}, source),
+    resolvePortalLeadId: resolvePortalCustomerLeadId,
     archivePdf: archivePublicSmartQuotePdf,
   })
 );
@@ -1377,6 +1446,13 @@ async function triggerWhatsAppNotification(customerName: string, phone: string, 
 
 /* --- REST SYSTEM API GATEWAYS --- */
 
+// Token-bearing and session responses must never be stored by a browser, proxy or CDN cache.
+app.use("/api/auth", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  next();
+});
+
 // 1. Auth — login, register, verify, reset, admin user management
 app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body;
@@ -1389,7 +1465,7 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
 
   try {
     loadDb();
-    const user = await authenticateUser(normalizedUsername, normalizedPassword, db);
+    const { user, passwordHash, sessionEpoch } = await authenticateUserWithCredentials(normalizedUsername, normalizedPassword, db);
     const multi = isMultiCompanyEnabled();
     const companies = multi ? await listLoginCompanies(user, companyStore) : undefined;
     // One company: the session is bound to it. Several: the client must choose (POST /api/auth/select-company).
@@ -1399,6 +1475,8 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
       username: user.username,
       role: user.role,
       companyId,
+      passwordVersion: passwordVersion(passwordHash),
+      sessionEpoch,
     });
     const logLogin = () =>
       appendActivityLog(user.id, user.name, user.role, "User Logged In", `Role ${user.role} · status ${user.accountStatus}`);
@@ -1438,18 +1516,92 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
   }
 });
 
-// Sliding renewal for a verified session: an expired, suspended or deleted account cannot renew.
-app.post("/api/auth/refresh", requireAuth, async (req, res) => {
-  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
-  // requireAuth already verified this token; renewal never extends past the absolute session age.
-  const startedAt = sessionStartedAtSeconds(String(req.headers.authorization || "").replace(/^Bearer\s+/i, ""));
-  if (!canRenewSession(startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
-    return res.status(401).json({ error: "Your session has ended. Please sign in again." });
+// Sliding renewal for a verified session. requireAuth has already re-checked the account (suspended, deleted,
+// password changed, absolute session age); the renewed token keeps the original sign-in time, so it never
+// outlives sst + SESSION_MAX_AGE_DAYS, and carries the role and password version read from the database.
+app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) => {
+  const session = req.authSession;
+  if (!req.actor || !session) return res.status(401).json({ error: "Unauthorized" });
+  if (!canRenewSession(session.startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
+    return res.status(401).json({ error: "Your session has ended. Please sign in again.", code: "session_ended" });
   }
-  const raw = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const companyId = isMultiCompanyEnabled() ? verifyAccessToken(raw).companyId : undefined;
-  const token = signAccessToken({ userId: req.actor.id, username: req.actor.username, role: req.actor.role, sessionStartedAt: startedAt!, companyId });
+  const token = signAccessToken({
+    userId: req.actor.id,
+    username: req.actor.username,
+    role: req.actor.role,
+    sessionStartedAt: session.startedAt!,
+    passwordVersion: session.passwordVersion,
+    sessionEpoch: session.sessionEpoch,
+    sessionId: session.sessionId || undefined,
+    companyId: isMultiCompanyEnabled() ? req.actor.companyId : undefined,
+  });
+  // Rotation: the presented token is retired after a short grace (so requests already in flight with it still
+  // succeed) and remembers its successor. If it was ALREADY revoked (logout raced this refresh), no new token is
+  // handed out. If the revocation store cannot be written, the refresh fails (503) rather than leaving two live
+  // sessions behind; the client keeps its current token and retries later.
+  try {
+    if (!isSupabaseActive()) loadDb(); // the JSON store is only the revocation backend without a data API
+    const rotated = await rotateSession(session.keys, req.actor.id, session.tokenExpiresAt, refreshGraceSeconds(), db);
+    if (rotated.alreadyRevoked) return res.status(401).json({ error: "Unauthorized" });
+    if (!isSupabaseActive()) saveDb();
+  } catch (err) {
+    if (err instanceof RevocationLookupError) {
+      return res.status(503).json({ error: "Session service temporarily unavailable. Please retry." });
+    }
+    throw err;
+  }
   return res.json({ success: true, token, user: actorToApiUser(req.actor) });
+});
+
+// Sign out THIS session only: the presented token's id is recorded as revoked until the token would have expired
+// anyway; other devices keep their own tokens. Idempotent. Always answers 200 for a valid session; `revoked:false`
+// says the server could not record it (migration not applied) so the client does not pretend otherwise.
+app.post("/api/auth/logout", requireAuth, async (req, res) => {
+  const session = req.authSession;
+  if (!req.actor || !session) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    if (!isSupabaseActive()) loadDb();
+    // A family key lives until the session's absolute limit (every renewed token ends by then); a lone key until its token's exp.
+    const endsAt = session.keys.family && session.startedAt ? session.startedAt + sessionMaxAgeSeconds() : session.tokenExpiresAt;
+    const out = await revokeSessionNow(session.keys.logoutKey, req.actor.id, endsAt, db);
+    if (!isSupabaseActive()) saveDb();
+    return res.json({ success: true, revoked: out.stored, ...(out.stored ? {} : { reason: "revocation_inactive" }) });
+  } catch (err) {
+    if (err instanceof RevocationLookupError) {
+      return res.status(503).json({ error: "Could not end the session on the server. Please retry.", code: "revocation_unavailable" });
+    }
+    console.error("[Logout Error]:", err);
+    return res.status(500).json({ error: "Could not end the session." });
+  }
+});
+
+// Sign out of EVERY device: bumps users.session_epoch, so all earlier tokens (including copies) stop working.
+app.post("/api/auth/logout-all", requireAuth, async (req, res) => {
+  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    loadDb();
+    await revokeAllSessions(req.actor.id, db);
+    saveDb();
+    return res.json({ success: true });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: "Could not end the sessions." });
+  }
+});
+
+// Admin: end every session of one user (stolen device, departing employee) without suspending the account.
+app.post("/api/admin/users/:id/revoke-sessions", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff) return;
+  try {
+    loadDb();
+    const user = await updateUserByAdmin(staff.id, staff.username, req.params.id, { revokeSessions: true }, db);
+    saveDb();
+    return res.json({ success: true, user });
+  } catch (err: any) {
+    if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Multi-company mode: a user who belongs to several companies picks the one this session acts for.
@@ -1460,12 +1612,23 @@ app.post("/api/auth/select-company", requireAuth, async (req, res) => {
   const companies = await listLoginCompanies(req.actor, companyStore);
   const chosen = companies.find((c) => c.id === wanted);
   if (!chosen) return res.status(403).json({ error: "You are not a member of this company.", code: "not_a_member" });
-  const raw = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const startedAt = sessionStartedAtSeconds(raw);
-  if (!canRenewSession(startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
+  const session = req.authSession;
+  if (!session) return res.status(401).json({ error: "Unauthorized" });
+  if (!canRenewSession(session.startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
     return res.status(401).json({ error: "Your session has ended. Please sign in again." });
   }
-  const token = signAccessToken({ userId: req.actor.id, username: req.actor.username, role: chosen.role, sessionStartedAt: startedAt!, companyId: chosen.id });
+  // Same session family, password version and epoch as the presented token, so logout / revoke-all / password change
+  // still end the session; only the company claim differs. Membership is re-checked on every request anyway.
+  const token = signAccessToken({
+    userId: req.actor.id,
+    username: req.actor.username,
+    role: chosen.role,
+    sessionStartedAt: session.startedAt!,
+    passwordVersion: session.passwordVersion,
+    sessionEpoch: session.sessionEpoch,
+    sessionId: session.sessionId || undefined,
+    companyId: chosen.id,
+  });
   return res.json({ success: true, token, companyId: chosen.id, role: chosen.role, companies });
 });
 
@@ -1961,6 +2124,49 @@ app.post("/api/leads/:id/customer-profile", async (req, res) => {
   }
 });
 
+/**
+ * Staff issue a signed link that lets one client's Smart Quote join THIS lead as its next version. The only way for a
+ * public (not logged-in) quotation to attach to an existing lead; names and phone numbers alone never do.
+ */
+app.post("/api/leads/:id/smart-quote-link", async (req, res) => {
+  const staff = resolveStaffActor(req, res);
+  if (!staff || !(await guardSalesOwnedResource(req, res, "lead", req.params.id))) return;
+  try {
+    let lead: { id: string; phone: string } | null = null;
+    if (isSupabaseActive()) {
+      const { data } = await getSupabase()!.from("leads").select("id,phone,deleted_at").eq("id", req.params.id).maybeSingle();
+      if (data && !data.deleted_at) lead = { id: data.id, phone: String(data.phone || "") };
+    } else {
+      loadDb();
+      const local = (db.leads as any[]).find((l) => l.id === req.params.id && !l.deletedAt);
+      if (local) lead = { id: local.id, phone: String(local.phone || "") };
+    }
+    if (!lead) return res.status(404).json({ error: "Lead not found." });
+    const phone = normalizePakistanMobile(lead.phone);
+    if (!phone) return res.status(422).json({ error: "Add a valid mobile number to this lead before creating a Smart Quote link." });
+    const days = req.body?.days === undefined ? SMART_QUOTE_LINK_DEFAULT_TTL_SECONDS / 86400 : Number(req.body.days);
+    if (!Number.isFinite(days) || days < 1 / 24 || days > SMART_QUOTE_LINK_MAX_TTL_SECONDS / 86400) {
+      return res.status(400).json({ error: "days must be between 1 hour and 30 days." });
+    }
+    const { token, expiresAt } = issueSmartQuoteLinkToken({ leadId: lead.id, phone, ttlSeconds: Math.round(days * 86400) });
+    const configured = String(process.env.SMART_QUOTE_PUBLIC_URL || "").trim();
+    const base = configured || (process.env.NODE_ENV === "production" ? "https://smartquote.sunchaserenergy.co/quote" : `${req.protocol}://${req.get("host")}/quote`);
+    const url = new URL(base);
+    url.searchParams.set("link", token);
+    try {
+      await appendActivityLog(staff.id, staff.username, staff.role, "Smart Quote Link Issued", `Lead ${lead.id}, expires ${new Date(expiresAt).toISOString()}`);
+    } catch (logError) {
+      console.warn("[smart-quote-link] activity log failed:", logError instanceof Error ? logError.message : logError);
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ leadId: lead.id, url: url.toString(), token, expiresAt: new Date(expiresAt).toISOString() });
+  } catch (error) {
+    if (error instanceof SmartQuoteLinkUnavailableError) return res.status(503).json({ error: "Smart Quote links are not configured on this server." });
+    console.error("[smart-quote-link] issue failed:", error instanceof Error ? error.message : error);
+    return res.status(500).json({ error: "Could not create the Smart Quote link." });
+  }
+});
+
 app.get("/api/leads/:id/smart-quote-versions", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff || !(await guardSalesOwnedResource(req, res, "lead", req.params.id))) return;
@@ -2024,8 +2230,9 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
   const uploadId = typeof clientUploadId === "string" && /^[A-Za-z0-9_-]{8,80}$/.test(clientUploadId) ? clientUploadId : null;
   try {
     loadDb();
-    // Authorize before anything is written to storage.
+    // Authorize and validate the target before anything is written to storage.
     await assertCustomerAdmin(userId, username, role, db);
+    await assertCustomerUploadTarget(String(customerId), documentType || "other", db);
     const objectId = uploadId ? createHash("sha256").update(`${customerId}\n${uploadId}`).digest("hex").slice(0, 32) : undefined;
     const { url, storagePath } = await uploadFileToCustomerStorage(
       String(customerId),
@@ -2053,6 +2260,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
     return res.status(201).json(doc);
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    console.error("[customer-documents] upload failed:", err?.message || err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -4323,6 +4531,15 @@ app.get("/api/admin/invoices/:id", async (req, res) => {
   }
 });
 
+/** Maps an invoice write failure to a coded 4xx; anything unexpected is logged and answered without database text. */
+function invoiceMutationErrorResponse(err: any, res: express.Response, action: string) {
+  if (err instanceof InvoiceDbError) {
+    return res.status(err.statusCode).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+  }
+  console.error(`[Invoice] ${action} failed: ${err?.code || ""} ${err?.message || err}`);
+  return res.status(500).json({ error: "The invoice change could not be saved. Reload the invoice and try again.", code: "INVOICE_WRITE_FAILED" });
+}
+
 app.post("/api/admin/invoices", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
@@ -4335,8 +4552,7 @@ app.post("/api/admin/invoices", async (req, res) => {
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "create");
   }
 });
 
@@ -4354,8 +4570,7 @@ app.patch("/api/admin/invoices/:id", async (req, res) => {
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "edit");
   }
 });
 
@@ -4371,8 +4586,7 @@ app.post("/api/admin/invoices/:id/payments", async (req, res) => {
   } catch (err: any) {
     if (financeOwnershipErrorResponse(err, res)) return;
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "payment");
   }
 });
 
@@ -4387,8 +4601,7 @@ app.post("/api/admin/invoices/:id/archive", async (req, res) => {
     return res.json({ invoice, ok: true, message: "Invoice archived." });
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "archive");
   }
 });
 
@@ -4404,8 +4617,7 @@ app.delete("/api/admin/invoices/:id", async (req, res) => {
     return res.json(result);
   } catch (err: any) {
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
-    if (err instanceof InvoiceDbError) return res.status(err.statusCode).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
+    return invoiceMutationErrorResponse(err, res, "delete");
   }
 });
 
@@ -4834,13 +5046,18 @@ app.get("/api/customer-portal/:customerId", async (req, res) => {
 app.post("/api/admin/customer-documents", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
-  const { id: userId, username } = staff;
+  const { id: userId, username, role } = staff;
   try {
     loadDb();
-    const doc = await createAdminCustomerDocument(userId, username, req.body || {}, db);
+    // Same gate as /upload and /assign: any other staff role could otherwise attach files to any client.
+    await assertCustomerAdmin(userId, username, role, db);
+    // The caller may not choose which bucket object a row points at; uploads set storagePath themselves.
+    const { storagePath: _clientChosenPath, ...body } = req.body || {};
+    const doc = await createAdminCustomerDocument(userId, username, body, db);
     saveDb();
     return res.status(201).json(doc);
   } catch (err: any) {
+    if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
     if (err instanceof StaffPortalAuthError) return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message || "Failed to save document." });
   }
@@ -10601,7 +10818,9 @@ setInterval(() => runAsFoundingCompany(async () => {
 
 // Simple health check and status endpoints for separated deployments
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", service: "sunchaser-crm" });
+  const revocation = revocationStatus();
+  // sessionRevocationActive=false means logout/refresh rotation cannot revoke tokens (migration not applied or disabled).
+  res.json({ status: "ok", service: "sunchaser-crm", sessionRevocationActive: revocation.active });
 });
 
 /** PDF engine diagnostic — confirms Playwright/Chromium availability on this host (Render, not Vercel). */
@@ -10729,6 +10948,11 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[Sunchaser Energy ERP] listening on port ${PORT}`);
+    if (!isSupabaseActive()) loadDb();
+    void probeRevocationStore(db);
+    // Rows are only needed until the revoked token would have expired; purge best-effort every 6 hours.
+    const purge = setInterval(() => { void purgeExpiredRevocations(db); }, 6 * 3600 * 1000);
+    purge.unref?.();
   });
 
   const shutdownMessaging = () => {

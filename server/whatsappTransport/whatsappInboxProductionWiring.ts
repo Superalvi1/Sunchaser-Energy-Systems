@@ -183,7 +183,7 @@ function leadCreatedAtMs(row: LeadDupRow): number {
 function pickDeterministicLeadId(
   rows: LeadDupRow[],
   canonicalPhone: string
-): string | null {
+): { leadId: string; ambiguous: boolean } | null {
   const matches: LeadDupRow[] = [];
   for (const row of rows) {
     if (!isActiveLead(row)) continue;
@@ -197,7 +197,8 @@ function pickDeterministicLeadId(
     if (byCreated !== 0) return byCreated;
     return String(a.id || "").localeCompare(String(b.id || ""));
   });
-  return String(matches[0]!.id || "").trim() || null;
+  const leadId = String(matches[0]!.id || "").trim();
+  return leadId ? { leadId, ambiguous: matches.length > 1 } : null;
 }
 
 /**
@@ -213,7 +214,7 @@ async function findActiveLeadIdByNormalizedPhone(
   canonicalPhone: string,
   companyId: string,
   resolveLocalDb: () => Database
-): Promise<string | null> {
+): Promise<{ leadId: string; ambiguous: boolean } | null> {
   requireDefaultCompanyLeadScope(companyId);
 
   const forms = pakistanMobileLookupForms(canonicalPhone);
@@ -348,13 +349,13 @@ export function buildProductionInboxServiceOptions(
       getWhatsAppRepo(),
       conversationId
     );
-    const leadId = await findActiveLeadIdByNormalizedPhone(
+    const found = await findActiveLeadIdByNormalizedPhone(
       phone,
       companyId,
       deps.resolveLocalDb
     );
-    if (!leadId) return null;
-    return { linkedEntityType: "lead", linkedEntityId: leadId };
+    if (!found) return null;
+    return { linkedEntityType: "lead", linkedEntityId: found.leadId, ambiguous: found.ambiguous };
   };
 
   return { assignees, createLead, findDuplicate };

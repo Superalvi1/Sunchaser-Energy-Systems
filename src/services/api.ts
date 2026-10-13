@@ -1153,6 +1153,14 @@ export async function fetchLeadSmartQuoteVersions(leadId: string): Promise<{ ava
   return data;
 }
 
+/** Staff: a signed Smart Quote URL that adds the client's next quotation to THIS lead (valid up to 30 days). */
+export async function issueLeadSmartQuoteLink(leadId: string, days?: number): Promise<{ url: string; expiresAt: string }> {
+  const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/smart-quote-link`, { method: "POST", body: JSON.stringify(days ? { days } : {}) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Could not create the Smart Quote link.");
+  return data;
+}
+
 export async function prepareLeadCustomerProfile(leadId: string): Promise<{ customerId: string }> {
   const res = await apiFetch(`/api/leads/${encodeURIComponent(leadId)}/customer-profile`, { method: "POST", body: "{}" });
   const data = await res.json().catch(() => ({}));
@@ -1404,6 +1412,30 @@ export async function refreshAuthToken(): Promise<string> {
     throw Object.assign(new Error(parsed.error || `Session refresh failed (HTTP ${res.status}).`), { status: res.status });
   }
   return parsed.token;
+}
+
+/**
+ * Ends THIS device's session on the server (other devices stay signed in). The token is passed explicitly because
+ * callers clear local storage right after; `keepalive` lets the request finish even if the page is closing.
+ * Resolves true only when the server confirmed; callers must treat any failure as non-fatal.
+ */
+export async function logoutOnServer(token: string, timeoutMs = 4000): Promise<boolean> {
+  const res = await fetch(`${API_BASE_URL}/api/auth/logout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: "{}",
+    keepalive: true,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  return res.ok;
+}
+
+/** Ends every session of the signed-in user on all devices (needs the server's session-epoch migration). */
+export async function signOutEverywhere(): Promise<void> {
+  const res = await apiFetch("/api/auth/logout-all", { method: "POST", body: "{}", signal: AbortSignal.timeout(12000) });
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(parsed.error || `Could not sign out of all devices (HTTP ${res.status}).`);
+  clearAuthSession();
 }
 
 export async function loginUser(
@@ -3260,13 +3292,13 @@ export type PublicSmartQuoteLeadPayload = {
   generatedAt: string;
 };
 
+import { publicSmartQuoteHeaders, readSmartQuoteLinkToken } from "../lib/smartQuoteLinkClient";
+
 export async function submitPublicSmartQuoteLead(payload: PublicSmartQuoteLeadPayload) {
+  const portalToken = getStoredUser()?.role === "Customer" ? getStoredAuthToken() : null;
   const res = await fetch(`${API_BASE_URL}/api/public/smart-quotes`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Idempotency-Key": `smart-quote:${payload.quoteNumber}`,
-    },
+    headers: publicSmartQuoteHeaders(payload.quoteNumber, readSmartQuoteLinkToken(), portalToken),
     body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => ({}));
