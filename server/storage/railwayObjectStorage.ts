@@ -91,16 +91,20 @@ async function signedBucketRequest(
   method: "GET" | "PUT" | "DELETE",
   namespace: RailwayObjectNamespace,
   objectKey: string,
-  options: { body?: Buffer; contentType?: string; ifMatch?: string; ifNoneMatch?: string } = {},
+  options: { body?: Buffer; contentType?: string; ifMatch?: string; ifNoneMatch?: string; listQuery?: Record<string, string> } = {},
 ): Promise<Response> {
   const config = resolveRailwayObjectStorageConfig();
   if (!config) throw new Error("Railway object storage is not configured.");
 
-  const fullKey = normalizeObjectKey(namespace, objectKey);
+  // Bucket-level listing (ListObjectsV2) addresses "/" with a sorted, encoded query string; every object request addresses its key.
+  const fullKey = options.listQuery ? "" : normalizeObjectKey(namespace, objectKey);
   const endpointHost = config.endpoint.host;
   const host = `${config.bucket}.${endpointHost}`;
-  const canonicalUri = encodePath(fullKey);
-  const url = `${config.endpoint.protocol}//${host}${canonicalUri}`;
+  const canonicalUri = options.listQuery ? "/" : encodePath(fullKey);
+  const canonicalQuery = options.listQuery
+    ? Object.entries(options.listQuery).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`).join("&")
+    : "";
+  const url = `${config.endpoint.protocol}//${host}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`;
   const body = options.body ?? Buffer.alloc(0);
   const payloadHash = sha256Hex(body);
   const { full: xAmzDate, short: date } = amzTimestamp();
@@ -113,7 +117,7 @@ async function signedBucketRequest(
   const canonicalRequest = [
     method,
     canonicalUri,
-    "",
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders,
     payloadHash,
@@ -198,6 +202,45 @@ export async function deleteRailwayObject(
   const code = await s3ErrorCode(res);
   if (res.status === 404 && code !== "NoSuchBucket") return;
   throw await failure(res, "delete", code);
+}
+
+/**
+ * Keys of the objects whose key starts with `<namespace>/<prefix>`, following the continuation tokens (S3 returns at most 1000 per page).
+ * Returned keys are relative to the namespace, as every other function here takes them. Used by the company export tool.
+ */
+export async function listRailwayObjects(
+  namespace: RailwayObjectNamespace,
+  prefix: string,
+  options: { pageSize?: number } = {},
+): Promise<Array<{ key: string; size: number; etag: string | null }>> {
+  const out: Array<{ key: string; size: number; etag: string | null }> = [];
+  let token: string | undefined;
+  const nsPrefix = `${namespace}/`;
+  for (let page = 0; page < 100_000; page++) {
+    const query: Record<string, string> = { "list-type": "2", prefix: `${nsPrefix}${String(prefix || "").replace(/^\/+/, "")}` };
+    if (options.pageSize) query["max-keys"] = String(options.pageSize);
+    if (token) query["continuation-token"] = token;
+    const res = await signedBucketRequest("GET", namespace, "", { listQuery: query });
+    if (!res.ok) throw await failure(res, "list");
+    const xml = await res.text();
+    for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const key = /<Key>([\s\S]*?)<\/Key>/.exec(m[1])?.[1];
+      if (!key || !key.startsWith(nsPrefix)) continue;
+      out.push({
+        key: decodeXml(key.slice(nsPrefix.length)),
+        size: Number(/<Size>(\d+)<\/Size>/.exec(m[1])?.[1] || 0),
+        etag: /<ETag>([\s\S]*?)<\/ETag>/.exec(m[1])?.[1]?.replace(/&quot;/g, '"') ?? null,
+      });
+    }
+    const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+    token = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1];
+    if (!truncated || !token) break;
+  }
+  return out;
+}
+
+function decodeXml(v: string): string {
+  return v.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 }
 
 /** Atomic metadata update; false means another writer changed the object. */

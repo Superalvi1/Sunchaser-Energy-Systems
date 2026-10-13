@@ -2,13 +2,13 @@ NOTICE:  role "authenticator" has already been granted membership in role "anon"
 NOTICE:  role "authenticator" has already been granted membership in role "authenticated" by role "postgres"
 NOTICE:  role "authenticator" has already been granted membership in role "service_role" by role "postgres"
 Applying r1-smart-quote-versions  (scripts/smart-quote-versions-schema.sql)  gate G3
-  ok (81 ms)
+  ok (63 ms)
 Applying r2-session-revocation  (scripts/session-revocation-schema.sql)  gate G3
-  ok (69 ms)
+  ok (56 ms)
 Applying r3-invoice-payments-integrity  (scripts/invoice-payments-integrity.sql)  gate G3
-  ok (68 ms)
+  ok (66 ms)
 Applying r4-invoice-save-atomic  (scripts/invoice-save-atomic.sql)  gate G3
-  ok (68 ms)
+  ok (54 ms)
 built sc_base_template: 103 public tables, release migrations r1-r4 applied
 
 === test-phase2-migration.sh
@@ -130,6 +130,25 @@ PASS: re-apply after rollback
 PASS: constraints present again
 
 settings migration tests: 22 passed, 0 failed
+
+=== test-company-restore.sh
+PASS: both companies are seeded
+PASS: export: every seeded table is in the archive in dependency order
+PASS: verify accepts the archive; it holds nothing of company B
+PASS: alpha is damaged and B and the founding company are not
+PASS: dry run changes nothing and plans the replacement
+PASS: the archive of A is refused for B
+PASS: a changed file is refused
+PASS: refusals changed nothing
+PASS: restore applies
+PASS: A's tables equal the export (every digest)
+PASS: B is byte-identical (every table)
+PASS: the FOUNDING company is identical
+PASS: the payment guard did not recompute anything: invoice paid/balance as exported
+PASS: the numbering counter is back at 7 (the next number continues from the history)
+PASS: restoring twice is harmless
+
+company restore (database only): 15 passed, 0 failed
 
 === test-runner.sh
 PASS: status on a fresh database: nothing applied, no ledger
