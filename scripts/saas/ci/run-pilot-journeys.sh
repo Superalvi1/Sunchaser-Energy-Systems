@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Builds a DISPOSABLE multi-company stack and runs the main two-company journeys against it: black-box API journeys, real-Chromium PDFs read
+# back as bytes, and real-browser journeys of the interface. Used by CI (job "pilot-journeys") and runnable locally.
+#
+# The stack: PostgreSQL (the CI service container, or any scratch server), PostgREST (the pinned image, or a local binary), an S3-compatible
+# store over HTTPS (scripts/e2e-crm-repair/s3-mock.mjs), and the built application (dist/server.cjs) with MULTI_COMPANY_ENABLED=true.
+# Everything is synthetic; nothing here talks to a hosted service. Refuses a database that looks hosted.
+#
+# Requires: dist/ built with an EMPTY VITE_API_BASE_URL (npx vite build, then esbuild server.ts -> dist/server.cjs), psql, node, poppler-utils
+# (pdftotext, pdfimages, pdfinfo), Chromium for Playwright, and either docker (POSTGREST_MODE=docker, default) or a PostgREST binary.
+#
+#   CI_PG="-h 127.0.0.1 -p 5432 -U postgres" PGPASSWORD=postgres bash scripts/saas/ci/run-pilot-journeys.sh
+#   (locally: CI_PG="-h /srv/saas-c1 -p 55651 -U postgres" POSTGREST_MODE=binary POSTGREST_BIN=/path/postgrest ...)
+#
+# Exit status is 0 only if every journey passed. Logs: $REPORT_DIR/<journey>.log and $REPORT_DIR/summary.md.
+set -uo pipefail
+cd "$(dirname "$0")/../../.."
+REPO="$PWD"
+
+: "${CI_PG:?psql connection arguments without -d, for a DISPOSABLE server}"
+case "$CI_PG" in *railway*|*supabase*|*rlwy*|*amazonaws*) echo "Refusing: looks like a hosted database." >&2; exit 2;; esac
+export E2E_ADMIN="$CI_PG"
+DB="${CI_DB:-t_ci_stack}"
+APP_PORT="${APP_PORT:-3199}"; PGRST_PORT="${PGRST_PORT:-54399}"; S3_PORT="${S3_PORT:-9499}"
+REPORT_DIR="${REPORT_DIR:-$REPO/ci-report-stack}"
+WORK="$(mktemp -d)"
+POSTGREST_MODE="${POSTGREST_MODE:-docker}"
+POSTGREST_IMAGE="${POSTGREST_IMAGE:-postgrest/postgrest:v16.4@sha256:d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df}"  # docs/ops/POSTGREST_PIN.md
+export TEST_PW="${TEST_PW:-CiSynthetic-Pass-9x!}"
+mkdir -p "$REPORT_DIR"; : > "$REPORT_DIR/summary.md"
+PIDS=(); PGRST_CONTAINER=""
+cleanup() {
+  # The application drains on SIGTERM and can outlive the script: ask, wait up to 10 seconds, then force. A survivor would keep the port, and
+  # the next run would silently test the old process.
+  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  for i in $(seq 1 10); do alive=0; for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill -0 "$p" 2>/dev/null && alive=1; done; [ "$alive" = 0 ] && break; sleep 1; done
+  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill -9 "$p" 2>/dev/null || true; done
+  [ -n "$PGRST_CONTAINER" ] && docker rm -f "$PGRST_CONTAINER" > /dev/null 2>&1 || true
+  psql $CI_PG -d postgres -qc "drop database if exists $DB with (force)" > /dev/null 2>&1 || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+say() { echo "== $*"; }
+die() { echo "FATAL: $*" >&2; { echo "**Stack could not be built:** $*"; } >> "$REPORT_DIR/summary.md"; exit 1; }
+
+# Refuse to run against something that is already listening: a stale process would be tested instead of this build.
+for port in "$APP_PORT" "$PGRST_PORT" "$S3_PORT"; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then die "port $port is already in use (a previous run's process?)"; fi
+done
+
+[ -f dist/server.cjs ] && [ -f dist/index.html ] || die "dist/ is not built (vite build with an empty VITE_API_BASE_URL, then esbuild server.ts)."
+
+# ---------------------------------------------------------------------------------------------------------------------------------- database
+say "database $DB"
+bash scripts/saas/tests/build-base.sh > "$REPORT_DIR/build-base.log" 2>&1 || { tail -5 "$REPORT_DIR/build-base.log"; die "could not build the base schema"; }
+bash scripts/saas/tests/mkdb.sh "$DB" > /dev/null || die "could not create $DB"
+parg() { echo "$CI_PG" | sed -nE "s/.*$1 ([^ ]+).*/\1/p"; }
+PGH="$(parg -h)"; PGP="$(parg -p)"; PGU="$(parg -U)"; PGP="${PGP:-5432}"; PGU="${PGU:-postgres}"
+export E2E_PSQL="$CI_PG -d $DB" E2E_BASE_URL="http://127.0.0.1:$APP_PORT"
+export PGHOST="$PGH" PGPORT="$PGP" PGUSER="$PGU" PGDATABASE="$DB"
+# the founding company's synthetic users exist BEFORE the tenant migrations, which give them their memberships
+node --import tsx scripts/saas/e2e/seed-founding-test-users.mjs || die "could not seed the founding test users"
+# owner decision the invoice-numbering migration insists on: the last number ever issued (synthetic here)
+psql $CI_PG -d "$DB" -qc "create schema if not exists app; create table if not exists app.config (key text primary key, value text not null); insert into app.config values ('document_floor.sunchaser.invoice.$(date -u +%Y)','8') on conflict do nothing" || die "floor"
+node scripts/migrations/run.mjs apply --yes > "$REPORT_DIR/migrations.log" 2>&1 || { tail -8 "$REPORT_DIR/migrations.log"; die "migrations failed"; }
+node scripts/migrations/run.mjs verify >> "$REPORT_DIR/migrations.log" 2>&1 || { tail -8 "$REPORT_DIR/migrations.log"; die "migration verification failed"; }
+AUTH_PW="$(openssl rand -hex 12)"
+psql $CI_PG -d "$DB" -qc "alter role authenticator password '$AUTH_PW'" || die "authenticator password"
+
+# ------------------------------------------------------------------------------------------------------------------------------- PostgREST
+say "PostgREST ($POSTGREST_MODE)"
+PGRST_SECRET="$(openssl rand -hex 32)"
+SERVICE_KEY="$(node -e "console.log(require('jsonwebtoken').sign({role:'service_role'},process.argv[1],{expiresIn:'1d'}))" "$PGRST_SECRET")"
+TENANT_KEY="$(PGRST_JWT_SECRET="$PGRST_SECRET" node scripts/saas/make-tenant-key.mjs --days 1)"
+case "$PGH" in
+  /*) DB_URI="postgres://authenticator:$AUTH_PW@/$DB?host=$PGH&port=$PGP" ;;
+  *)  DB_URI="postgres://authenticator:$AUTH_PW@$PGH:$PGP/$DB" ;;
+esac
+if [ "$POSTGREST_MODE" = docker ]; then
+  PGRST_CONTAINER="pgrst-$$"
+  docker run -d --name "$PGRST_CONTAINER" --network host \
+    -e PGRST_DB_URI="$DB_URI" -e PGRST_DB_SCHEMAS=public -e PGRST_DB_ANON_ROLE=anon -e PGRST_JWT_SECRET="$PGRST_SECRET" \
+    -e PGRST_SERVER_HOST=127.0.0.1 -e PGRST_SERVER_PORT="$PGRST_PORT" "$POSTGREST_IMAGE" > /dev/null || die "could not start PostgREST"
+else
+  cat > "$WORK/pgrst.conf" <<CONF
+db-uri = "$DB_URI"
+db-schemas = "public"
+db-anon-role = "anon"
+jwt-secret = "$PGRST_SECRET"
+server-host = "127.0.0.1"
+server-port = $PGRST_PORT
+CONF
+  "${POSTGREST_BIN:?set POSTGREST_BIN}" "$WORK/pgrst.conf" > "$REPORT_DIR/postgrest.log" 2>&1 & PIDS+=($!)
+fi
+for i in $(seq 1 40); do curl -s --noproxy '*' -o /dev/null "http://127.0.0.1:$PGRST_PORT/" && break; sleep 1; [ "$i" = 40 ] && { [ -n "$PGRST_CONTAINER" ] && docker logs "$PGRST_CONTAINER" 2>&1 | tail -5; die "PostgREST did not come up"; }; done
+
+# ----------------------------------------------------------------------------------------------------------------------- object store (HTTPS)
+say "object store"
+mkdir -p "$WORK/s3/objects"
+SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
+grep -q "testbucket.s3.local" /etc/hosts || echo "127.0.0.1 s3.local testbucket.s3.local" | $SUDO tee -a /etc/hosts > /dev/null || die "could not add s3.local to /etc/hosts"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/s3/key.pem" -out "$WORK/s3/cert.pem" -days 2 -subj "/CN=s3.local" -addext "subjectAltName=DNS:s3.local,DNS:testbucket.s3.local" 2>/dev/null || die "certificate"
+( cd "$WORK/s3" && S3_PORT="$S3_PORT" node "$REPO/scripts/e2e-crm-repair/s3-mock.mjs" "$WORK/s3/objects" > "$REPORT_DIR/s3.log" 2>&1 ) & PIDS+=($!)
+sleep 2
+
+# -------------------------------------------------------------------------------------------------------------------------------- application
+say "application on :$APP_PORT"
+export RAILWAY_OBJECT_PROXY_SECRET="$(openssl rand -hex 32)"  # shared by the application and by the journeys that read the object store
+export E2E_S3_DIR="$WORK/s3/objects"
+# the journeys that read the object store directly (company restore) need the same settings the application has
+export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem"
+(
+  export NODE_ENV=production PORT="$APP_PORT" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000
+  export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY" CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" MULTI_COMPANY_ENABLED=true
+  export JWT_SECRET="$(openssl rand -hex 32)" RAILWAY_OBJECT_PROXY_SECRET
+  export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto
+  export NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem" NO_PROXY='*' no_proxy='*'
+  unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY
+  export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001
+  export WHATSAPP_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+  export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false
+  exec node dist/server.cjs
+) > "$REPORT_DIR/app.log" 2>&1 & PIDS+=($!)
+for i in $(seq 1 60); do curl -s --noproxy '*' "http://127.0.0.1:$APP_PORT/health" | grep -q '"ok"' && break; sleep 1; [ "$i" = 60 ] && { tail -15 "$REPORT_DIR/app.log"; die "the application did not come up"; }; done
+echo "stack up: PostgreSQL $(psql $CI_PG -d "$DB" -tAc 'show server_version'), PostgREST ($POSTGREST_MODE), app on :$APP_PORT"
+
+# ------------------------------------------------------------------------------------------------------------------------------- journeys
+{ echo "## Pilot journeys"; echo; echo "Stack: PostgreSQL $(psql $CI_PG -d "$DB" -tAc 'show server_version'), PostgREST (\`$POSTGREST_MODE\`), built SPA + server bundle, MULTI_COMPANY_ENABLED=true."; echo; echo "| Journey | Result | Seconds | What it proves |"; echo "|---|---|---|---|"; } > "$REPORT_DIR/summary.md"
+FAILED=0
+# The journeys start from clean companies. Resetting them changes memberships behind the application's back, and the application caches
+# memberships, companies and subscriptions for 5 seconds; wait that out so a journey never reads the previous journey's cache.
+reseed() { node --import tsx scripts/saas/e2e/seed-two-companies.mjs --cleanup > /dev/null 2>&1; node --import tsx scripts/saas/e2e/seed-two-companies.mjs > "$REPORT_DIR/seed.log" 2>&1 || { tail -3 "$REPORT_DIR/seed.log"; die "seeding failed"; }; sleep 6; }
+journey() { # name, command..., (the description is in $DESC)
+  local name="$1"; shift
+  # JOURNEYS="name1,name2" runs only those (for diagnosing one journey); unset runs all, which is what CI does.
+  if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
+  reseed
+  local t0=$SECONDS
+  echo "-- $name"
+  if "$@" > "$REPORT_DIR/$name.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name.log" | sed 's/^/   | /'; fi
+  local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name.log" | tail -1)"
+  echo "$name: $r ${tail_line:+($tail_line)}"
+  echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
+}
+export OUT_DIR="$REPORT_DIR/screens"; mkdir -p "$OUT_DIR"
+node --import tsx scripts/saas/e2e/reset-founding-test-passwords.mjs > /dev/null 2>&1 || true
+
+DESC="two companies run lead to quotation to invoice to payment; every cross-company read, write and PDF attempt is refused" journey two-company-api node scripts/saas/e2e/two-company-api.mjs
+DESC="whole flow for two companies at the same time, attacks on each other's records, PDFs and files, canary sweep, database integrity" journey two-company-complete node scripts/saas/e2e/two-company-complete.mjs
+DESC="per-company branding, bank accounts, terms and prices; quotations keep the settings they were saved with" journey company-settings node scripts/saas/e2e/company-settings.mjs
+DESC="real Chromium PDFs per company, read back as bytes (text, logo, amounts), no other company or Sunchaser identity" journey pdf-render node --import tsx scripts/saas/e2e/pdf-render.mjs
+DESC="operator onboarding, manual subscriptions, enforced plan limits, operator audit trail" journey platform-onboarding node scripts/saas/e2e/platform-onboarding.mjs
+DESC="invoice issuance snapshot and legacy label, local QR, AutoSizer and after-sales refused, subscription expiry at request time, storage limit, settings permissions and history" journey pilot-round3 node scripts/saas/e2e/pilot-round3.mjs
+DESC="company restore leaves every other company and the founding company byte-identical" journey company-restore node --import tsx scripts/saas/e2e/company-restore.mjs
+DESC="deploy order: the new backend keeps working on a database where migrations t6 and t7 are not applied yet (they are rolled back, checked, re-applied)" journey compat-before-t6-t7 node scripts/saas/e2e/compat-before-t6-t7.mjs
+DESC="company selection and Switch company in a real browser" journey browser-company-ui node scripts/saas/e2e/browser-company-ui.mjs
+DESC="Sunchaser Sync on sign-in and company selection, company branding in the workspace, settings screen and history, hidden modules, founding company unchanged" journey browser-pilot-round3 node scripts/saas/e2e/browser-pilot-round3.mjs
+
+echo; echo "$([ "$FAILED" = 0 ] && echo "All journeys passed." || echo "$FAILED journey(s) FAILED.")" | tee -a "$REPORT_DIR/summary.md"
+cat "$REPORT_DIR/summary.md"
+[ "$FAILED" = 0 ]

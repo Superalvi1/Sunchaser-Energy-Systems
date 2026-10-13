@@ -60,7 +60,8 @@ let alphaName = "";
   await page.getByTestId("workspace-company-name").waitFor();
   alphaName = (await page.getByTestId("workspace-company-name").innerText()).trim();
   const t = await text(page);
-  check(`workspace header carries the company's own name ("${alphaName}")`, /Alpha Solar/.test(alphaName));
+  // A company that has set no name yet shows the neutral words "Your company" - never Sunchaser's name; a company that has set one shows it.
+  check(`workspace header carries the company's own name, or the neutral "Your company" before one is set ("${alphaName}")`, /^(Alpha Solar|Your company)/.test(alphaName));
   check("...with 'Powered by Sunchaser Sync' and no Sunchaser company name, logo or footer", /POWERED BY SUNCHASER SYNC/i.test(t) && !SUN_CO.test(t) && (await sunLogo(page)) === 0, t.slice(0, 300));
   const bs = await buttons(page);
   const has = (re) => bs.some((b) => re.test(b));

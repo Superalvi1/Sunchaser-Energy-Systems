@@ -17,7 +17,7 @@ FOUNDING_INVOICE_FLOOR=<number> bash scripts/rehearsal/run-saas-rehearsal.sh
 Exit status = number of FAIL lines. Return `$REHEARSAL_DIR/saas/` (preflight.txt, bills-report.txt, runner_*.txt, fp_diff.txt) with the console output.
 
 ## What it checks
-Preflight without BLOCKER; the production-only table `bills` described (columns, keys, triggers, rows); a fingerprint (row count and content hash) of every public table before; migrations t1-t5 through the runner and `verify`; afterwards the same fingerprints on the original columns (nothing rewritten), every company-owned row belongs to `sunchaser`, the invoice counter is at or above the highest number in use, the tenant role sees the founding company's data only with its header; rollback to t1 returns every fingerprint and the schema snapshot to the before state; re-apply.
+Preflight without BLOCKER; the production-only table `bills` described (columns, keys, triggers, rows); a fingerprint (row count and content hash) of every public table before; migrations t1-t7 through the runner and `verify`; afterwards the same fingerprints on the original columns (nothing rewritten), every company-owned row belongs to `sunchaser`, the invoice counter is at or above the highest number in use, the tenant role sees the founding company's data only with its header; rollback to t1 returns every fingerprint and the schema snapshot to the before state; re-apply.
 
 ## What it cannot show
 The application journeys (flag on and off) against the restored copy: run `scripts/rehearsal/run-journeys.sh` afterwards with the tenant key minted for the scratch server. Production data volume timing (lock times) is only as representative as the restored copy.

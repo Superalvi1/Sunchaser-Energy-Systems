@@ -11,11 +11,11 @@
 #   0  the read-only preflight has no BLOCKER; the production-only table `bills` is described (columns, keys, triggers, rows) in bills-report.txt
 #   1  every public table gets a fingerprint (rows and content) BEFORE; the schema is snapshotted
 #   2  release migrations present (or recorded by the runner's baseline); the invoice-number floor is set (the migration refuses without it)
-#   3  tenant migrations t1..t5 apply through the runner; verify is clean
+#   3  tenant migrations t1..t7 apply through the runner; verify is clean
 #   4  AFTER: row counts equal; every pre-existing row is byte-identical (original columns); every row of a company-owned table belongs to `sunchaser`;
 #      the founding company's invoice counter is >= the highest invoice number already used (never restarts at 0001)
 #   5  the tenant role, with the founding company's header, sees exactly what the service role sees for the company; without a header it sees nothing
-#   6  rollback of t5..t1 returns the schema snapshot AND every table fingerprint to the BEFORE state; the migrations then apply again
+#   6  rollback of t7..t1 returns the schema snapshot AND every table fingerprint to the BEFORE state; the migrations then apply again
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO="$(cd "$HERE/../.." && pwd)"
 : "${RESTORE_PGHOST:?}" "${RESTORE_PGPORT:?}" "${RESTORE_PGUSER:?}" "${REHEARSAL_DIR:?}"
@@ -49,13 +49,14 @@ pass "bills described in bills-report.txt (owner: classify it; tenant if it hold
 HAS_BILLS="$(Q -c "select to_regclass('public.bills') is not null")"
 
 echo "== 1. fingerprints BEFORE"
-# original columns only: tables that had no company_id before are compared without it afterwards
+# original columns only: tables that had no company_id before are compared without it afterwards; invoices.issuance_snapshot (t6) is a new
+# column and is left out for the same reason (it is NULL for every existing invoice, which the migration test proves)
 Q -c "select table_name from information_schema.columns where table_schema='public' and column_name='company_id'" | sort > "$OUT/had_company_id.txt"
 fp() { # $1 = label; strips company_id (and other columns added by the migrations) from tables that did not have it before
   local f="$OUT/fp_$1.txt"; : > "$f"
-  for t in $(Q -c "select table_name from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name not in ('companies','company_memberships','document_counters','saas_plans','saas_subscriptions','saas_payments','saas_audit') order by 1"); do
+  for t in $(Q -c "select table_name from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name not in ('companies','company_memberships','document_counters','company_settings_audit','saas_plans','saas_subscriptions','saas_payments','saas_audit') order by 1"); do
     local strip=""; grep -qx "$t" "$OUT/had_company_id.txt" || strip="- 'company_id'::text"
-    echo "$t|$(Q -c "select count(*)||'|'||md5(coalesce(string_agg((to_jsonb(x) $strip)::text, '|' order by (to_jsonb(x) $strip)::text), '')) from public.\"$t\" x")" >> "$f"
+    echo "$t|$(Q -c "select count(*)||'|'||md5(coalesce(string_agg((to_jsonb(x) - 'issuance_snapshot'::text $strip)::text, '|' order by (to_jsonb(x) - 'issuance_snapshot'::text $strip)::text), '')) from public.\"$t\" x")" >> "$f"
   done
 }
 fp before; pass "fingerprint of $(wc -l < "$OUT/fp_before.txt" | tr -d ' ') tables taken"
@@ -69,7 +70,7 @@ Q -c "create schema if not exists app; create table if not exists app.config (ke
 Q -c "insert into app.config (key, value) values ('document_floor.sunchaser.invoice.$YEAR', '$FOUNDING_INVOICE_FLOOR') on conflict (key) do update set value = excluded.value" >/dev/null
 RUN status > "$OUT/runner_status_before.txt" 2>&1
 RUN baseline --through r4-invoice-save-atomic --yes > "$OUT/runner_baseline.txt" 2>&1; check "release migrations r1..r4 are present (recorded by baseline) - apply them first (release rehearsal) if this fails" "$?" "0"
-RUN apply --yes > "$OUT/runner_apply.txt" 2>&1; check "tenant migrations t1..t5 apply through the runner" "$?" "0"
+RUN apply --yes > "$OUT/runner_apply.txt" 2>&1; check "tenant migrations t1..t7 apply through the runner" "$?" "0"
 RUN verify > "$OUT/runner_verify.txt" 2>&1; check "runner verify is clean (checksums, ledger chain, probes)" "$?" "0"
 
 echo "== 4. AFTER the migrations: nothing existing changed, everything belongs to the founding company"
@@ -98,7 +99,7 @@ check "the tenant role with the founding header sees the same leads as the servi
 check "the tenant role without a company header sees no lead" "${NOH:-0}" "0"
 
 echo "== 6. rollback to the BEFORE state, then apply again"
-RUN rollback --to t1-company-foundation --yes > "$OUT/runner_rollback.txt" 2>&1; check "rollback t5..t1 applies" "$?" "0"
+RUN rollback --to t1-company-foundation --yes > "$OUT/runner_rollback.txt" 2>&1; check "rollback t7..t1 applies" "$?" "0"
 fp rolled
 diff -q "$OUT/fp_before.txt" "$OUT/fp_rolled.txt" >/dev/null; check "after rollback every table's rows and content equal the BEFORE state" "$?" "0"
 psql -X -qAt -d "$DB" -f "$REPO/scripts/saas/tests/schema-snapshot.sql" > "$OUT/schema_rolled.txt" 2>&1

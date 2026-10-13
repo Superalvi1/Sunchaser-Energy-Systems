@@ -44,13 +44,30 @@ const jobs = (group === "docker"
     ]
 ).filter((j) => !only || only.includes(j.script));
 
+// Docker on a shared runner sometimes fails to publish a container's host port ("failed to set up container networking ... driver failed
+// programming external connectivity") before a suite has run a single check; two CI runs of PR 113 (17 and 19) failed that way,
+// in different suites each time, on the PostgreSQL 16 job only. That is infrastructure, not a defect, so such a failure is retried (at most twice),
+// loudly: the first attempt's log is kept next to the final one and the summary names the retry. Any other failure, and a failure that repeats
+// beyond the retries, fails the suite exactly as before.
+const DOCKER_INFRA = /failed to set up container networking|driver failed programming external connectivity/i;
+const MAX_INFRA_RETRIES = 2;
+
 const results = [];
 for (const j of jobs) {
   process.stdout.write(`▶ ${j.script} (${j.kind}) … `);
-  const r = await run(j.script);
+  let r = await run(j.script);
+  let retries = 0;
+  const base = j.script.replace(/[^\w.-]/g, "_");
+  while (r.code !== 0 && !r.timedOut && DOCKER_INFRA.test(r.out) && retries < MAX_INFRA_RETRIES) {
+    retries++;
+    fs.writeFileSync(path.join(outDir, `${base}.attempt${retries}.log`), r.out);
+    console.log(`FAIL (Docker networking error, infrastructure) - retrying (${retries}/${MAX_INFRA_RETRIES})`);
+    process.stdout.write(`▶ ${j.script} (${j.kind}) retry ${retries} … `);
+    r = await run(j.script);
+  }
   const status = classify(r);
-  fs.writeFileSync(path.join(outDir, `${j.script.replace(/[^\w.-]/g, "_")}.log`), r.out);
-  results.push({ script: j.script, kind: j.kind, status, seconds: Math.round(r.ms / 1000), area: j.area, reason: j.reason });
+  fs.writeFileSync(path.join(outDir, `${base}.log`), r.out);
+  results.push({ script: j.script, kind: j.kind, status, seconds: Math.round(r.ms / 1000), area: j.area, reason: j.reason, retries });
   console.log(`${status.toUpperCase()} (${Math.round(r.ms / 1000)}s)`);
   if (status !== "pass") console.log(r.out.split("\n").filter(Boolean).slice(-40).map((l) => "    " + l.slice(0, 200)).join("\n"));
 }
@@ -62,7 +79,7 @@ const lines = [
   "",
   "| Suite | Kind | Result | Seconds | Note |",
   "|---|---|---|---|---|",
-  ...results.map((r) => `| \`${r.script}\` | ${r.kind} | ${r.status === "pass" ? "✅ pass" : r.status === "skipped" ? "⚠️ SKIPPED (not verified)" : `❌ ${r.status}`} | ${r.seconds} | ${r.kind === "tracked" ? r.reason || "" : r.area || ""} |`),
+  ...results.map((r) => `| \`${r.script}\` | ${r.kind} | ${r.status === "pass" ? "✅ pass" : r.status === "skipped" ? "⚠️ SKIPPED (not verified)" : `❌ ${r.status}`} | ${r.seconds} | ${r.kind === "tracked" ? r.reason || "" : r.area || ""}${r.retries ? ` **(re-run ${r.retries}× after a Docker networking error on the runner; first attempt log kept)**` : ""} |`),
   "",
   `Required: ${results.filter((r) => r.kind === "required" && r.status === "pass").length}/${results.filter((r) => r.kind === "required").length} passed. ` +
     `Tracked (not blocking, still reported): ${results.filter((r) => r.kind === "tracked").length}, of which ${results.filter((r) => r.kind === "tracked" && r.status !== "pass").length} not passing.`,
