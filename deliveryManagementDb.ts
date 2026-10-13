@@ -60,8 +60,10 @@ const ITEMS_TABLE = "delivery_challan_items";
 const PHOTOS_TABLE = "delivery_challan_photos";
 
 function isDeliveryTableMissing(err: any) {
+  // Only a missing table. (Matching any message that names a delivery table reported every other failure, such as a constraint or a
+  // permission error, as "tables are not ready" and hid the real cause.)
   const msg = String(err?.message || "").toLowerCase();
-  return err?.code === "42P01" || msg.includes("delivery_challan");
+  return err?.code === "42P01" || err?.code === "PGRST205" || (msg.includes("delivery_challan") && /does not exist|could not find the table/.test(msg));
 }
 
 const TABLES_NOT_READY =

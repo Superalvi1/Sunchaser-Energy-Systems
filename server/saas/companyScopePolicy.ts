@@ -14,6 +14,27 @@ import { normalizeHttpMethod } from "../middleware/publicRoutes.ts";
 export type CompanyScope = "none" | "company" | "founding_only" | "public_founding" | "signed_link" | "platform" | "unmatched";
 
 type Rule = { prefix: string; scope: Exclude<CompanyScope, "unmatched">; exact?: boolean };
+type PatternRule = { pattern: RegExp; scope: Exclude<CompanyScope, "unmatched"> };
+
+/**
+ * After-sales group (server/saas/moduleGate.ts, "afterSales"): not finished for companies other than the founding one. Patterns, because
+ * several of these paths carry an id in the middle. Checked before the prefix rules.
+ */
+export const AFTER_SALES_PATTERNS: RegExp[] = [
+  /^\/api\/admin\/deliveries(\/|$)/,
+  /^\/api\/admin\/delivery-dashboard(\/|$)/,
+  /^\/api\/admin\/invoices\/[^/]+\/(deliveries|delivery-summary)$/,
+  /^\/api\/admin\/project-deliveries(\/|$)/,
+  /^\/api\/admin\/project-completion(\/|$)/,
+  /^\/api\/admin\/customer-warranties(\/|$)/,
+  /^\/api\/admin\/customers\/[^/]+\/warranty-certificate$/,
+  /^\/api\/admin\/warranty-claims(\/|$)/,
+  /^\/api\/customer-portal\/(deliveries|project-delivery|warranties|warranty-)/,
+  /^\/api\/export\/pdf\/warranty-handover(\/|$)/,
+  /^\/api\/technical\/project-deliveries(\/|$)/,
+  /^\/api\/warranties(\/|$)/,
+];
+
 
 // Order matters: first match wins, so specific rules precede general ones.
 const RULES: Rule[] = [
@@ -73,6 +94,7 @@ const RULES: Rule[] = [
 export function resolveCompanyScope(method: string, pathname: string): CompanyScope {
   const path = (pathname.split("?")[0] || pathname).replace(/\/+$/, "") || "/";
   void normalizeHttpMethod(method);
+  if (AFTER_SALES_PATTERNS.some((re) => re.test(path))) return "founding_only";
   for (const rule of RULES) {
     if (rule.exact ? path === rule.prefix : path === rule.prefix.replace(/\/$/, "") || path.startsWith(rule.prefix)) {
       return rule.scope;

@@ -100,6 +100,15 @@ export function normalizeInvoiceBankAccounts(accounts: any[] = [], options: { ne
   return normalized.length ? normalized : DEFAULT_INVOICE_BANK_ACCOUNTS;
 }
 
+/** The built-in company-level terms line, used when a company has set none. */
+export function defaultInvoiceTerms(neutral: boolean): string {
+  return identityDefault(
+    neutral,
+    "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for choosing Sunchaser Energy Systems.",
+    "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for your business."
+  );
+}
+
 const fmt = (n: number) => "Rs " + Math.round(n || 0).toLocaleString("en-PK");
 
 function formatDate(d: string | null | undefined) {
@@ -191,14 +200,7 @@ export function compileInvoicePDFHtml(
   const logo = branding.invoiceLogoUrl || branding.logoUrl || identityDefault(neutral, "/assets/sunchaser-logo.png", "");
   const signature = branding.signatureUrl || "";
   const hasSignature = !!(branding.signatureConfigured && signature);
-  const terms =
-    stripInvoiceMeta(invoice.terms || "") ||
-    branding.terms ||
-    identityDefault(
-      neutral,
-      "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for choosing Sunchaser Energy Systems.",
-      "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for your business."
-    );
+  const terms = stripInvoiceMeta(invoice.terms || "") || branding.terms || defaultInvoiceTerms(neutral);
 
   const banks = normalizeInvoiceBankAccounts(branding.bankAccounts || [], { neutral });
   const bankTableHtml = banks.length
@@ -258,7 +260,7 @@ export function compileInvoicePDFHtml(
   const status = String(invoice.paymentStatus || "Unpaid");
 
   return `<!DOCTYPE html>
-<html>
+${options.issuanceSource ? `<!-- invoice-issuance: ${options.issuanceSource} -->\n` : ""}<html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>

@@ -1,3 +1,4 @@
+import { afterSalesEnabled } from "../lib/workspaceModules";
 import React, { useEffect, useState } from "react";
 import {
   CreditCard,
@@ -233,6 +234,7 @@ export default function ClientPortalApp({
         <PortalScreen title="Proposals & documents" subtitle="Quotations, agreements, warranties, and certificates">
           <div className="space-y-8">
             <ClientPortalDocuments user={user} />
+            {afterSalesEnabled() && (
             <section className={portal.divider + " pt-6 space-y-4"}>
               <div>
                 <h3 className="text-base font-semibold text-white">Material Deliveries</h3>
@@ -240,6 +242,7 @@ export default function ClientPortalApp({
               </div>
               <ClientPortalDeliveries user={user} />
             </section>
+            )}
           </div>
         </PortalScreen>
       );

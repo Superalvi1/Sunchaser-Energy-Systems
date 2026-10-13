@@ -91,6 +91,16 @@
    "gate": "G3+G4",
    "probe": "select to_regclass('public.saas_subscriptions') is not null and to_regprocedure('public.saas_create_company(text,text,text,integer,jsonb,jsonb)') is not null",
    "note": "Plans, manual subscriptions and payment ledger, audit trail, plan limits enforced by triggers, atomic company onboarding. The pilot plan is a placeholder (pricing is undecided)."
+  },
+  {
+   "id": "t6-invoice-issuance-snapshot",
+   "series": "tenant",
+   "file": "scripts/saas/phase2f-invoice-issuance-snapshot.sql",
+   "rollback": "scripts/saas/phase2f-invoice-issuance-snapshot-rollback.sql",
+   "requires": ["t1-company-foundation"],
+   "gate": "G3+G4",
+   "probe": "select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'issuance_snapshot')",
+   "note": "New invoices keep the bank accounts and company terms they were issued with (write-once). Older invoices stay NULL and print from current settings, labelled legacy. The backend works with or without this column."
   }
  ]
 }

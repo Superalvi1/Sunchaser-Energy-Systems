@@ -1,3 +1,4 @@
+import { afterSalesEnabled } from "../lib/workspaceModules";
 import { isNativeApp } from "../lib/appPlatform";
 import React, { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -296,12 +297,16 @@ export function buildAdminNavGroups(opts: {
       id: "operations",
       label: "Operations",
       modules: [
-        {
-          id: "project-delivery",
-          title: "Project Delivery",
-          description: "Invoice-linked material delivery and challans",
-          icon: Truck,
-        },
+        ...(afterSalesEnabled()
+          ? [
+              {
+                id: "project-delivery" as const,
+                title: "Project Delivery",
+                description: "Invoice-linked material delivery and challans",
+                icon: Truck,
+              },
+            ]
+          : []),
         ...(showProjectOperations
           ? [
               {

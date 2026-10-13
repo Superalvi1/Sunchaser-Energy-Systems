@@ -1,4 +1,4 @@
-import { autoSizerEnabled } from "../lib/workspaceModules";
+import { afterSalesEnabled, autoSizerEnabled } from "../lib/workspaceModules";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, Link2, 
@@ -3399,7 +3399,7 @@ export default function SalesTeamApp({
                   ...(staffUser
                     ? [{ id: 'inventory' as const, label: 'Inventory', icon: Package }]
                     : []),
-                  ...(staffUser
+                  ...(staffUser && afterSalesEnabled()
                     ? [{ id: 'after_sales' as const, label: 'After Sales Admin', icon: Headphones }]
                     : []),
                 ].map((mod) => {

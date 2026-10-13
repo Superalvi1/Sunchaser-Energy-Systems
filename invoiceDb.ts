@@ -1,3 +1,4 @@
+import { captureInvoiceIssuanceSnapshot } from "./invoicePdfResolve.ts";
 import {
   getSupabase,
   isSupabaseActive,
@@ -101,6 +102,21 @@ export function isMissingInvoiceOwnerColumn(err: unknown): boolean {
   );
 }
 
+function parseIssuanceSnapshot(raw: unknown): InvoiceRecord["issuanceSnapshot"] {
+  let v: any = raw;
+  if (typeof v === "string") {
+    try { v = JSON.parse(v); } catch { return null; }
+  }
+  return v && typeof v === "object" && Array.isArray(v.bankAccounts) && typeof v.companyTerms === "string" ? (v as InvoiceRecord["issuanceSnapshot"]) : null;
+}
+
+/** True when the database rejected the insert only because invoices.issuance_snapshot (migration t6) is not installed yet. */
+export function isMissingIssuanceSnapshotColumn(err: unknown): boolean {
+  const candidate = err as { code?: unknown; message?: unknown } | null;
+  const message = String(candidate?.message || "").toLowerCase();
+  return (candidate?.code === "PGRST204" || candidate?.code === "42703") && message.includes("issuance_snapshot");
+}
+
 function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] = []): InvoiceRecord {
   return {
     id: row.id,
@@ -135,6 +151,7 @@ function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] 
     notes: row.notes || null,
     terms: row.terms || null,
     pdfUrl: row.pdf_url || row.pdfUrl || null,
+    issuanceSnapshot: parseIssuanceSnapshot(row.issuance_snapshot ?? row.issuanceSnapshot),
     items,
     payments,
     createdBy: row.created_by || row.createdBy,
@@ -754,12 +771,25 @@ export async function createAdminInvoice(
   }));
 
   if (isSupabaseActive()) {
-    let { error } = await getSupabase()!.from("invoices").insert(row);
+    // Keep the bank accounts and company terms this invoice is issued with. If they cannot be read, or the column is not installed yet,
+    // the invoice is still created, without a snapshot (a legacy invoice): issuing an invoice never depends on this.
+    let insertRow: Record<string, unknown> = row;
+    try {
+      insertRow = { ...row, issuance_snapshot: await captureInvoiceIssuanceSnapshot(localDb) };
+    } catch (err: any) {
+      console.warn("[InvoiceIssuanceSnapshot] not captured:", err?.message || err);
+    }
+    let { error } = await getSupabase()!.from("invoices").insert(insertRow);
+    if (error && "issuance_snapshot" in insertRow && isMissingIssuanceSnapshotColumn(error)) {
+      const { issuance_snapshot: _s, ...withoutSnapshot } = insertRow;
+      insertRow = withoutSnapshot;
+      ({ error } = await getSupabase()!.from("invoices").insert(insertRow));
+    }
     if (error && actor.role === "Super Admin" && isMissingInvoiceOwnerColumn(error)) {
       // Some production installations predate the durable finance-owner column.
       // Preserve the legacy username owner for Super Admin operations so historical
       // data can be imported; scoped staff creates still require the durable column.
-      const { created_by_user_id: _ownerUserId, ...legacyCompatibleRow } = row;
+      const { created_by_user_id: _ownerUserId, ...legacyCompatibleRow } = insertRow;
       ({ error } = await getSupabase()!.from("invoices").insert(legacyCompatibleRow));
     }
     if (error) throw error;

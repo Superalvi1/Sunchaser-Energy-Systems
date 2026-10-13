@@ -1,3 +1,4 @@
+import { afterSalesEnabled } from "../lib/workspaceModules";
 import AppModal from "./ui/AppModal";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -864,7 +865,7 @@ export default function InvoiceStaff({
           >
             Invoice
           </button>
-          <button
+          {afterSalesEnabled() && <button
             type="button"
             onClick={() => setEditorTab("delivery")}
             className={`px-4 py-2 text-xs font-bold rounded-t-lg border-b-2 ${
@@ -874,11 +875,11 @@ export default function InvoiceStaff({
             }`}
           >
             Delivery
-          </button>
+          </button>}
         </div>
       )}
 
-      {(!fullPage || editorOpen) && (selectedId && editorTab === "delivery" ? (
+      {(!fullPage || editorOpen) && (selectedId && editorTab === "delivery" && afterSalesEnabled() ? (
         <div className="p-4">
           <DeliveryChallanPanel
             staffUser={staffUser}

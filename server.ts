@@ -4772,6 +4772,7 @@ app.get("/api/export/pdf/invoice/:id", async (req, res) => {
     }
     const { invoice: inv, branding, options } = await buildInvoicePdfPayload(invoice, db);
     const html = compileInvoicePDFHtml(inv, branding, options);
+    res.setHeader("X-Invoice-Issuance", options.issuanceSource || "unspecified");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
   } catch (err: any) {
