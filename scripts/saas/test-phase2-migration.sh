@@ -9,8 +9,8 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 P="psql $E2E_PSQL -q -v ON_ERROR_STOP=1"
 Q="psql $E2E_PSQL -tA"
-DUMP_ARGS=$(echo "$E2E_PSQL" | sed -E 's/-d ([^ ]+)/\1/')   # pg_dump takes the db name positionally
-dump() { pg_dump ${DUMP_ARGS} --schema-only --no-owner --no-privileges --exclude-schema=app_rollback_backup | grep -v -E '^--|^\\(un)?restrict|^$'; }
+SNAP="$(cd "$(dirname "$0")" && pwd)/tests/schema-snapshot.sql"
+dump() { psql $E2E_PSQL -qtA -f "$SNAP"; }   # plain queries: no pg_dump, so no client/server version coupling
 ok=0; bad=0
 check() { if [ "$2" = "$3" ]; then echo "PASS: $1"; ok=$((ok+1)); else echo "FAIL: $1 (expected '$3', got '$2')"; bad=$((bad+1)); fi; }
 
