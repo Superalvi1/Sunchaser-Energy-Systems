@@ -27,7 +27,7 @@
   },
   "bills": {
    "class": "tenant",
-   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness.",
+   "note": "Finance record, provisional class tenant. Production-only: not defined in tracked SQL. On a synthetic bills the foundation migration adds company_id, row security and the reference trigger (scripts/rehearsal/run-saas-rehearsal.sh); its unique bill_number stays GLOBAL until the real definition is read and a per-company key is added.",
    "verify": "Not defined in tracked SQL. Production schema must be read before migration."
   },
   "categories": {
