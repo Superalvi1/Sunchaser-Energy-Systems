@@ -1,5 +1,6 @@
 import { FOUNDING_COMPANY_ID } from "./multiCompany.ts";
 import type { CompanyScope } from "./companyScopePolicy.ts";
+import { evaluateSubscriptionAccess, READ_METHODS, SUBSCRIPTION_EXPIRED_MESSAGE, type SubscriptionFacts } from "./subscriptionAccess.ts";
 
 export type MembershipRow = { id: string; companyId: string; userId: string; role: string; status: string };
 export type CompanyRow = { id: string; name: string; status: string };
@@ -8,17 +9,19 @@ export interface CompanyStore {
   listMemberships(userId: string): Promise<MembershipRow[]>;
   getCompany(companyId: string): Promise<CompanyRow | null>;
   getCustomerCompanyId(customerId: string): Promise<string | null>;
+  /** The company's subscription, or null when it has none (no subscription = no expiry). Optional so older stores keep working. */
+  getSubscription?(companyId: string): Promise<SubscriptionFacts | null>;
 }
 
 export type ResolverActor = { id: string; role: string; customerId?: string; isPlatformAdmin?: boolean };
 
 export type Resolution =
-  | { ok: true; companyId: string; role: string; membershipId?: string }
-  | { ok: false; status: 401 | 403 | 404 | 409; code: string; error: string };
+  | { ok: true; companyId: string; role: string; membershipId?: string; subscription?: "grace"; subscriptionEndsAt?: string }
+  | { ok: false; status: 401 | 402 | 403 | 404 | 409; code: string; error: string };
 
 const ACTIVE_COMPANY = new Set(["trial", "active"]);
 
-const deny = (status: 401 | 403 | 404 | 409, code: string, error: string): Resolution => ({ ok: false, status, code, error });
+const deny = (status: 401 | 402 | 403 | 404 | 409, code: string, error: string): Resolution => ({ ok: false, status, code, error });
 
 /**
  * Decides which company a request acts for. Never trusts the request body, query or headers: the company comes from
@@ -26,7 +29,7 @@ const deny = (status: 401 | 403 | 404 | 409, code: string, error: string): Resol
  * choose between memberships the caller really has.
  */
 export async function resolveCompany(
-  input: { actor: ResolverActor; tokenCompanyId?: string | null; scope: CompanyScope },
+  input: { actor: ResolverActor; tokenCompanyId?: string | null; scope: CompanyScope; method?: string; now?: Date; graceDays?: number },
   store: CompanyStore
 ): Promise<Resolution> {
   const { actor, scope } = input;
@@ -70,5 +73,17 @@ export async function resolveCompany(
     return deny(404, "not_available", "Not found.");
   }
 
-  return { ok: true, companyId, role, membershipId };
+  // The subscription is checked on every request: past its end (plus the grace period) a company can still read, but not write.
+  let grace: "grace" | undefined;
+  let endsAt: string | undefined;
+  if (store.getSubscription && companyId !== FOUNDING_COMPANY_ID) {
+    const access = evaluateSubscriptionAccess(await store.getSubscription(companyId), input.now, input.graceDays);
+    if (access.state === "blocked") return deny(403, "subscription_inactive", "This company's subscription is not active. Contact the platform operator.");
+    if (access.state === "read_only" && !READ_METHODS.has(String(input.method || "GET").toUpperCase())) {
+      return deny(402, "subscription_expired", SUBSCRIPTION_EXPIRED_MESSAGE);
+    }
+    if (access.state === "grace" || access.state === "read_only") { grace = "grace"; endsAt = access.endsAt; }
+  }
+
+  return { ok: true, companyId, role, membershipId, ...(grace ? { subscription: grace, subscriptionEndsAt: endsAt } : {}) };
 }

@@ -5,7 +5,7 @@ type Row = {
   id: string; name: string; status: string; overdue: boolean; paidPkr: number;
   subscription: null | { status: string; planId: string; planName?: string; periodEnd?: string; trialEndsAt?: string };
   usage: { staff: number; leads: number; documents: number };
-  limits: { max_staff: number | null; max_leads: number | null; max_documents: number | null };
+  limits: { max_staff: number | null; max_leads: number | null; max_documents: number | null; max_storage_mb?: number | null };
 };
 const lim = (v: number | null) => (v == null ? "∞" : String(v));
 const inputCls = "min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100";
@@ -67,7 +67,7 @@ export default function PlatformConsole({ onExit }: { onExit?: () => void }) {
           <h2 className="text-sm font-bold uppercase tracking-wide text-slate-400">Companies</h2>
           <div className="overflow-x-auto rounded-xl border border-slate-800">
             <table className="w-full text-left text-sm" data-testid="companies-table">
-              <thead className="bg-slate-900 text-xs text-slate-400"><tr><th className="p-2">Company</th><th>Status</th><th>Plan</th><th>Period end</th><th>Staff</th><th>Leads</th><th>Docs</th><th>Paid (PKR)</th><th /></tr></thead>
+              <thead className="bg-slate-900 text-xs text-slate-400"><tr><th className="p-2">Company</th><th>Status</th><th>Plan</th><th>Period end</th><th>Staff</th><th>Leads</th><th>Docs</th><th>Storage MB</th><th>Paid (PKR)</th><th /></tr></thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t border-slate-800" data-testid={`company-row-${r.id}`}>
@@ -75,7 +75,7 @@ export default function PlatformConsole({ onExit }: { onExit?: () => void }) {
                     <td>{r.status}{r.overdue ? <span className="ml-1 rounded bg-red-500/20 px-1 text-xs text-red-200">overdue</span> : null}</td>
                     <td>{r.subscription ? (r.subscription.planName || r.subscription.planId) : "—"}</td>
                     <td>{r.subscription?.periodEnd || "—"}</td>
-                    <td>{r.usage.staff}/{lim(r.limits.max_staff)}</td><td>{r.usage.leads}/{lim(r.limits.max_leads)}</td><td>{r.usage.documents}/{lim(r.limits.max_documents)}</td>
+                    <td>{r.usage.staff}/{lim(r.limits.max_staff)}</td><td>{r.usage.leads}/{lim(r.limits.max_leads)}</td><td>{r.usage.documents}/{lim(r.limits.max_documents)}</td><td>{lim(r.limits.max_storage_mb ?? null)}</td>
                     <td>{r.paidPkr.toLocaleString()}</td>
                     <td className="space-x-1 p-2 text-right whitespace-nowrap">
                       {r.id !== "sunchaser" ? (<>

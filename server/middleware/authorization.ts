@@ -108,7 +108,7 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
       let resolution;
       try {
         resolution = await resolveCompany(
-          { actor: req.actor, tokenCompanyId: hydrated.tokenCompanyId, scope },
+          { actor: req.actor, tokenCompanyId: hydrated.tokenCompanyId, scope, method: req.method },
           deps.companyStore
         );
       } catch (err) {
@@ -119,6 +119,11 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
       if (!resolution.ok) {
         res.status(resolution.status).json({ error: resolution.error, code: resolution.code });
         return;
+      }
+      if (resolution.subscription) {
+        // Past the end date but inside the grace period (or read-only afterwards): tell the interface and the operator's tooling.
+        res.setHeader("X-Subscription-State", resolution.subscription);
+        if (resolution.subscriptionEndsAt) res.setHeader("X-Subscription-Ended", resolution.subscriptionEndsAt);
       }
       // Permissions follow the role the user holds in THIS company, not a global role.
       req.actor = { ...req.actor, role: resolution.role, companyId: resolution.companyId };

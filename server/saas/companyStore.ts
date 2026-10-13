@@ -1,5 +1,6 @@
 import { getSystemSupabase } from "../../dbManager.ts";
 import type { CompanyRow, CompanyStore, MembershipRow } from "./companyResolver.ts";
+import type { SubscriptionFacts } from "./subscriptionAccess.ts";
 
 type Cached<T> = { at: number; value: T };
 const TTL_MS = 5_000;
@@ -8,6 +9,7 @@ const TTL_MS = 5_000;
 export function createPostgrestCompanyStore(ttlMs: number = TTL_MS): CompanyStore & { invalidate(userId?: string): void } {
   const memberships = new Map<string, Cached<MembershipRow[]>>();
   const companies = new Map<string, Cached<CompanyRow | null>>();
+  const subscriptions = new Map<string, Cached<SubscriptionFacts | null>>();
   const fresh = <T>(c: Cached<T> | undefined): c is Cached<T> => !!c && Date.now() - c.at < ttlMs;
 
   return {
@@ -29,6 +31,15 @@ export function createPostgrestCompanyStore(ttlMs: number = TTL_MS): CompanyStor
       companies.set(companyId, { at: Date.now(), value: row });
       return row;
     },
+    async getSubscription(companyId) {
+      const hit = subscriptions.get(companyId);
+      if (fresh(hit)) return hit.value;
+      const { data, error } = await getSystemSupabase()!.from("saas_subscriptions").select("status, trial_ends_at, current_period_end").eq("company_id", companyId).maybeSingle();
+      if (error) throw new Error(`Could not load subscription: ${error.message}`);
+      const row = data ? { status: String(data.status), trialEndsAt: data.trial_ends_at ?? null, periodEnd: data.current_period_end ?? null } : null;
+      subscriptions.set(companyId, { at: Date.now(), value: row });
+      return row;
+    },
     async getCustomerCompanyId(customerId) {
       const { data, error } = await getSystemSupabase()!.from("customers").select("company_id").eq("id", customerId).maybeSingle();
       if (error) throw new Error(`Could not load customer company: ${error.message}`);
@@ -36,7 +47,7 @@ export function createPostgrestCompanyStore(ttlMs: number = TTL_MS): CompanyStor
     },
     invalidate(userId?: string) {
       if (userId) memberships.delete(userId);
-      else { memberships.clear(); companies.clear(); }
+      else { memberships.clear(); companies.clear(); subscriptions.clear(); }
     },
   };
 }

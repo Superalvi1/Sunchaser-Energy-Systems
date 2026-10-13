@@ -175,6 +175,13 @@ async function failure(res: Response, action: string, knownCode?: string): Promi
   return new Error(`Railway object ${action} failed (HTTP ${res.status}${code ? ` ${code}` : ""}).`);
 }
 
+/**
+ * Optional guard run around every write (the plan storage limit, server/saas/storageQuota.ts). Registered by the server at start-up so
+ * this module does not depend on the SaaS code. `reserve` throws to refuse the write and returns a handle that is released if the write fails.
+ */
+let writeGuard: ((bytes: number) => Promise<{ release(): void }>) | null = null;
+export function setRailwayWriteGuard(guard: ((bytes: number) => Promise<{ release(): void }>) | null): void { writeGuard = guard; }
+
 export async function putRailwayObject(
   namespace: RailwayObjectNamespace,
   key: string,
@@ -188,8 +195,14 @@ export async function putRailwayObject(
       throw new Error(`Refusing to write an object outside the company's own key space (${ctx.companyId}).`);
     }
   }
-  const res = await signedBucketRequest("PUT", namespace, key, { body, contentType });
-  if (!res.ok) throw await failure(res, "upload");
+  const reservation = writeGuard ? await writeGuard(body.length) : null;
+  try {
+    const res = await signedBucketRequest("PUT", namespace, key, { body, contentType });
+    if (!res.ok) throw await failure(res, "upload");
+  } catch (err) {
+    reservation?.release();
+    throw err;
+  }
 }
 
 export async function deleteRailwayObject(

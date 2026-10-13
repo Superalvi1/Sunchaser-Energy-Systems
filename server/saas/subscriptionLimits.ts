@@ -12,7 +12,7 @@ const RULES: Array<{ method: string; rx: RegExp; key: "max_leads" | "max_documen
   { method: "POST", rx: /^\/api\/admin\/customer-documents\/(upload|assign)?\/?$/, key: "max_documents", table: "customer_documents", label: "documents" },
 ];
 
-export async function limitFor(companyId: string, key: string): Promise<number | null> {
+export async function limitFor(companyId: string, key: "max_staff" | "max_leads" | "max_documents" | "max_storage_mb" | string): Promise<number | null> {
   const db = getSystemSupabase()!;
   const { data: sub } = await db.from("saas_subscriptions").select("plan_id, limit_overrides").eq("company_id", companyId).maybeSingle();
   if (!sub) return null;

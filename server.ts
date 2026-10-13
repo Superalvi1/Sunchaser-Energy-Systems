@@ -375,11 +375,13 @@ import { moduleFlags, AUTOSIZER_DISABLED_MESSAGE } from "./server/saas/moduleGat
 import { registerCompanySettingsRoutes } from "./server/saas/companySettingsApi.ts";
 import { registerPlatformRoutes } from "./server/saas/platformApi.ts";
 import { planLimitMiddleware } from "./server/saas/subscriptionLimits.ts";
+import { reserveStorage, StorageQuotaError } from "./server/saas/storageQuota.ts";
 import { listLoginCompanies } from "./server/saas/loginCompanies.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
   getRailwayObject,
   putRailwayObject,
+  setRailwayWriteGuard,
   isRailwayObjectStorageConfigured,
   buildRailwayObjectProxyUrl,
   scopeObjectKey,
@@ -747,6 +749,7 @@ app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, comp
  * the key itself: `c/<company>/...`, or the founding company for an unprefixed key). Anything else answers 404, like a missing object.
  */
 app.use(planLimitMiddleware());
+setRailwayWriteGuard((bytes) => reserveStorage(bytes));
 registerPlatformRoutes(app);
 registerCompanySettingsRoutes(app);
 
@@ -2376,6 +2379,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
     return res.status(201).json(doc);
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    if (err instanceof StorageQuotaError) return res.status(402).json({ error: err.message, code: err.code, limitMb: err.limitMb });
     console.error("[customer-documents] upload failed:", err?.message || err);
     return res.status(500).json({ error: err.message });
   }

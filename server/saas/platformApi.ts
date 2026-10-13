@@ -37,7 +37,7 @@ const isoDate = (v: unknown, field: string): string => {
   return t;
 };
 
-export const LIMIT_KEYS = ["max_staff", "max_leads", "max_documents"] as const;
+export const LIMIT_KEYS = ["max_staff", "max_leads", "max_documents", "max_storage_mb"] as const;
 
 export function cleanCompanyInput(body: any) {
   const name = clip(body?.name, 120, "Company name", true);
@@ -108,7 +108,7 @@ export async function loadOverview(db: SupabaseClient) {
       id: c.id, name: c.name, status: c.status, createdAt: c.created_at,
       subscription: sub && { status: sub.status, planId: sub.plan_id, planName: plan?.name, periodStart: sub.current_period_start, periodEnd: sub.current_period_end, trialEndsAt: sub.trial_ends_at, notes: sub.notes, overrides: sub.limit_overrides },
       usage: { staff: u.staff, leads: u.leads, documents: u.documents },
-      limits: { max_staff: lim("max_staff"), max_leads: lim("max_leads"), max_documents: lim("max_documents") },
+      limits: { max_staff: lim("max_staff"), max_leads: lim("max_leads"), max_documents: lim("max_documents"), max_storage_mb: lim("max_storage_mb") },
       paidPkr: (pays.data || []).filter((p: any) => p.company_id === c.id).reduce((s: number, p: any) => s + Number(p.amount_pkr), 0),
       overdue: !!(sub && sub.current_period_end && sub.current_period_end < today && ["trial", "active", "past_due"].includes(sub.status)),
     };
@@ -133,6 +133,8 @@ export function registerPlatformRoutes(app: Express): void {
       if (!/^[a-z][a-z0-9_]{1,40}$/.test(id)) throw new PlatformInputError("Plan id: lowercase letters, digits and underscores.");
       const lim = (v: unknown, f: string) => (v == null || v === "" ? null : Math.floor(num(v, f)));
       const row = { id, name: clip(req.body?.name, 80, "Name", true), max_staff: lim(req.body?.maxStaff, "Max staff"), max_leads: lim(req.body?.maxLeads, "Max leads"), max_documents: lim(req.body?.maxDocuments, "Max documents"), monthly_price_pkr: num(req.body?.monthlyPricePkr ?? 0, "Monthly price"), note: clip(req.body?.note, 300, "Note"), active: req.body?.active !== false, updated_at: new Date().toISOString() };
+      // Only sent when given: the storage-limit column exists once phase2g is applied.
+      if (req.body?.maxStorageMb !== undefined) (row as any).max_storage_mb = lim(req.body.maxStorageMb, "Max storage (MB)");
       const db = getSystemSupabase()!;
       const { error } = await db.from("saas_plans").upsert(row, { onConflict: "id" });
       if (error) throw error;

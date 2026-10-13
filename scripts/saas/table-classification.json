@@ -46,6 +46,10 @@
    "class": "platform",
    "note": "Which user works for which company, with a per-company role and status. Written by the platform (service role) only."
   },
+  "company_settings_audit": {
+   "class": "platform",
+   "note": "History of changes to a company's settings (branding, bank accounts, terms, prices): who, when, before and after. Created by scripts/saas/phase2g-company-admin.sql. Written and read only by the application with the service role, filtered by company; the tenant role has no privilege. Append-only and deliberately NOT part of a company export or restore: restoring a company to an earlier state must not erase the record of who changed what."
+  },
   "company_terms": {
    "class": "tenant_config",
    "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
