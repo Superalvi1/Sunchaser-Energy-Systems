@@ -99,7 +99,7 @@ async function build(t, company, tag, depth = 0) {
     const fk = fkOf(t, c.column_name);
     if (fk && fk.parent.replace(/^public\./, "") !== t) { const parent = await seed(fk.parent.replace(/^public\./, ""), company, tag, depth + 1); row[c.column_name] = parent[fk.pcol]; continue; }
     if (isPk && c.column_default) continue;
-    const ov = OVERRIDES[t]?.[c.column_name]; const v = ov ? ov(tag) : valueFor(t, c, tag); if (v === undefined) throw new Error(`no generator for ${c.column_name} (${c.udt_name})`);
+    const ov = OVERRIDES[t]?.[c.column_name]; const v = ov ? ov(tag, company) : valueFor(t, c, tag); if (v === undefined) throw new Error(`no generator for ${c.column_name} (${c.udt_name})`);
     row[c.column_name] = v;
   }
   if (!("company_id" in row) && colsOf(t).some((c) => c.column_name === "company_id")) row.company_id = company;
@@ -122,6 +122,9 @@ const OVERRIDES = {
   interactive_proposals: { token_hash: (tag) => tag.padEnd(64, "0") },
   // An invoice with a positive total, so the released payment guard accepts the matrix's one-unit payment (positive control).
   invoices: { subtotal: () => 1000, grand_total: () => 1000, balance_due: () => 1000 },
+  // Keys of companies other than the founding one are '<company>:<key>' (phase2d enforces it).
+  settings: { key: (tag, company) => `${company}:${tag}` },
+  website_content: { key: (tag, company) => `${company}:${tag}` },
   smart_quote_versions: { quote_number: () => `SES-20261009-${String(1000 + (++counter % 8000))}` },
 };
 await cleanup();
@@ -148,7 +151,7 @@ for (const t of tenantTables) {
   x = await filt(asA.from(t).delete(), rb).select(); rec("A cannot delete B's row", !x.error && (x.data?.length ?? 0) === 0, JSON.stringify(x.error || x.data));
   const still = await q(`select company_id from public."${t}" where ${pk.map((k, i) => `"${k}"=$${i + 1}`).join(" and ")}`, pk.map((k) => rb[k]));
   rec("B's row survives untouched in the database", still.length === 1 && still[0].company_id === B, JSON.stringify(still));
-  x = await asA.from(t).upsert(payload(t, rb, { company_id: A }), { onConflict: pk.join(",") }).select(); rec("A cannot take over B's row by upsert", !x.error ? (x.data?.length ?? 0) === 0 : (x.error.code === "42501" || x.error.code === "23503"), JSON.stringify(x.error || x.data));
+  x = await asA.from(t).upsert(payload(t, rb, { company_id: A }), { onConflict: pk.join(",") }).select(); rec("A cannot take over B's row by upsert", !x.error ? (x.data?.length ?? 0) === 0 : (x.error.code === "42501" || x.error.code === "23503" || (x.error.code === "23514" && /_company_key_scope/.test(x.error.message || ""))), JSON.stringify(x.error || x.data));
   x = await asA.from(t).update({ company_id: B }).match(where(ra)).select(); rec("A cannot hand its row to B", !!x.error ? (x.error.code === "42501" || x.error.code === "23503") : (x.data?.length ?? 0) === 0, JSON.stringify(x.error || x.data));
   // Cross-company reference: A inserts a row of its own that points at B's parent. Positive control first.
   const fk = fks.find((f) => f.t.replace(/^public\./, "") === t && f.parent.replace(/^public\./, "") !== t && tenantTables.includes(f.parent.replace(/^public\./, "")) && !(fkOf(t, f.col)?.optionalRef));

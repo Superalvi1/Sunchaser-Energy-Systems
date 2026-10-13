@@ -71,6 +71,16 @@
    "gate": "G3+G4",
    "probe": "select to_regclass('public.document_counters') is not null and to_regprocedure('public.next_document_number(text,text,text,int)') is not null",
    "note": "Atomic per-company invoice numbers. Refuses to run for the founding company without an owner-set floor (insert into app.config ... 'document_floor.sunchaser.invoice.<year>')."
+  },
+  {
+   "id": "t4-company-settings",
+   "series": "tenant",
+   "file": "scripts/saas/phase2d-company-settings.sql",
+   "rollback": "scripts/saas/phase2d-company-settings-rollback.sql",
+   "requires": ["t1-company-foundation"],
+   "gate": "G3+G4",
+   "probe": "select exists (select 1 from pg_constraint where conname = 'settings_company_key_scope')",
+   "note": "Settings and website content keys of companies other than the founding one must be '<company>:<key>' (the database enforces what the application does)."
   }
  ]
 }

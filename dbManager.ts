@@ -24,6 +24,8 @@ import { liftWebsiteSourceFields } from "./src/lib/websiteCatalog/normalize.ts";
 import { rewriteLegacyStorageUrl } from "./server/storage/railwayObjectStorage.ts";
 import { CompanyContextMissingError, getCompanyContext } from "./server/saas/companyContext.ts";
 import { isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { scopedSettingKey, unscopeSettingRows, usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
+import { ensureSettingsSnapshot } from "./server/saas/settingsSnapshot.ts";
 import { getTenantClient } from "./server/saas/tenantClient.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
@@ -271,6 +273,8 @@ export interface Database {
   notifications?: any[];
   solarPackages?: any[];
   settings?: any;
+  /** Set where the state is loaded: another company's documents never use Sunchaser defaults (src/lib/documentIdentity.ts). */
+  documentIdentity?: { neutral: boolean };
   websiteContent?: any;
   quotations?: any[];
   quoteTemplates?: any[];
@@ -1055,6 +1059,7 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     manualOverrides: quote.manualOverrides || {},
     projectScopeSnapshot: quote.projectScopeSnapshot || undefined,
     termsSnapshot: quote.termsSnapshot || undefined,
+    settingsSnapshot: quote.settingsSnapshot || undefined,
   };
 }
 
@@ -1268,6 +1273,8 @@ export async function persistQuotationToSupabase(
   mode: "insert" | "upsert" = "insert"
 ): Promise<{ ok: boolean; error?: string; quoteId?: string }> {
   await resolveQuotationIdForPersist(supabase, quote, leadId, mode);
+  // Multi-company mode: freeze the company's settings (identity, bank accounts, terms, price defaults) on the quotation once.
+  await ensureSettingsSnapshot(supabase, quote, mode);
 
   const maxAttempts = mode === "insert" ? 5 : 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1297,11 +1304,13 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     throw new Error("Supabase is not configured.");
   }
   const useLocalConfigFallback = false;
+  // Another company's documents never fall back to the Sunchaser seed or to the local database.json backup.
+  const neutralIdentity = usesNeutralIdentity();
 
   let localBackup: any = {};
   try {
     const backupPath = path.join(process.cwd(), "database.json");
-    if (fs.existsSync(backupPath)) {
+    if (!neutralIdentity && fs.existsSync(backupPath)) {
       localBackup = JSON.parse(fs.readFileSync(backupPath, "utf-8"));
     }
   } catch (e) {
@@ -1337,6 +1346,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     seedKey: keyof Database
   ): T[] => {
     if (fetchResult.tableAvailable) return mapped;
+    if (neutralIdentity) return [];
     const backup = localBackup[seedKey as string];
     const seed = initialSeed[seedKey as keyof typeof initialSeed];
     return (backup as T[]) || (seed as T[]) || [];
@@ -1648,8 +1658,10 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   }));
 
   // Resolve config keys (settings & CMS website content)
-  const settingsObj = (settingsData || []).find((s: any) => s.key === "global")?.value || null;
-  const websiteContentObj = (websiteContentData || []).find((w: any) => w.key === "global")?.value || null;
+  const settingsRows = unscopeSettingRows(settingsData);
+  const websiteContentRows = unscopeSettingRows(websiteContentData);
+  const settingsObj = (settingsRows || []).find((s: any) => s.key === "global")?.value || null;
+  const websiteContentObj = (websiteContentRows || []).find((w: any) => w.key === "global")?.value || null;
 
   // Additional ERP metrics mapping
   const productsCatalogData = productsCatalogResult.data || [];
@@ -1814,7 +1826,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   }));
 
   const quotePdfSettingsMapped = (quotePdfSettingsData || []).map((qps: any) => {
-    const watermark = resolveStoredGlobalWatermark(qps, settingsData, getSupabaseProjectUrlFromEnv());
+    const watermark = resolveStoredGlobalWatermark(qps, settingsRows, getSupabaseProjectUrlFromEnv());
     const row = {
       id: qps.id,
       companyName: qps.company_name || qps.companyName,
@@ -1876,7 +1888,8 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     ceoMessages: pickQuotationTableData(ceoMessagesMapped, ceoMessagesResult, "ceoMessages"),
     socialLinks: pickQuotationTableData(socialLinksMapped, socialLinksResult, "socialLinks"),
     structureDescriptions: pickQuotationTableData(structureDescriptionsMapped, structureDescriptionsResult, "structureDescriptions"),
-    quotePdfSettings: pickQuotationTableData(quotePdfSettingsMapped, quotePdfSettingsResult, "quotePdfSettings")
+    quotePdfSettings: pickQuotationTableData(quotePdfSettingsMapped, quotePdfSettingsResult, "quotePdfSettings"),
+    documentIdentity: { neutral: neutralIdentity },
   };
 }
 
@@ -1919,7 +1932,7 @@ export async function upsertSolarPackageCatalogToSupabase(packages: any[]): Prom
 export async function upsertAppSettingsToSupabase(settings: Record<string, any>): Promise<void> {
   const supabase = getSupabase();
   if (!supabase || !settings) return;
-  await supabase.from("settings").upsert({ key: "global", value: settings }, { onConflict: "key" });
+  await supabase.from("settings").upsert({ key: scopedSettingKey("global"), value: settings }, { onConflict: "key" });
 }
 
 /* --- AUTOMATIC RELATION STATE MIGRATOR --- */

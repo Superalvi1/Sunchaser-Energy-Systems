@@ -6,7 +6,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$HERE/../../.."
 bash "$HERE/build-base.sh" || { echo "FAIL: could not build the base database"; exit 1; }
 rc=0
-for t in "$HERE/../test-phase2-migration.sh" "$HERE/test-ownership.sh" "$HERE/test-numbering.sh" "$REPO/scripts/migrations/test-runner.sh"; do
+for t in "$HERE/../test-phase2-migration.sh" "$HERE/test-ownership.sh" "$HERE/test-numbering.sh" "$HERE/test-settings.sh" "$REPO/scripts/migrations/test-runner.sh"; do
   echo; echo "=== $(basename "$t")"
   if [[ "$(basename "$t")" == test-phase2-migration.sh ]]; then
     bash "$HERE/mkdb.sh" t_mig > /dev/null

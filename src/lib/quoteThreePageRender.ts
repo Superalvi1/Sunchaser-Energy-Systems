@@ -1,4 +1,5 @@
 import { STANDARD_QUOTATION_PAGES } from "./autoSizer";
+import { identityDefault, isNeutralState } from "./documentIdentity";
 import {
   boqPdfSectionCss,
   buildBoqTotalsHtml,
@@ -127,7 +128,16 @@ export function quoteTermsOverflow(terms: string[]): { overflow: boolean; charCo
   return { overflow: charCount > THREE_PAGE_TERMS_MAX_CHARS || terms.length > 16, charCount };
 }
 
-function resolveLogoSrc(activeState: any, appBase: string): string {
+/** Company details frozen on the quotation when it was first saved (server/saas capture). Empty object when none. */
+function quoteSnapshotCompany(quoteObj: any): Record<string, string> {
+  const c = quoteObj?.settingsSnapshot?.company;
+  return c && typeof c === "object" ? (c as Record<string, string>) : {};
+}
+
+function resolveLogoSrc(activeState: any, appBase: string, quoteObj?: any): string {
+  const neutral = isNeutralState(activeState);
+  const frozenLogo = String(quoteSnapshotCompany(quoteObj).logoUrl || "").trim();
+  if (frozenLogo) return resolveQuotePdfLogoUrl(frozenLogo, appBase);
   const pdfRow = (activeState?.quotePdfSettings || [])[0] || {};
   const settingsRows = Array.isArray(activeState?.settings) ? activeState.settings : [];
   const keyed = settingsRows.find((s: any) => s?.key === "companyLogo" || s?.key === "company_logo");
@@ -135,26 +145,37 @@ function resolveLogoSrc(activeState: any, appBase: string): string {
     (typeof keyed?.value === "string" && keyed.value) ||
     (keyed?.value && typeof keyed.value === "object" && keyed.value.url) ||
     "";
-  return resolveQuotePdfLogoUrl(
-    pdfRow.logoUrl || pdfRow.logo_url || companyLogo || OFFICIAL_QUOTE_LOGO_PATH,
-    appBase
-  );
+  const own = pdfRow.logoUrl || pdfRow.logo_url || companyLogo || "";
+  // Another company without a logo gets none, never the Sunchaser logo.
+  if (neutral && !own) return "";
+  return resolveQuotePdfLogoUrl(own || OFFICIAL_QUOTE_LOGO_PATH, appBase);
 }
 
-function resolveCompany(activeState: any): {
+function resolveCompany(activeState: any, quoteObj?: any): {
   companyName: string;
   officeAddress: string;
   phoneNumbers: string;
   billingEmail: string;
   websiteUrl: string;
 } {
-  const pdf = (activeState?.quotePdfSettings || [])[0] || {};
+  const neutral = isNeutralState(activeState);
+  const live = (activeState?.quotePdfSettings || [])[0] || {};
+  // The company details saved on the quotation win over the current settings: a historical quotation keeps its original identity.
+  const frozen = quoteSnapshotCompany(quoteObj);
+  const pdf = {
+    ...live,
+    companyName: frozen.companyName || live.companyName || live.company_name,
+    officeAddress: frozen.officeAddress || live.officeAddress || live.office_address,
+    hotlinePhones: frozen.phoneNumbers || live.hotlinePhones || live.hotline_phones,
+    billingEmail: frozen.billingEmail || live.billingEmail || live.billing_email,
+    websiteUrl: frozen.websiteUrl || live.websiteUrl || live.website_url,
+  };
   return {
-    companyName: pdf.companyName || pdf.company_name || "SUNCHASER ENERGY SYSTEMS",
-    officeAddress: pdf.officeAddress || pdf.office_address || "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore",
-    phoneNumbers: pdf.hotlinePhones || pdf.hotline_phones || "0309-0236666, 0330-7776444",
-    billingEmail: pdf.billingEmail || pdf.billing_email || "ceo.sunchaser@gmail.com",
-    websiteUrl: pdf.websiteUrl || pdf.website_url || "www.sunchaserenergy.co",
+    companyName: pdf.companyName || identityDefault(neutral, "SUNCHASER ENERGY SYSTEMS", ""),
+    officeAddress: pdf.officeAddress || identityDefault(neutral, "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore", ""),
+    phoneNumbers: pdf.hotlinePhones || identityDefault(neutral, "0309-0236666, 0330-7776444", ""),
+    billingEmail: pdf.billingEmail || identityDefault(neutral, "ceo.sunchaser@gmail.com", ""),
+    websiteUrl: pdf.websiteUrl || identityDefault(neutral, "www.sunchaserenergy.co", ""),
   };
 }
 
@@ -191,14 +212,16 @@ export function compileThreePageQuotationHtml(
   options: { mode?: ThreePageQuoteMode; hideActionBar?: boolean } = {}
 ): ThreePageRenderResult {
   const proposal = mergeQuoteWithLead(quoteObj, leadObj);
-  const settings = resolveCompany(activeState);
+  const neutral = isNeutralState(activeState);
+  const settings = resolveCompany(activeState, quoteObj);
   const appBase = getQuotePdfAppBaseUrl();
-  const logoSrc = resolveLogoSrc(activeState, appBase);
+  const logoSrc = resolveLogoSrc(activeState, appBase, quoteObj);
+  const brandWord = neutral ? settings.companyName || "Company" : "Sunchaser";
   const siteLocationLabel = formatSiteLocation(proposal);
   const quoteDateString = formatLongDate(proposal.quoteDate);
   const validity = resolveQuoteValidityDays(quoteObj, activeState);
   const expiryDateString = formatLongDate(addDays(proposal.quoteDate, validity.days));
-  const docId = `SC-${String(leadObj?.id || "DRAFT").substring(0, 8).toUpperCase()}-${String(proposal.id || quoteObj?.id || "DRAFT").toUpperCase()}`;
+  const docId = `${neutral ? "Q" : "SC"}-${String(leadObj?.id || "DRAFT").substring(0, 8).toUpperCase()}-${String(proposal.id || quoteObj?.id || "DRAFT").toUpperCase()}`;
   const systemKw = proposal.systemSizekW ?? quoteObj?.systemSizekW ?? "";
   const systemType = resolveDisplayedSystemType(quoteObj, proposal);
   const systemHeadline = quotationSystemHeadline(systemKw, systemType);
@@ -237,6 +260,8 @@ export function compileThreePageQuotationHtml(
     taxAmount,
     societyCharges,
     customNotes: quoteObj?.customNotes,
+    // The default note names the founding company's steel supplier; another company's quotation carries only its own notes.
+    strictTemplateOnly: neutral,
   });
 
   const overflowBanner = overflowBlocked
@@ -277,7 +302,7 @@ export function compileThreePageQuotationHtml(
             <div style="font-size:9px;color:#475569;margin-top:4px;">Name / signature / date</div>
           </div>
           <div>
-            <div style="font-size:8px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:800;">For Sunchaser Energy Systems</div>
+            <div style="font-size:8px;text-transform:uppercase;letter-spacing:0.08em;color:#64748b;font-weight:800;">For ${escapeHtml(neutral ? settings.companyName : "Sunchaser Energy Systems")}</div>
             <div style="border-bottom:1px solid #94a3b8;height:36px;margin-top:22px;"></div>
             <div style="font-size:9px;color:#475569;margin-top:4px;">${escapeHtml(proposal.bdmName !== "Not specified" ? proposal.bdmName : "Authorized signatory")}</div>
           </div>
@@ -383,7 +408,7 @@ export function compileThreePageQuotationHtml(
       const intro =
         index === 0
           ? `<div style="font-size:10.5px;line-height:1.45;color:#475569;margin:8px 0 10px;">
-          All supply, installation and LESCO utility work under this quotation is governed by the Sunchaser covenants below.
+          ${neutral ? "All supply and installation work under this quotation is governed by the terms below." : "All supply, installation and LESCO utility work under this quotation is governed by the Sunchaser covenants below."}
         </div>`
           : `<div style="font-size:9px;color:#64748b;margin:6px 0 8px;">Terms continued from previous page.</div>`;
       const extraCards = isLast
@@ -421,7 +446,7 @@ export function compileThreePageQuotationHtml(
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Sunchaser Quotation — ${escapeHtml(proposal.clientName)}</title>
+  <title>${escapeHtml(brandWord)} Quotation — ${escapeHtml(proposal.clientName)}</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     body {
@@ -562,7 +587,7 @@ export function compileThreePageQuotationHtml(
     options.hideActionBar
       ? ""
       : `<div class="action-bar">
-        <div><strong>Sunchaser Quotation</strong> — ${escapeHtml(proposal.clientName)} · ${totalPages} pages</div>
+        <div><strong>${escapeHtml(brandWord)} Quotation</strong> — ${escapeHtml(proposal.clientName)} · ${totalPages} pages</div>
         <div class="action-bar-actions">
           <button type="button" class="btn-print" ${exportBlocked ? "disabled" : ""} onclick="sunchaserPrintDeck()">Print</button>
         </div>

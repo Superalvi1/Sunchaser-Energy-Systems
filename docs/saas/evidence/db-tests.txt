@@ -2,13 +2,13 @@ NOTICE:  role "authenticator" has already been granted membership in role "anon"
 NOTICE:  role "authenticator" has already been granted membership in role "authenticated" by role "postgres"
 NOTICE:  role "authenticator" has already been granted membership in role "service_role" by role "postgres"
 Applying r1-smart-quote-versions  (scripts/smart-quote-versions-schema.sql)  gate G3
-  ok (43 ms)
+  ok (81 ms)
 Applying r2-session-revocation  (scripts/session-revocation-schema.sql)  gate G3
-  ok (30 ms)
+  ok (69 ms)
 Applying r3-invoice-payments-integrity  (scripts/invoice-payments-integrity.sql)  gate G3
-  ok (25 ms)
+  ok (68 ms)
 Applying r4-invoice-save-atomic  (scripts/invoice-save-atomic.sql)  gate G3
-  ok (22 ms)
+  ok (68 ms)
 built sc_base_template: 103 public tables, release migrations r1-r4 applied
 
 === test-phase2-migration.sh
@@ -105,6 +105,32 @@ PASS: the refused rollback changed nothing
 
 40 passed, 0 failed
 
+=== test-settings.sh
+PASS: phase2d applies on a database with founding settings rows
+PASS: phase2d applies a second time (idempotent)
+PASS: no founding row was rewritten
+PASS: founding company can still write the plain key 'global'
+PASS: founding company (tenant role) can still upsert 'global'
+PASS: company A may not write the plain key 'global'
+PASS: company A (tenant role) writes 'co_a:global'
+PASS: company B (tenant role) writes 'co_b:global'
+PASS: company A may not write company B's key 'co_b:x'
+PASS: underscore is not a wildcard: company 'a_b' may not write 'axb:k'
+PASS: company 'a_b' writes 'a_b:k'
+PASS: a company cannot take over an existing plain key by upsert (tenant role, plain 'global'): refused
+PASS: the founding 'global' row is unchanged after the attempt
+PASS: company A may not write the plain key 'global' in website_content
+PASS: company A writes 'co_a:global' in website_content
+PASS: company A sees only its own settings rows
+PASS: company B sees only its own settings rows
+PASS: rollback applies
+PASS: after rollback the constraints are gone
+PASS: rollback left every row in place
+PASS: re-apply after rollback
+PASS: constraints present again
+
+settings migration tests: 22 passed, 0 failed
+
 === test-runner.sh
 PASS: status on a fresh database: nothing applied, no ledger
 PASS: apply without --yes is a dry run
@@ -144,8 +170,8 @@ PASS: t3 refuses to run without the owner's floor (founding company has no invoi
 PASS: t1 and t2 were applied and recorded before that
 PASS: the refused t3 is pending, not applied
 PASS: with the floor set t3 applies
-PASS: verify is clean with all seven applied
-PASS: rollback t3, t2, t1 in reverse order
+PASS: verify is clean with all eight applied
+PASS: rollback t4, t3, t2, t1 in reverse order
 PASS: the company foundation is gone and the release migrations remain
 PASS: everything applies again after the rollback (the floor is still set)
 PASS: final verify is clean

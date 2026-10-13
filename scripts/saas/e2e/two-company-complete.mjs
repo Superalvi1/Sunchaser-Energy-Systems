@@ -256,7 +256,7 @@ check("no invoice line, payment or document belongs to a different company than 
   psql("select count(*) from customer_documents d join customers c on c.id=d.customer_id where d.company_id<>c.company_id"),
   psql("select count(*) from invoices i join customers c on c.id=i.customer_id where i.company_id<>c.company_id")].every((x) => x === "0"));
 check("each company's ledger equals its invoice header", [CO.alpha, CO.beta].every((c) => psql(`select abs((select coalesce(sum(amount),0) from invoice_payments where invoice_id='${c.f.invoiceId}') - paid_amount) from invoices where id='${c.f.invoiceId}'`) === "0"));
-console.log("   KNOWN GAPS shown by this run (not hidden): both printable documents still carry the Sunchaser brand header, bank details and terms (settings are still one row per database); the SPA still downloads documents through links (it does not yet use the authorised route).");
+console.log("   KNOWN GAPS (not hidden): the SPA still downloads documents through links (it does not yet use the authorised route); documents are checked as server-rendered HTML here - the Chromium PDF check is a separate run; company branding/bank/terms are proven in company-settings.mjs.");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) console.log("Failed:\n - " + failures.join("\n - "));

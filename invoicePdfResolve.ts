@@ -14,6 +14,7 @@ import {
 } from "./src/lib/invoicePdfMeta.ts";
 import { normalizeInvoiceBankAccounts, type BrandingConfig } from "./invoicePdf.ts";
 import { isSupabaseActive, getSupabase } from "./dbManager.js";
+import { usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
 
 export type InvoicePdfOptions = {
   project?: InvoiceProjectInfo;
@@ -73,6 +74,15 @@ function projectFromLead(lead: any): InvoiceProjectInfo {
 
 async function resolveCeoSignature(branding: BrandingConfig, localDb?: Database): Promise<string> {
   if (branding.signatureUrl?.trim()) return branding.signatureUrl.trim();
+  // Another company signs with its own signature or not at all: never with the Sunchaser CEO's.
+  if (usesNeutralIdentity()) {
+    if (isSupabaseActive()) {
+      const { data } = await getSupabase()!.from("ceo_messages").select("signature_url").order("id", { ascending: true }).limit(1);
+      const own = data?.[0]?.signature_url;
+      return own && String(own).trim() ? String(own).trim() : "";
+    }
+    return "";
+  }
   if (isSupabaseActive()) {
     const { data } = await getSupabase()!
       .from("ceo_messages")
@@ -92,7 +102,10 @@ async function loadInvoiceBankAccounts(localDb?: Database) {
   if (isSupabaseActive()) {
     const rows = await loadInvoiceBankAccountsFromSupabase();
     if (rows.length) return rows;
+    // Another company without a visible account shows none; the shared local copy holds Sunchaser's accounts.
+    if (usesNeutralIdentity()) return [];
   }
+  if (usesNeutralIdentity()) return [];
   return (localDb as any)?.bankAccounts || [];
 }
 
@@ -102,12 +115,12 @@ export async function buildInvoicePdfPayload(
 ): Promise<{ invoice: InvoiceRecord; branding: BrandingConfig; options: InvoicePdfOptions }> {
   const rawBranding = await getCompanyBranding(localDb);
   const official = withOfficialBranding(rawBranding);
-  const banks = normalizeInvoiceBankAccounts(await loadInvoiceBankAccounts(localDb));
+  const banks = normalizeInvoiceBankAccounts(await loadInvoiceBankAccounts(localDb), { neutral: official.legacyDefaults === false });
   const signatureUrl = await resolveCeoSignature(official, localDb);
 
   const branding: BrandingConfig = {
     ...official,
-    logoUrl: official.invoiceLogoUrl || official.logoUrl || OFFICIAL_INVOICE_LOGO,
+    logoUrl: official.invoiceLogoUrl || official.logoUrl || (official.legacyDefaults === false ? "" : OFFICIAL_INVOICE_LOGO),
     signatureUrl,
     signatureConfigured: !!signatureUrl?.trim(),
     bankAccounts: banks,

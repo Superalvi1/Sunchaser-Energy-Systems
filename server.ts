@@ -368,8 +368,10 @@ import {
   RevocationLookupError,
 } from "./server/auth/revocation.ts";
 import { createPostgrestCompanyStore, listCompanyMemberUserIds } from "./server/saas/companyStore.ts";
-import { assertMultiCompanyConfig, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { assertMultiCompanyConfig, FOUNDING_COMPANY_ID, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
 import { getCompanyContext, runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
+import { usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
+import { registerCompanySettingsRoutes } from "./server/saas/companySettingsApi.ts";
 import { listLoginCompanies } from "./server/saas/loginCompanies.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
@@ -741,6 +743,8 @@ app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, comp
  * Authorised file access: no link at all. The caller must hold a session of the company the object belongs to (the company is read from
  * the key itself: `c/<company>/...`, or the founding company for an unprefixed key). Anything else answers 404, like a missing object.
  */
+registerCompanySettingsRoutes(app);
+
 app.get("/api/company/files/:namespace/:encodedKey", async (req, res) => {
   try {
     if (!isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
@@ -1108,14 +1112,58 @@ if (process.env.NODE_ENV === "production") {
 const DB_FILE = path.join(process.cwd(), "database.json");
 const BACKUPS_DIR = path.join(process.cwd(), "backups");
 
-let db: Database = initialSeed;
+/**
+ * The local copy of the data (database.json / the built-in seed) is Sunchaser's own legacy fallback. In multi-company mode every
+ * company other than the founding one gets its own EMPTY in-memory copy instead, resolved from the company of the running request
+ * (src/saas company context). Nothing of Sunchaser's local data, and nothing of another company's, is ever visible through `db`, and
+ * a non-founding company never writes the local file. Single-company mode: `db` is the legacy copy, exactly as before.
+ */
+let legacyDb: Database = initialSeed;
+const companyLocalDbs = new Map<string, Database>();
+function emptyCompanyDatabase(): Database {
+  return {
+    users: [], leads: [], tickets: [], netMeteringHistory: [], inventory: [], projects: [], netMeteringTrackers: [], paymentTracks: [],
+    activityLogs: [], whatsAppLogs: [], categories: [], products: [], orders: [], warranties: [], notifications: [], solarPackages: [],
+    quotations: [], quoteTemplates: [], quoteTemplatePages: [], bankAccounts: [], companyTerms: [], ceoMessages: [], socialLinks: [],
+    structureDescriptions: [], quotePdfSettings: [], purchaseOrders: [], customerDocuments: [], customerWarranties: [],
+    settings: {}, websiteContent: {}, documentIdentity: { neutral: true },
+  } as unknown as Database;
+}
+/** The company whose local copy the running code should see, or null for the legacy (founding/system/single-company) copy. */
+function localDbCompany(): string | null {
+  if (!isMultiCompanyEnabled()) return null;
+  const ctx = getCompanyContext();
+  if (ctx?.kind !== "company" || ctx.companyId === FOUNDING_COMPANY_ID) return null;
+  return ctx.companyId;
+}
+function currentLocalDb(): Database {
+  const company = localDbCompany();
+  if (!company) return legacyDb;
+  let d = companyLocalDbs.get(company);
+  if (!d) { d = emptyCompanyDatabase(); companyLocalDbs.set(company, d); }
+  return d;
+}
+const db: Database = new Proxy({} as Database, {
+  get: (_t, prop) => (currentLocalDb() as any)[prop],
+  set: (_t, prop, value) => { (currentLocalDb() as any)[prop] = value; return true; },
+  has: (_t, prop) => prop in (currentLocalDb() as object),
+  deleteProperty: (_t, prop) => delete (currentLocalDb() as any)[prop],
+  ownKeys: () => Reflect.ownKeys(currentLocalDb() as object),
+  getOwnPropertyDescriptor: (_t, prop) => {
+    const d = Reflect.getOwnPropertyDescriptor(currentLocalDb() as object, prop);
+    return d ? { ...d, configurable: true } : undefined;
+  },
+  defineProperty: (_t, prop, desc) => Reflect.defineProperty(currentLocalDb() as object, prop, desc),
+});
 
 function loadDb() {
+  // Another company has no local file: its copy is the empty in-memory one above.
+  if (localDbCompany()) return;
   try {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, "utf8");
       try {
-        db = JSON.parse(content);
+        legacyDb = JSON.parse(content);
         // Ensure all objects/fields exist
         if (!db.users) db.users = initialSeed.users;
         if (!db.leads) db.leads = initialSeed.leads;
@@ -1284,21 +1332,23 @@ function loadDb() {
         }
       } catch (parseErr) {
         console.error("Failed to parse database.json. Overwriting with seed.", parseErr);
-        db = initialSeed;
+        legacyDb = initialSeed;
         saveDb();
       }
     } else {
-      db = initialSeed;
+      legacyDb = initialSeed;
       saveDb();
     }
 
   } catch (err) {
     console.error("FS Read error inside loadDb:", err);
-    db = initialSeed;
+    legacyDb = initialSeed;
   }
 }
 
 function saveDb() {
+  // Another company never writes the local file (it holds the founding company's legacy data only).
+  if (localDbCompany()) return;
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
   } catch (err) {
@@ -1454,6 +1504,9 @@ async function appendActivityLog(userId: string, userName: string, role: string,
 }
 
 async function triggerWhatsAppNotification(customerName: string, phone: string, eventType: string, messageText: string) {
+  // These entries are Sunchaser-worded and only recorded, never sent. WhatsApp is outside the pilot phase: another company records
+  // nothing (no simulated "Delivered" message carrying the founding company's name and portal link).
+  if (usesNeutralIdentity()) return null;
   const newWa = {
     id: `wa-${Date.now()}`,
     timestamp: new Date().toISOString(),
@@ -5170,7 +5223,10 @@ app.get("/api/state", async (req, res) => {
   if (isSupabaseActive()) {
     try {
       const stateObj = await fetchAppStateFromSupabase();
-      const packageResolved = ensurePackageLibraryCatalog(stateObj.solarPackages, stateObj.settings);
+      // Another company's boot never generates Sunchaser's default package catalogue (its prices and equipment) for it.
+      const packageResolved = usesNeutralIdentity()
+        ? { packages: stateObj.solarPackages || [], settings: stateObj.settings || {}, migrated: false }
+        : ensurePackageLibraryCatalog(stateObj.solarPackages, stateObj.settings);
       if (packageResolved.migrated) {
         stateObj.solarPackages = packageResolved.packages;
         stateObj.settings = packageResolved.settings;
@@ -5525,7 +5581,7 @@ app.post("/api/leads", async (req, res) => {
       rating: 3,
       assignedSalesperson: String(assignedSalesperson || "").trim(),
       createdAt: new Date().toISOString(),
-      notes: notes || "Submitted via Sunchaser Sizing Calculator.",
+      notes: notes || (usesNeutralIdentity() ? "Submitted via the sizing calculator." : "Submitted via Sunchaser Sizing Calculator."),
       leadSource: leadSource || "Self-registration Web Portal",
       engagementLevel: engagementLevel || "Medium",
       quotes: [],
@@ -7683,14 +7739,19 @@ app.put("/api/admin/autosizer-presets", async (req, res) => {
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
   try {
     loadDb();
-    let latest: unknown = db.settings;
+    // Another company starts from its own (possibly empty) settings, never from the Sunchaser settings kept in the shared local copy,
+    // and its settings are never written to that shared copy.
+    const neutral = usesNeutralIdentity();
+    let latest: unknown = neutral ? {} : db.settings;
     if (isSupabaseActive()) {
       const state = await fetchAppStateFromSupabase();
       latest = state?.settings ?? latest;
     }
     const next = patchLatestSettingsWithAutoSizerPresets(latest, req.body);
-    db.settings = next;
-    saveDb();
+    if (!neutral) {
+      db.settings = next;
+      saveDb();
+    }
     if (isSupabaseActive()) {
       await upsertAppSettingsToSupabase(next);
     }

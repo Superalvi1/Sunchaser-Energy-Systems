@@ -18,6 +18,8 @@ export type CompanyBranding = {
   invoiceLogoUrl?: string;
   /** Full-width bank accounts reference image for invoice page 2. */
   bankAccountsImageUrl?: string;
+  /** false = another company's branding: no Sunchaser value is ever filled in (src/lib/documentIdentity.ts). */
+  legacyDefaults?: boolean;
 };
 
 export const DEFAULT_OFFICE_LOCATIONS = [
@@ -64,6 +66,33 @@ function normalizeLegacyContact(raw: Partial<CompanyBranding>): Partial<CompanyB
   return next;
 }
 
-export function mergeBranding(raw?: Partial<CompanyBranding> | null): CompanyBranding {
+/** What a company that has set nothing yet gets: no name, address, contact, logo, signature, terms or bank image of anyone else. */
+export const NEUTRAL_BRANDING: CompanyBranding = {
+  companyName: "",
+  officeAddress: "",
+  officeLocations: [],
+  phoneNumbers: "",
+  billingEmail: "",
+  websiteUrl: "",
+  logoUrl: "",
+  appIconUrl: "",
+  splashImageUrl: "",
+  primaryColor: "#334155",
+  secondaryColor: "#0f172a",
+  accentColor: "#64748b",
+  terms: "",
+  googleReviewUrl: "",
+  invoiceLogoUrl: "",
+  bankAccountsImageUrl: "",
+  signatureUrl: "",
+  legacyDefaults: false,
+};
+
+export function mergeBranding(raw?: Partial<CompanyBranding> | null, options?: { neutral?: boolean }): CompanyBranding {
+  if (options?.neutral) {
+    const own: Partial<CompanyBranding> = {};
+    for (const [k, v] of Object.entries(raw || {})) if (v !== undefined && v !== null) (own as any)[k] = v;
+    return { ...NEUTRAL_BRANDING, ...own, legacyDefaults: false };
+  }
   return { ...DEFAULT_BRANDING, ...normalizeLegacyContact(raw || {}) };
 }

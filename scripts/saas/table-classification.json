@@ -460,7 +460,7 @@
   },
   "settings": {
    "class": "tenant_config",
-   "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
+   "note": "One row per (company, key). The founding company keeps its plain keys; every other company stores \"<company>:<key>\" (application: server/saas/companyIdentity.ts; database: phase2d check constraint)."
   },
   "site_surveys": {
    "class": "tenant",
@@ -520,7 +520,7 @@
   },
   "website_content": {
    "class": "tenant_config",
-   "note": "Public website/branding content; per company. Pilot scope: only branding fields are exposed."
+   "note": "One row per (company, key). The founding company keeps its plain keys; every other company stores \"<company>:<key>\" (application: server/saas/companyIdentity.ts; database: phase2d check constraint)."
   },
   "whatsapp_audit_events": {
    "class": "tenant_existing_company_id",

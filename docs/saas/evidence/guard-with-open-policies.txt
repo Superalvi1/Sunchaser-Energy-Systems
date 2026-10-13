@@ -1,61 +1,61 @@
    MODE: row-level policies OPEN on leads, customers, customer_documents, quotations, invoices, invoice_items, invoice_payments - only the application's ownership guard is active
 PASS: both companies sign in bound to their own company
-PASS: ALPHA86BF1C: lead created
-PASS: ALPHA86BF1C: quotation created
-PASS: ALPHA86BF1C: contracting the lead created an invoice
-PASS: ALPHA86BF1C: invoice is stored under co_alpha
-PASS: ALPHA86BF1C: the atomic edit replaced the lines (2 lines, total 125000)
-PASS: ALPHA86BF1C: every line belongs to co_alpha
-PASS: ALPHA86BF1C: the partial payment, and its replay with the same request id, recorded ONE payment
-PASS: ALPHA86BF1C: over-payment refused
-PASS: ALPHA86BF1C: final payment accepted and the invoice is Paid with balance 0
-PASS: ALPHA86BF1C: all payments carry co_alpha
-PASS: ALPHA86BF1C: invoice document produced and contains its own lines and customer
-PASS: ALPHA86BF1C: quotation document produced and contains its own customer
-PASS: ALPHA86BF1C: document uploaded, stored under co_alpha
-PASS: BETA86BF1C: lead created
-PASS: BETA86BF1C: quotation created
-PASS: BETA86BF1C: contracting the lead created an invoice
-PASS: BETA86BF1C: invoice is stored under co_beta
-PASS: BETA86BF1C: the atomic edit replaced the lines (2 lines, total 68000)
-PASS: BETA86BF1C: every line belongs to co_beta
-PASS: BETA86BF1C: the partial payment, and its replay with the same request id, recorded ONE payment
-PASS: BETA86BF1C: over-payment refused
-PASS: BETA86BF1C: final payment accepted and the invoice is Paid with balance 0
-PASS: BETA86BF1C: all payments carry co_beta
-PASS: BETA86BF1C: invoice document produced and contains its own lines and customer
-PASS: BETA86BF1C: quotation document produced and contains its own customer
-PASS: BETA86BF1C: document uploaded, stored under co_beta
+PASS: ALPHA992BD8: lead created
+PASS: ALPHA992BD8: quotation created
+PASS: ALPHA992BD8: contracting the lead created an invoice
+PASS: ALPHA992BD8: invoice is stored under co_alpha
+PASS: ALPHA992BD8: the atomic edit replaced the lines (2 lines, total 125000)
+PASS: ALPHA992BD8: every line belongs to co_alpha
+PASS: ALPHA992BD8: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: ALPHA992BD8: over-payment refused
+PASS: ALPHA992BD8: final payment accepted and the invoice is Paid with balance 0
+PASS: ALPHA992BD8: all payments carry co_alpha
+PASS: ALPHA992BD8: invoice document produced and contains its own lines and customer
+PASS: ALPHA992BD8: quotation document produced and contains its own customer
+PASS: ALPHA992BD8: document uploaded, stored under co_alpha
+PASS: BETA992BD8: lead created
+PASS: BETA992BD8: quotation created
+PASS: BETA992BD8: contracting the lead created an invoice
+PASS: BETA992BD8: invoice is stored under co_beta
+PASS: BETA992BD8: the atomic edit replaced the lines (2 lines, total 68000)
+PASS: BETA992BD8: every line belongs to co_beta
+PASS: BETA992BD8: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: BETA992BD8: over-payment refused
+PASS: BETA992BD8: final payment accepted and the invoice is Paid with balance 0
+PASS: BETA992BD8: all payments carry co_beta
+PASS: BETA992BD8: invoice document produced and contains its own lines and customer
+PASS: BETA992BD8: quotation document produced and contains its own customer
+PASS: BETA992BD8: document uploaded, stored under co_beta
    invoice numbers: alpha INV-2026-0001, beta INV-2026-0001
 PASS: each company's first invoice is INV-<year>-0001: two independent sequences (run on a clean stack: seed --cleanup first)
 PASS: both companies hold the same invoice number without a conflict
 PASS: each company's counter stands at 1
 PASS: the founding company's invoice counter is untouched by the pilot companies' invoices (stays at 165)
-PASS: ALPHA86BF1C->BETA86BF1C: cannot read the invoice
-PASS: ALPHA86BF1C->BETA86BF1C: cannot get the invoice PDF
-PASS: ALPHA86BF1C->BETA86BF1C: cannot get the quotation PDF
-PASS: ALPHA86BF1C->BETA86BF1C: cannot edit the invoice
-PASS: ALPHA86BF1C->BETA86BF1C: cannot pay the invoice
-PASS: ALPHA86BF1C->BETA86BF1C: cannot delete the invoice
-PASS: ALPHA86BF1C->BETA86BF1C: cannot list the customer's documents
-PASS: ALPHA86BF1C->BETA86BF1C: cannot upload onto the customer
-PASS: ALPHA86BF1C->BETA86BF1C: cannot change the lead
-PASS: ALPHA86BF1C->BETA86BF1C: cannot read the quotation versions
-PASS: BETA86BF1C->ALPHA86BF1C: cannot read the invoice
-PASS: BETA86BF1C->ALPHA86BF1C: cannot get the invoice PDF
-PASS: BETA86BF1C->ALPHA86BF1C: cannot get the quotation PDF
-PASS: BETA86BF1C->ALPHA86BF1C: cannot edit the invoice
-PASS: BETA86BF1C->ALPHA86BF1C: cannot pay the invoice
-PASS: BETA86BF1C->ALPHA86BF1C: cannot delete the invoice
-PASS: BETA86BF1C->ALPHA86BF1C: cannot list the customer's documents
-PASS: BETA86BF1C->ALPHA86BF1C: cannot upload onto the customer
-PASS: BETA86BF1C->ALPHA86BF1C: cannot change the lead
-PASS: BETA86BF1C->ALPHA86BF1C: cannot read the quotation versions
+PASS: ALPHA992BD8->BETA992BD8: cannot read the invoice
+PASS: ALPHA992BD8->BETA992BD8: cannot get the invoice PDF
+PASS: ALPHA992BD8->BETA992BD8: cannot get the quotation PDF
+PASS: ALPHA992BD8->BETA992BD8: cannot edit the invoice
+PASS: ALPHA992BD8->BETA992BD8: cannot pay the invoice
+PASS: ALPHA992BD8->BETA992BD8: cannot delete the invoice
+PASS: ALPHA992BD8->BETA992BD8: cannot list the customer's documents
+PASS: ALPHA992BD8->BETA992BD8: cannot upload onto the customer
+PASS: ALPHA992BD8->BETA992BD8: cannot change the lead
+PASS: ALPHA992BD8->BETA992BD8: cannot read the quotation versions
+PASS: BETA992BD8->ALPHA992BD8: cannot read the invoice
+PASS: BETA992BD8->ALPHA992BD8: cannot get the invoice PDF
+PASS: BETA992BD8->ALPHA992BD8: cannot get the quotation PDF
+PASS: BETA992BD8->ALPHA992BD8: cannot edit the invoice
+PASS: BETA992BD8->ALPHA992BD8: cannot pay the invoice
+PASS: BETA992BD8->ALPHA992BD8: cannot delete the invoice
+PASS: BETA992BD8->ALPHA992BD8: cannot list the customer's documents
+PASS: BETA992BD8->ALPHA992BD8: cannot upload onto the customer
+PASS: BETA992BD8->ALPHA992BD8: cannot change the lead
+PASS: BETA992BD8->ALPHA992BD8: cannot read the quotation versions
 PASS: the victims' invoices, lines, payments, documents and leads are byte-for-byte unchanged by all of those attacks
-PASS: ALPHA86BF1C: its own stored file downloads through its signed link and is the file it uploaded
-PASS: ALPHA86BF1C: the object key does not contain the other company's ids
-PASS: BETA86BF1C: its own stored file downloads through its signed link and is the file it uploaded
-PASS: BETA86BF1C: the object key does not contain the other company's ids
+PASS: ALPHA992BD8: its own stored file downloads through its signed link and is the file it uploaded
+PASS: ALPHA992BD8: the object key does not contain the other company's ids
+PASS: BETA992BD8: its own stored file downloads through its signed link and is the file it uploaded
+PASS: BETA992BD8: the object key does not contain the other company's ids
 PASS: every file link is an expiring link (exp is in the URL and covered by the signature)
 PASS: stored object keys sit under the company's own prefix (c/<company>/...)
 PASS: alpha cannot fetch beta's file with alpha's signature (the signature belongs to one object)
@@ -73,10 +73,8 @@ PASS: authorised access: no session, no file
 PASS: authorised access: a path-traversal key is refused
 PASS: authorised access: a company cannot ask for a founding-company (unprefixed) key
 PASS: a founding-company permanent link (existing stored links) still works while STORAGE_LEGACY_LINKS is not off
-PASS: an expired link is dead (lifetime 20 s) and says so
-PASS: the document list issues a fresh link and it works
 PASS: no invoice line, payment or document belongs to a different company than its parent
 PASS: each company's ledger equals its invoice header
-   KNOWN GAPS shown by this run (not hidden): both printable documents still carry the Sunchaser brand header, bank details and terms (settings are still one row per database); file links are non-expiring bearer links.
+   KNOWN GAPS shown by this run (not hidden): both printable documents still carry the Sunchaser brand header, bank details and terms (settings are still one row per database); the SPA still downloads documents through links (it does not yet use the authorised route).
 
-77 passed, 0 failed
+75 passed, 0 failed

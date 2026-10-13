@@ -10,6 +10,8 @@
  *   5. existing company default of 3 days (same seed / old PDF compiler)
  */
 
+import { isNeutralState } from "./documentIdentity";
+
 const WORD_TO_DAYS: Record<string, number> = {
   one: 1,
   two: 2,
@@ -25,12 +27,15 @@ const WORD_TO_DAYS: Record<string, number> = {
 
 /** Existing company_terms / settings seed and the pre-existing 11-page PDF compiler. */
 export const EXISTING_COMPANY_VALIDITY_DAYS = 3;
+/** Default for any other company that has not set quoteValidityDays (Company settings > prices). */
+export const NEUTRAL_COMPANY_VALIDITY_DAYS = 7;
 
 export type QuoteValiditySource =
   | "quote.validityDays"
   | "quote.termsAndConditions"
   | "company_terms"
   | "settings.termsAndConditionsList"
+  | "settings.quoteValidityDays"
   | "existing_company_default";
 
 export interface ResolvedQuoteValidity {
@@ -91,5 +96,10 @@ export function resolveQuoteValidityDays(quoteObj: any, activeState?: any): Reso
     if (days) return { days, source: "settings.termsAndConditionsList" };
   }
 
+  // The company's own default (Company settings > prices), then a default for the kind of company: Sunchaser's long-standing 3 days for
+  // the founding company, 7 days for every other company (its terms say "valid for the period stated on it").
+  const own = Number((activeState?.settings as any)?.quoteValidityDays);
+  if (Number.isFinite(own) && own > 0 && own < 366) return { days: Math.floor(own), source: "settings.quoteValidityDays" };
+  if (isNeutralState(activeState)) return { days: NEUTRAL_COMPANY_VALIDITY_DAYS, source: "existing_company_default" };
   return { days: EXISTING_COMPANY_VALIDITY_DAYS, source: "existing_company_default" };
 }
