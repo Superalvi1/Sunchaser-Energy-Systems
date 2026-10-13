@@ -377,6 +377,8 @@ import {
   putRailwayObject,
   isRailwayObjectStorageConfigured,
   buildRailwayObjectProxyUrl,
+  scopeObjectKey,
+  objectCompanyOf,
   verifyRailwayObjectProxySignature,
 } from "./server/storage/railwayObjectStorage.ts";
 import { assertRailwayPrivateSmokeEnvironment } from "./server/runtime/railwayPrivateSmoke.ts";
@@ -645,8 +647,12 @@ app.get("/api/storage/object/:namespace/:encodedKey", async (req, res) => {
       String(req.params.namespace || ""),
       String(req.params.encodedKey || ""),
       String(req.query.sig || ""),
+      process.env,
+      req.query.exp === undefined ? undefined : String(req.query.exp),
     );
-    if (!verified.ok) return res.status(403).json({ error: "Invalid object signature." });
+    if (!verified.ok) {
+      return res.status(403).json({ error: verified.reason === "expired" ? "This link has expired. Open the document again from the CRM." : "Invalid object signature." });
+    }
     const object = await getRailwayObject(verified.namespace, verified.key);
     if (!object) return res.status(404).json({ error: "Object not found." });
     res.setHeader("Content-Type", object.contentType);
@@ -730,6 +736,34 @@ const ownershipGuard = createOwnershipMiddleware(async (table: OwnedTable, id: s
   return (data as { company_id?: string } | null)?.company_id ?? null;
 });
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, companyStore, ownershipGuard }));
+
+/**
+ * Authorised file access: no link at all. The caller must hold a session of the company the object belongs to (the company is read from
+ * the key itself: `c/<company>/...`, or the founding company for an unprefixed key). Anything else answers 404, like a missing object.
+ */
+app.get("/api/company/files/:namespace/:encodedKey", async (req, res) => {
+  try {
+    if (!isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
+    const ctx = getCompanyContext();
+    if (ctx?.kind !== "company") return res.status(403).json({ error: "No company for this request." });
+    const ns = String(req.params.namespace || "");
+    if (ns !== "customer-documents" && ns !== "quote-assets") return res.status(404).json({ error: "Not found." });
+    let key = "";
+    try { key = Buffer.from(String(req.params.encodedKey || ""), "base64url").toString("utf8"); } catch { return res.status(404).json({ error: "Not found." }); }
+    if (!key || key.length > 1024 || key.includes("\\") || key.split("/").some((p) => p === "." || p === "..")) return res.status(404).json({ error: "Not found." });
+    if (objectCompanyOf(key) !== ctx.companyId) return res.status(404).json({ error: "Not found." });
+    const object = await getRailwayObject(ns, key);
+    if (!object) return res.status(404).json({ error: "Not found." });
+    res.setHeader("Content-Type", object.contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.send(object.body);
+  } catch (err: any) {
+    console.error("[Company files]", err?.message || err);
+    return res.status(503).json({ error: "Object storage unavailable." });
+  }
+});
+
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
 // The sales agent is a founding-company feature until WhatsApp is scoped per company.
 if (!railwayPrivateSmokeMode) setInterval(()=>{void runAsFoundingCompany(() => salesAgentRuntime.drain());},5000).unref();
@@ -928,7 +962,7 @@ async function archivePublicSmartQuotePdf(leadId: string, quoteNumber: string, p
   }
   const original = await readLead();
   if (version ? version.leadId !== leadId : parseSmartQuoteLeadNotes(original.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation does not belong to this lead.");
-  const key = quotePdfObjectKey(leadId, quoteNumber, pdf);
+  const key = scopeObjectKey(quotePdfObjectKey(leadId, quoteNumber, pdf));
   await putRailwayObject("customer-documents", key, pdf, "application/pdf");
   const archive = { quoteNumber, fileName: `Sunchaser-Quotation-${quoteNumber}.pdf`, fileUrl: buildRailwayObjectProxyUrl("customer-documents", key), sha256: createHash("sha256").update(pdf).digest("hex"), savedAt: new Date().toISOString(), sizeBytes: pdf.length };
   if (original.customerId) {

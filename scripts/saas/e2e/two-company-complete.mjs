@@ -3,7 +3,7 @@
 // canary sweep looks for the other company's unique strings in everything it can read. Disposable stack only.
 //   Env: E2E_BASE_URL, E2E_PSQL ("-h <dir> -p <port> -U postgres -d <db>"), TEST_PW.   Seed first: seed-two-companies.mjs
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -180,17 +180,50 @@ for (const c of Object.values(CO)) {
   const own = await fetch(BASE + rel);
   const body = Buffer.from(await own.arrayBuffer());
   check(`${c.tag}: its own stored file downloads through its signed link and is the file it uploaded`, own.status === 200 && createHash("sha256").update(body).digest("hex") === createHash("sha256").update(c.f.pdfBytes).digest("hex") && pdfText(body).includes(c.file), String(own.status));
-  const m = rel.match(/\/api\/storage\/object\/([^/]+)\/([^?]+)\?sig=(.+)$/);
+  const m = rel.match(/\/api\/storage\/object\/([^/]+)\/([^?]+)\?(?:exp=\d+&)?sig=([0-9a-f]+)/);
   c.link = m ? { ns: m[1], key: m[2], sig: m[3] } : null;
   check(`${c.tag}: the object key does not contain the other company's ids`, c.link && !Buffer.from(c.link.key, "base64url").toString().includes(o.f.customerId), c.link && Buffer.from(c.link.key, "base64url").toString());
 }
-const forged = async (victim, attackerSig) => fetch(`${BASE}/api/storage/object/${victim.link.ns}/${victim.link.key}?sig=${attackerSig}`);
-check("alpha cannot fetch beta's file with alpha's signature (the signature belongs to one object)", (await forged(CO.beta, CO.alpha.link.sig)).status === 403);
-check("beta cannot fetch alpha's file with beta's signature", (await forged(CO.alpha, CO.beta.link.sig)).status === 403);
-check("a guessed signature is refused", (await forged(CO.alpha, "0".repeat(64))).status === 403);
+const forged = async (victim, attackerSig, exp) => fetch(`${BASE}/api/storage/object/${victim.link.ns}/${victim.link.key}?${exp ? `exp=${exp}&` : ""}sig=${attackerSig}`);
+check("every file link is an expiring link (exp is in the URL and covered by the signature)", [CO.alpha, CO.beta].every((c) => /[?&]exp=\d{9,11}&sig=/.test(c.f.doc?.fileUrl || psql(`select file_url from customer_documents where id='${c.f.doc?.id}'`))));
+check("stored object keys sit under the company's own prefix (c/<company>/...)", [CO.alpha, CO.beta].every((c) => psql(`select storage_path like 'c/${c.id}/%' from customer_documents where id='${c.f.doc?.id}'`) === "t"));
+const expOf = (c) => new URL(BASE + (c.f.doc?.fileUrl || "")).searchParams.get("exp");
+check("alpha cannot fetch beta's file with alpha's signature (the signature belongs to one object)", (await forged(CO.beta, CO.alpha.link.sig, expOf(CO.alpha))).status === 403);
+check("beta cannot fetch alpha's file with beta's signature", (await forged(CO.alpha, CO.beta.link.sig, expOf(CO.beta))).status === 403);
+check("a guessed signature is refused", (await forged(CO.alpha, "0".repeat(64), String(Math.floor(Date.now() / 1000) + 600))).status === 403);
+check("alpha's link with a LONGER expiry is refused (the expiry is signed)", (await forged(CO.alpha, CO.alpha.link.sig, String(Number(expOf(CO.alpha)) + 3600))).status === 403);
+check("alpha's link without the expiry does not become a permanent link", (await forged(CO.alpha, CO.alpha.link.sig)).status === 403);
 check("a file link without a signature is refused", (await fetch(`${BASE}/api/storage/object/${CO.alpha.link.ns}/${CO.alpha.link.key}`)).status === 403);
-const swapKey = async (victim, attacker) => fetch(`${BASE}/api/storage/object/${attacker.link.ns}/${victim.link.key}?sig=${attacker.link.sig}`);
-check("alpha's signature cannot be re-used for beta's key (key swapped in the URL)", (await swapKey(CO.beta, CO.alpha)).status === 403);
+check("alpha's signature cannot be re-used for beta's key (key swapped in the URL)", (await fetch(`${BASE}/api/storage/object/${CO.alpha.link.ns}/${CO.beta.link.key}?exp=${expOf(CO.alpha)}&sig=${CO.alpha.link.sig}`)).status === 403);
+// An old permanent (v1) link is never honoured for a company's prefixed key. The harness knows the stack's synthetic signing secret.
+const SECRET = (fs.readFileSync(process.env.E2E_ENV_FILE || "/srv/saas-c1/env.sh", "utf8").match(/RAILWAY_OBJECT_PROXY_SECRET=([0-9a-f]+)/) || [])[1];
+const v1 = (ns, key) => createHmac("sha256", SECRET).update(`${ns}\n${key}`).digest("hex");
+const keyOf = (c) => Buffer.from(c.link.key, "base64url").toString();
+check("a permanent (v1) link for alpha's key, signed with the real secret, is refused", (await fetch(`${BASE}/api/storage/object/${CO.alpha.link.ns}/${CO.alpha.link.key}?sig=${v1(CO.alpha.link.ns, keyOf(CO.alpha))}`)).status === 403);
+// Authorised access: no link, a session of the right company.
+const viaSession = (c, victim) => c.api(`/api/company/files/${victim.link.ns}/${victim.link.key}`);
+const own = await viaSession(CO.alpha, CO.alpha);
+check("authorised access: alpha's session downloads alpha's file without any link", own.status === 200 && Buffer.from(await own.arrayBuffer()).equals(CO.alpha.f.pdfBytes), String(own.status));
+check("authorised access: beta's session cannot download alpha's file", (await viaSession(CO.beta, CO.alpha)).status === 404);
+check("authorised access: alpha's session cannot download beta's file", (await viaSession(CO.alpha, CO.beta)).status === 404);
+check("authorised access: no session, no file", (await fetch(`${BASE}/api/company/files/${CO.alpha.link.ns}/${CO.alpha.link.key}`)).status === 401);
+const travel = Buffer.from(`c/${CO.beta.id}/../${keyOf(CO.alpha)}`).toString("base64url");
+check("authorised access: a path-traversal key is refused", (await CO.beta.api(`/api/company/files/${CO.alpha.link.ns}/${travel}`)).status === 404);
+const founding = Buffer.from("smart-quotes/some-lead/q.pdf").toString("base64url");
+check("authorised access: a company cannot ask for a founding-company (unprefixed) key", (await CO.alpha.api(`/api/company/files/customer-documents/${founding}`)).status === 404);
+// A founding-company link in the old permanent form keeps working (Sunchaser's stored links are not broken).
+check("a founding-company permanent link (existing stored links) still works while STORAGE_LEGACY_LINKS is not off", (await fetch(`${BASE}/api/storage/object/customer-documents/${founding}?sig=${v1("customer-documents", "smart-quotes/some-lead/q.pdf")}`)).status === 404, "404 = signature accepted, object does not exist");
+// Expiry: wait out the (short) lifetime of the link minted at upload, then it must be dead while a freshly issued one works.
+const ttl = Number(process.env.STORAGE_LINK_TTL_SECONDS || 0);
+if (ttl) {
+  await sleep((Number(expOf(CO.alpha)) - Math.floor(Date.now() / 1000) + 2) * 1000);
+  const dead = await fetch(BASE + (CO.alpha.f.doc?.fileUrl || ""));
+  check(`an expired link is dead (lifetime ${ttl} s) and says so`, dead.status === 403 && /expired/i.test(await dead.text()), String(dead.status));
+  const list = await json(await CO.alpha.api(`/api/admin/customer-documents/${CO.alpha.f.customerId}`));
+  const fresh = (list.documents || [])[0]?.fileUrl;
+  const alive = fresh ? await fetch(BASE + new URL(fresh, BASE).pathname + new URL(fresh, BASE).search) : { status: 0 };
+  check("the document list issues a fresh link and it works", alive.status === 200, String(alive.status));
+}
 
 if (!OPEN) {
 // ---------------------------------------------------------------- 4. canary sweep: everything each company can read, for the other's canaries
@@ -223,7 +256,7 @@ check("no invoice line, payment or document belongs to a different company than 
   psql("select count(*) from customer_documents d join customers c on c.id=d.customer_id where d.company_id<>c.company_id"),
   psql("select count(*) from invoices i join customers c on c.id=i.customer_id where i.company_id<>c.company_id")].every((x) => x === "0"));
 check("each company's ledger equals its invoice header", [CO.alpha, CO.beta].every((c) => psql(`select abs((select coalesce(sum(amount),0) from invoice_payments where invoice_id='${c.f.invoiceId}') - paid_amount) from invoices where id='${c.f.invoiceId}'`) === "0"));
-console.log("   KNOWN GAPS shown by this run (not hidden): both printable documents still carry the Sunchaser brand header, bank details and terms (settings are still one row per database); file links are non-expiring bearer links.");
+console.log("   KNOWN GAPS shown by this run (not hidden): both printable documents still carry the Sunchaser brand header, bank details and terms (settings are still one row per database); the SPA still downloads documents through links (it does not yet use the authorised route).");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) console.log("Failed:\n - " + failures.join("\n - "));

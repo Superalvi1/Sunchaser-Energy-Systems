@@ -3,6 +3,8 @@ import {
   createHmac,
   timingSafeEqual,
 } from "node:crypto";
+import { getCompanyContext } from "../saas/companyContext.ts";
+import { FOUNDING_COMPANY_ID, isMultiCompanyEnabled } from "../saas/multiCompany.ts";
 
 export type RailwayObjectNamespace = "customer-documents" | "quote-assets";
 
@@ -175,6 +177,13 @@ export async function putRailwayObject(
   body: Buffer,
   contentType: string,
 ): Promise<void> {
+  // A caller acting for one company may only write under that company's prefix (a missing scopeObjectKey() is caught here, not in review).
+  if (isMultiCompanyEnabled()) {
+    const ctx = getCompanyContext();
+    if (ctx?.kind === "company" && objectCompanyOf(key) !== ctx.companyId) {
+      throw new Error(`Refusing to write an object outside the company's own key space (${ctx.companyId}).`);
+    }
+  }
   const res = await signedBucketRequest("PUT", namespace, key, { body, contentType });
   if (!res.ok) throw await failure(res, "upload");
 }
@@ -217,6 +226,52 @@ export async function getRailwayObject(
   };
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Company-scoped object keys and expiring links (multi-company mode)
+//
+//  * A company other than the founding one stores every object under `c/<companyId>/...`. The founding company's keys stay exactly as
+//    they always were (no prefix), so nothing already stored moves. The company of a key is therefore readable from the key itself.
+//  * In multi-company mode every link is signed with an expiry (`exp`, seconds since epoch; the signature covers it). A link without
+//    `exp` is the old permanent link: it is still honoured for the founding company's own (unprefixed) keys unless
+//    STORAGE_LEGACY_LINKS=off, and NEVER for another company's key.
+//  * Authorised access (GET /api/company/files/...) needs a session of the company the key belongs to and no link at all.
+// ---------------------------------------------------------------------------------------------------------------------------------
+const COMPANY_PREFIX_RX = /^c\/([a-z][a-z0-9_]{1,40})\//;
+
+export function objectCompanyOf(key: string): string {
+  const m = COMPANY_PREFIX_RX.exec(String(key || "").replace(/^\/+/, ""));
+  return m ? m[1] : FOUNDING_COMPANY_ID;
+}
+
+/** The key to store an object under for the given (or current) company. Idempotent; refuses a key that names another company. */
+export function scopeObjectKey(key: string, companyId?: string, env: NodeJS.ProcessEnv = process.env): string {
+  const k = String(key || "").trim().replace(/^\/+/, "");
+  if (!isMultiCompanyEnabled(env)) return k;
+  const ctx = getCompanyContext();
+  const company = companyId ?? (ctx?.kind === "company" ? ctx.companyId : undefined);
+  if (!company) return k;
+  const owner = objectCompanyOf(k);
+  if (COMPANY_PREFIX_RX.test(k) && owner !== company) throw new Error("Object key belongs to another company.");
+  if (company === FOUNDING_COMPANY_ID) {
+    if (COMPANY_PREFIX_RX.test(k)) throw new Error("The founding company does not use company-prefixed keys.");
+    return k;
+  }
+  return COMPANY_PREFIX_RX.test(k) ? k : `c/${company}/${k}`;
+}
+
+/** Links expire whenever more than one company can exist, or when STORAGE_LINKS_EXPIRE=true. */
+export function storageLinksExpire(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isMultiCompanyEnabled(env) || String(env.STORAGE_LINKS_EXPIRE || "").trim().toLowerCase() === "true";
+}
+export function storageLinkTtlSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.STORAGE_LINK_TTL_SECONDS);
+  return Number.isFinite(n) && n >= 1 && n <= 86400 ? Math.floor(n) : 900;
+}
+function hmacExpiringSignature(secret: string, namespace: RailwayObjectNamespace, key: string, exp: number): string {
+  return createHmac("sha256", secret).update(`v2\n${namespace}\n${key}\n${exp}`).digest("hex");
+}
+
 function hmacProxySignature(secret: string, namespace: RailwayObjectNamespace, key: string): string {
   return createHmac("sha256", secret).update(`${namespace}\n${key}`).digest("hex");
 }
@@ -239,8 +294,15 @@ export function buildRailwayObjectProxyUrl(
   const normalized = String(key || "").trim().replace(/^\/+/, "");
   normalizeObjectKey(namespace, normalized);
   const encoded = Buffer.from(normalized, "utf8").toString("base64url");
-  const sig = proxySignature(namespace, normalized, env);
-  const relative = `/api/storage/object/${namespace}/${encoded}?sig=${sig}`;
+  let relative: string;
+  if (storageLinksExpire(env)) {
+    const secret = String(env.RAILWAY_OBJECT_PROXY_SECRET || "").trim();
+    if (!secret) throw new Error("RAILWAY_OBJECT_PROXY_SECRET is not configured.");
+    const exp = Math.floor(Date.now() / 1000) + storageLinkTtlSeconds(env);
+    relative = `/api/storage/object/${namespace}/${encoded}?exp=${exp}&sig=${hmacExpiringSignature(secret, namespace, normalized, exp)}`;
+  } else {
+    relative = `/api/storage/object/${namespace}/${encoded}?sig=${proxySignature(namespace, normalized, env)}`;
+  }
   const explicit = String(env.APP_PUBLIC_URL || env.API_BASE_URL || "").trim().replace(/\/$/, "");
   if (explicit) return explicit + relative;
   const railwayDomain = String(env.RAILWAY_PUBLIC_DOMAIN || "").trim();
@@ -252,7 +314,8 @@ export function verifyRailwayObjectProxySignature(
   encodedKey: string,
   signature: string,
   env: NodeJS.ProcessEnv = process.env,
-): { ok: true; namespace: RailwayObjectNamespace; key: string } | { ok: false } {
+  expRaw?: string,
+): { ok: true; namespace: RailwayObjectNamespace; key: string } | { ok: false; reason?: "expired" | "invalid" | "legacy_not_allowed" } {
   if (namespaceRaw !== "customer-documents" && namespaceRaw !== "quote-assets") {
     return { ok: false };
   }
@@ -272,12 +335,26 @@ export function verifyRailwayObjectProxySignature(
     .filter(Boolean);
   if (!secrets.length) throw new Error("RAILWAY_OBJECT_PROXY_SECRET is not configured.");
   const a = Buffer.from(supplied, "hex");
+  const expiring = expRaw !== undefined && String(expRaw) !== "";
+  let exp = 0;
+  if (expiring) {
+    if (!/^\d{9,11}$/.test(String(expRaw))) return { ok: false };
+    exp = Number(expRaw);
+    // The signature covers exp, so it cannot be extended; this also refuses a link minted with an absurd lifetime.
+    if (exp > Math.floor(Date.now() / 1000) + 86400 + 60) return { ok: false };
+  } else if (storageLinksExpire(env)) {
+    // Old permanent links: only the founding company's own, unprefixed keys, and only while STORAGE_LEGACY_LINKS is not off.
+    if (objectCompanyOf(key) !== FOUNDING_COMPANY_ID || String(env.STORAGE_LEGACY_LINKS || "").trim().toLowerCase() === "off") {
+      return { ok: false, reason: "legacy_not_allowed" };
+    }
+  }
   let valid = false;
   for (const secret of secrets) {
-    const b = Buffer.from(hmacProxySignature(secret, namespaceRaw, key), "hex");
+    const b = Buffer.from(expiring ? hmacExpiringSignature(secret, namespaceRaw, key, exp) : hmacProxySignature(secret, namespaceRaw, key), "hex");
     if (a.length === b.length && timingSafeEqual(a, b)) valid = true;
   }
   if (!valid) return { ok: false };
+  if (expiring && exp < Math.floor(Date.now() / 1000)) return { ok: false, reason: "expired" };
   return { ok: true, namespace: namespaceRaw, key };
 }
 
@@ -288,7 +365,12 @@ export function verifyRailwayObjectProxySignature(
 export function isStoragePathForCustomer(customerId: string | null | undefined, storagePath: string): boolean {
   const owner = String(customerId || "").trim();
   const key = String(storagePath || "").trim().replace(/^\/+/, "");
-  return Boolean(owner) && (key.startsWith(`${owner}/`) || key.startsWith("smart-quotes/"));
+  if (isMultiCompanyEnabled()) {
+    const ctx = getCompanyContext();
+    if (ctx?.kind === "company" && objectCompanyOf(key) !== ctx.companyId) return false; // another company's key space
+  }
+  const bare = key.replace(COMPANY_PREFIX_RX, "");
+  return Boolean(owner) && (bare.startsWith(`${owner}/`) || bare.startsWith("smart-quotes/"));
 }
 
 /** Objects the app keeps for itself (sales-agent settings, pending conversations). Never signed for a document row. */

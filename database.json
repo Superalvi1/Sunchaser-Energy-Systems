@@ -1030,6 +1030,627 @@
   "paymentTracks": {},
   "activityLogs": [
     {
+      "id": "log-fin-63b8c947-8518-42e5-9519-93d545516408",
+      "timestamp": "2026-10-13T17:09:03.447Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911343068): payment pay-f366f90babe2b3d1c0d287391bed397e PKR 50000 Cash; paid 50000 of 250000; balance 200000"
+    },
+    {
+      "id": "log-1791911343106",
+      "timestamp": "2026-10-13T17:09:03.106Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-a3093abb-e8a3-46ab-b495-3910239df135 contracted — invoice inv-1791911343068, costing pending"
+    },
+    {
+      "id": "log-1791911342967",
+      "timestamp": "2026-10-13T17:09:02.967Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-49a85fff-a6d4-41c6-878b-a037ef0de018 for Alpha Client One"
+    },
+    {
+      "id": "log-1791911342096",
+      "timestamp": "2026-10-13T17:09:02.096Z",
+      "userId": "guest",
+      "userName": "Sunchaser Client One",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911342049",
+      "timestamp": "2026-10-13T17:09:02.049Z",
+      "userId": "guest",
+      "userName": "Beta Client One",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911341990",
+      "timestamp": "2026-10-13T17:09:01.990Z",
+      "userId": "guest",
+      "userName": "Alpha Client One",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911341893",
+      "timestamp": "2026-10-13T17:09:01.893Z",
+      "userId": "u-test-admin",
+      "userName": "Test Super Admin",
+      "role": "Super Admin",
+      "action": "User Logged In",
+      "details": "Role Super Admin · status Approved"
+    },
+    {
+      "id": "log-1791911341822",
+      "timestamp": "2026-10-13T17:09:01.822Z",
+      "userId": "u-beta-portal",
+      "userName": "beta portal client",
+      "role": "Customer",
+      "action": "User Logged In",
+      "details": "Role Customer · status Approved"
+    },
+    {
+      "id": "log-1791911341738",
+      "timestamp": "2026-10-13T17:09:01.738Z",
+      "userId": "u-alpha-portal",
+      "userName": "alpha portal client",
+      "role": "Customer",
+      "action": "User Logged In",
+      "details": "Role Customer · status Approved"
+    },
+    {
+      "id": "log-1791911341509",
+      "timestamp": "2026-10-13T17:09:01.509Z",
+      "userId": "u-beta-sales",
+      "userName": "Beta Sales",
+      "role": "Sales Executive",
+      "action": "User Logged In",
+      "details": "Role Sales Executive · status Approved"
+    },
+    {
+      "id": "log-1791911341434",
+      "timestamp": "2026-10-13T17:09:01.434Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-1791911341359",
+      "timestamp": "2026-10-13T17:09:01.359Z",
+      "userId": "u-alpha-sales",
+      "userName": "Alpha Sales",
+      "role": "Sales Executive",
+      "action": "User Logged In",
+      "details": "Role Sales Executive · status Approved"
+    },
+    {
+      "id": "log-1791911341268",
+      "timestamp": "2026-10-13T17:09:01.268Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-fin-61a70bd6-7548-469e-baae-f051123776f6",
+      "timestamp": "2026-10-13T17:08:36.161Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911315593): payment pay-baeb9e85eb24a3823aa88623339edbb1 PKR 40800 Bank transfer; paid 68000 of 68000; balance 0"
+    },
+    {
+      "id": "log-fin-348cb471-1302-4892-8143-5b99147fa810",
+      "timestamp": "2026-10-13T17:08:36.146Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911315592): payment pay-4098c21911bd96de5c290bfb8d67c83f PKR 75000 Bank transfer; paid 125000 of 125000; balance 0"
+    },
+    {
+      "id": "log-fin-8d649894-dfc1-44f1-98c4-d4cad96dd339",
+      "timestamp": "2026-10-13T17:08:35.905Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911315592): payment pay-a31ff61c3c62426b879811c58b3787bd PKR 50000 Cash; paid 50000 of 125000; balance 75000"
+    },
+    {
+      "id": "log-fin-df16b26b-de63-49aa-b6b9-02b5bf73d1eb",
+      "timestamp": "2026-10-13T17:08:35.890Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911315593): payment pay-f414532059d5da39c4baeb53342e0d95 PKR 27200 Cash; paid 27200 of 68000; balance 40800"
+    },
+    {
+      "id": "log-fin-84dfae26-4b0f-4b2b-b959-23523fdf5cd5",
+      "timestamp": "2026-10-13T17:08:35.803Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911315592): grand total: 120000 → 125000; subtotal: 120000 → 125000; balance: 120000 → 125000; items: [ALPHACANARYPANEL86BF1C×10@12000] → [ALPHACANARYPANEL86BF1C×10@12000; ALPHACANARYLINE86BF1C×1@5000]"
+    },
+    {
+      "id": "log-fin-fc118d6e-d9d2-486d-9c40-df3f2d454db7",
+      "timestamp": "2026-10-13T17:08:35.789Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911315593): grand total: 63000 → 68000; subtotal: 63000 → 68000; balance: 63000 → 68000; items: [BETACANARYPANEL86BF1C×7@9000] → [BETACANARYPANEL86BF1C×7@9000; BETACANARYLINE86BF1C×1@5000]"
+    },
+    {
+      "id": "log-1791911315641",
+      "timestamp": "2026-10-13T17:08:35.641Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-b9874256-9857-4371-b819-2708b8b42bfd contracted — invoice inv-1791911315593, costing pending"
+    },
+    {
+      "id": "log-1791911315631",
+      "timestamp": "2026-10-13T17:08:35.631Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-2cfaa5d8-c239-4c29-8650-14e898632514 contracted — invoice inv-1791911315592, costing pending"
+    },
+    {
+      "id": "log-1791911315452",
+      "timestamp": "2026-10-13T17:08:35.452Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-c454adfd-21cd-4aec-a677-a648a7356df5 for Beta Canary Customer 86BF1C"
+    },
+    {
+      "id": "log-1791911315443",
+      "timestamp": "2026-10-13T17:08:35.443Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-ceb4c011-bd94-4070-bda4-3ee9c2284f90 for Alpha Canary Customer 86BF1C"
+    },
+    {
+      "id": "log-1791911315351",
+      "timestamp": "2026-10-13T17:08:35.351Z",
+      "userId": "guest",
+      "userName": "Beta Canary Customer 86BF1C",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911315344",
+      "timestamp": "2026-10-13T17:08:35.344Z",
+      "userId": "guest",
+      "userName": "Alpha Canary Customer 86BF1C",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911315279",
+      "timestamp": "2026-10-13T17:08:35.279Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-1791911315189",
+      "timestamp": "2026-10-13T17:08:35.189Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-fin-60a29ded-7dbc-4679-b7d2-1817f7e44271",
+      "timestamp": "2026-10-13T17:08:09.033Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911288501): payment pay-eea822db14fb11c0038539f3f18fd83f PKR 40800 Bank transfer; paid 68000 of 68000; balance 0"
+    },
+    {
+      "id": "log-fin-36c5729d-8716-40ce-ae56-e33b6009643f",
+      "timestamp": "2026-10-13T17:08:09.022Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911288502): payment pay-cbb7deaa8af1f3c23e1fd8f29f99d9e5 PKR 75000 Bank transfer; paid 125000 of 125000; balance 0"
+    },
+    {
+      "id": "log-fin-da380a07-8796-4246-aa4e-3a52e7d83eb9",
+      "timestamp": "2026-10-13T17:08:08.783Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911288501): payment pay-3ebb1a45c4f8d8d276d3ccf743ed5dee PKR 27200 Cash; paid 27200 of 68000; balance 40800"
+    },
+    {
+      "id": "log-fin-8af938e5-2b44-42d1-a50b-769bb61e6b1c",
+      "timestamp": "2026-10-13T17:08:08.767Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911288502): payment pay-1279fbc009f731262f605f3d652929ea PKR 50000 Cash; paid 50000 of 125000; balance 75000"
+    },
+    {
+      "id": "log-fin-353a86fe-0007-4a5a-9535-41c62125d0ec",
+      "timestamp": "2026-10-13T17:08:08.685Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911288501): grand total: 63000 → 68000; subtotal: 63000 → 68000; balance: 63000 → 68000; items: [BETACANARYPANEL47B32B×7@9000] → [BETACANARYPANEL47B32B×7@9000; BETACANARYLINE47B32B×1@5000]"
+    },
+    {
+      "id": "log-fin-0f2e8fed-10c6-4e43-b5d0-032ae352182c",
+      "timestamp": "2026-10-13T17:08:08.676Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911288502): grand total: 120000 → 125000; subtotal: 120000 → 125000; balance: 120000 → 125000; items: [ALPHACANARYPANEL47B32B×10@12000] → [ALPHACANARYPANEL47B32B×10@12000; ALPHACANARYLINE47B32B×1@5000]"
+    },
+    {
+      "id": "log-1791911288540",
+      "timestamp": "2026-10-13T17:08:08.540Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-917ee969-c705-4399-b73a-a2a4c9aa5aad contracted — invoice inv-1791911288502, costing pending"
+    },
+    {
+      "id": "log-1791911288534",
+      "timestamp": "2026-10-13T17:08:08.534Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-1a583341-0e3c-4b3d-bbd2-771380c6d4c2 contracted — invoice inv-1791911288501, costing pending"
+    },
+    {
+      "id": "log-1791911288393",
+      "timestamp": "2026-10-13T17:08:08.393Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-aedac04b-7441-4263-9d90-558add1e8def for Beta Canary Customer 47B32B"
+    },
+    {
+      "id": "log-1791911288387",
+      "timestamp": "2026-10-13T17:08:08.387Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-d5e4592f-a9dd-4845-8687-8f4b82a3bfc1 for Alpha Canary Customer 47B32B"
+    },
+    {
+      "id": "log-1791911288318",
+      "timestamp": "2026-10-13T17:08:08.318Z",
+      "userId": "guest",
+      "userName": "Beta Canary Customer 47B32B",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911288304",
+      "timestamp": "2026-10-13T17:08:08.304Z",
+      "userId": "guest",
+      "userName": "Alpha Canary Customer 47B32B",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911288242",
+      "timestamp": "2026-10-13T17:08:08.242Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-1791911288159",
+      "timestamp": "2026-10-13T17:08:08.159Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-fin-affa2588-7f19-4389-a994-a54f519c58a1",
+      "timestamp": "2026-10-13T17:07:31.502Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911250810): payment pay-7148195d00fce864d7b430c95a22f0ac PKR 40800 Bank transfer; paid 68000 of 68000; balance 0"
+    },
+    {
+      "id": "log-fin-47e36f5b-e041-4c93-888f-caa6fca76c1f",
+      "timestamp": "2026-10-13T17:07:31.465Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911250808): payment pay-c68414e7cda9181ad414fa612223cb5d PKR 75000 Bank transfer; paid 125000 of 125000; balance 0"
+    },
+    {
+      "id": "log-fin-f7b92dd6-dc72-40a0-8fb8-a92b9d0ca517",
+      "timestamp": "2026-10-13T17:07:31.241Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911250810): payment pay-fd89b61c2356809d64ea0e86ba708081 PKR 27200 Cash; paid 27200 of 68000; balance 40800"
+    },
+    {
+      "id": "log-fin-711094ca-777f-4f12-a28b-d4cf392f86b5",
+      "timestamp": "2026-10-13T17:07:31.199Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911250808): payment pay-fc90700216567e157f8f5eb582de18b8 PKR 50000 Cash; paid 50000 of 125000; balance 75000"
+    },
+    {
+      "id": "log-fin-b4de10c1-888f-4f2f-9596-12f49f077a99",
+      "timestamp": "2026-10-13T17:07:31.117Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911250810): grand total: 63000 → 68000; subtotal: 63000 → 68000; balance: 63000 → 68000; items: [BETACANARYPANEL33AC2A×7@9000] → [BETACANARYPANEL33AC2A×7@9000; BETACANARYLINE33AC2A×1@5000]"
+    },
+    {
+      "id": "log-fin-59830b37-2766-4bb3-901a-528f36863444",
+      "timestamp": "2026-10-13T17:07:31.075Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911250808): grand total: 120000 → 125000; subtotal: 120000 → 125000; balance: 120000 → 125000; items: [ALPHACANARYPANEL33AC2A×10@12000] → [ALPHACANARYPANEL33AC2A×10@12000; ALPHACANARYLINE33AC2A×1@5000]"
+    },
+    {
+      "id": "log-1791911250877",
+      "timestamp": "2026-10-13T17:07:30.877Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-eebc220e-2342-4427-a430-89855659e27c contracted — invoice inv-1791911250808, costing pending"
+    },
+    {
+      "id": "log-1791911250869",
+      "timestamp": "2026-10-13T17:07:30.869Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-e70e8378-4813-4484-ab51-b7a4a96e800a contracted — invoice inv-1791911250810, costing pending"
+    },
+    {
+      "id": "log-1791911250637",
+      "timestamp": "2026-10-13T17:07:30.637Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-2a9d3790-c6c4-4f08-bd52-64ac16389c78 for Beta Canary Customer 33AC2A"
+    },
+    {
+      "id": "log-1791911250631",
+      "timestamp": "2026-10-13T17:07:30.631Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-558c8e77-0a05-4415-b2ee-db2626407572 for Alpha Canary Customer 33AC2A"
+    },
+    {
+      "id": "log-1791911250524",
+      "timestamp": "2026-10-13T17:07:30.524Z",
+      "userId": "guest",
+      "userName": "Beta Canary Customer 33AC2A",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911250517",
+      "timestamp": "2026-10-13T17:07:30.517Z",
+      "userId": "guest",
+      "userName": "Alpha Canary Customer 33AC2A",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911250406",
+      "timestamp": "2026-10-13T17:07:30.406Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-1791911250275",
+      "timestamp": "2026-10-13T17:07:30.275Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-fin-0846cc64-184f-4748-a7af-3983d4a4ff27",
+      "timestamp": "2026-10-13T17:06:52.107Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911211505): payment pay-e360f5c211d84ec7d678fd9c67a1f48d PKR 75000 Bank transfer; paid 125000 of 125000; balance 0"
+    },
+    {
+      "id": "log-fin-bc044983-be8d-4aed-80c1-a11b0e8033ae",
+      "timestamp": "2026-10-13T17:06:52.095Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911211504): payment pay-cee3fa7a7e54fbee798c766b4bbc9dca PKR 40800 Bank transfer; paid 68000 of 68000; balance 0"
+    },
+    {
+      "id": "log-fin-ce4585b8-6479-40f7-8a38-8ae4a732e829",
+      "timestamp": "2026-10-13T17:06:51.862Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911211505): payment pay-84cee867ac7f2491ccaf40a4091e496e PKR 50000 Cash; paid 50000 of 125000; balance 75000"
+    },
+    {
+      "id": "log-fin-d524d381-b473-4e67-9e2a-5b9e39f92177",
+      "timestamp": "2026-10-13T17:06:51.854Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Payment Recorded",
+      "details": "Invoice INV-2026-0001 (inv-1791911211504): payment pay-d08046bd3cfdde0324a7531d4b8a5a3c PKR 27200 Cash; paid 27200 of 68000; balance 40800"
+    },
+    {
+      "id": "log-fin-e1b2e482-bdb2-4215-8e49-75af1f9a2db7",
+      "timestamp": "2026-10-13T17:06:51.751Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911211505): grand total: 120000 → 125000; subtotal: 120000 → 125000; balance: 120000 → 125000; items: [ALPHACANARYPANEL466269×10@12000] → [ALPHACANARYPANEL466269×10@12000; ALPHACANARYLINE466269×1@5000]"
+    },
+    {
+      "id": "log-fin-e62399d0-3841-4ba4-8a13-50660a5e0f17",
+      "timestamp": "2026-10-13T17:06:51.736Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "Invoice Edited",
+      "details": "Invoice INV-2026-0001 (inv-1791911211504): grand total: 63000 → 68000; subtotal: 63000 → 68000; balance: 63000 → 68000; items: [BETACANARYPANEL466269×7@9000] → [BETACANARYPANEL466269×7@9000; BETACANARYLINE466269×1@5000]"
+    },
+    {
+      "id": "log-1791911211557",
+      "timestamp": "2026-10-13T17:06:51.557Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-621d7cd1-c86e-4589-ada4-b90442fba0ea contracted — invoice inv-1791911211505, costing pending"
+    },
+    {
+      "id": "log-1791911211551",
+      "timestamp": "2026-10-13T17:06:51.551Z",
+      "userId": "system",
+      "userName": "Contract Automation",
+      "role": "Finance",
+      "action": "Contract-to-Invoice",
+      "details": "Lead lead-ef8dc221-cfcc-48d5-9001-aacb7191fa6b contracted — invoice inv-1791911211504, costing pending"
+    },
+    {
+      "id": "log-1791911211375",
+      "timestamp": "2026-10-13T17:06:51.375Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-2a671e50-eefe-44a7-be7c-d00056f05856 for Beta Canary Customer 466269"
+    },
+    {
+      "id": "log-1791911211369",
+      "timestamp": "2026-10-13T17:06:51.369Z",
+      "userId": "sales",
+      "userName": "Sales Team",
+      "role": "Sales Executive",
+      "action": "Quotation Written",
+      "details": "Formulated quote q-186809fa-d024-4a95-8f10-7f2a2c7d020a for Alpha Canary Customer 466269"
+    },
+    {
+      "id": "log-1791911211291",
+      "timestamp": "2026-10-13T17:06:51.291Z",
+      "userId": "guest",
+      "userName": "Beta Canary Customer 466269",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911211285",
+      "timestamp": "2026-10-13T17:06:51.285Z",
+      "userId": "guest",
+      "userName": "Alpha Canary Customer 466269",
+      "role": "Customer",
+      "action": "Lead Created",
+      "details": "Registered details profile for home assessment sizing."
+    },
+    {
+      "id": "log-1791911211194",
+      "timestamp": "2026-10-13T17:06:51.194Z",
+      "userId": "u-beta-admin",
+      "userName": "Beta Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
+      "id": "log-1791911211080",
+      "timestamp": "2026-10-13T17:06:51.080Z",
+      "userId": "u-alpha-admin",
+      "userName": "Alpha Admin",
+      "role": "Admin",
+      "action": "User Logged In",
+      "details": "Role Admin · status Approved"
+    },
+    {
       "id": "log-fin-569c1f4e-a457-467c-b66b-fcc9346c20df",
       "timestamp": "2026-10-13T17:02:28.008Z",
       "userId": "u-beta-admin",
@@ -6594,6 +7215,186 @@
   ],
   "whatsAppLogs": [
     {
+      "id": "wa-1791911342976",
+      "timestamp": "2026-10-13T17:09:02.976Z",
+      "customerName": "Alpha Client One",
+      "phone": "03114996998",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Alpha Client One! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 250,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911342105",
+      "timestamp": "2026-10-13T17:09:02.105Z",
+      "customerName": "Sunchaser Client One",
+      "phone": "03119776304",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Sunchaser Client One! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911342058",
+      "timestamp": "2026-10-13T17:09:02.058Z",
+      "customerName": "Beta Client One",
+      "phone": "03118078841",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Beta Client One! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911341998",
+      "timestamp": "2026-10-13T17:09:01.998Z",
+      "customerName": "Alpha Client One",
+      "phone": "03114996998",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Alpha Client One! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911315464",
+      "timestamp": "2026-10-13T17:08:35.464Z",
+      "customerName": "Beta Canary Customer 86BF1C",
+      "phone": "03131258564",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Beta Canary Customer 86BF1C! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 63,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911315458",
+      "timestamp": "2026-10-13T17:08:35.458Z",
+      "customerName": "Alpha Canary Customer 86BF1C",
+      "phone": "03131837762",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Alpha Canary Customer 86BF1C! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 120,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911315372",
+      "timestamp": "2026-10-13T17:08:35.372Z",
+      "customerName": "Beta Canary Customer 86BF1C",
+      "phone": "03131258564",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Beta Canary Customer 86BF1C! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911315359",
+      "timestamp": "2026-10-13T17:08:35.359Z",
+      "customerName": "Alpha Canary Customer 86BF1C",
+      "phone": "03131837762",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Alpha Canary Customer 86BF1C! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911288404",
+      "timestamp": "2026-10-13T17:08:08.404Z",
+      "customerName": "Beta Canary Customer 47B32B",
+      "phone": "03134940293",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Beta Canary Customer 47B32B! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 63,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911288399",
+      "timestamp": "2026-10-13T17:08:08.399Z",
+      "customerName": "Alpha Canary Customer 47B32B",
+      "phone": "03133664641",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Alpha Canary Customer 47B32B! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 120,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911288327",
+      "timestamp": "2026-10-13T17:08:08.327Z",
+      "customerName": "Beta Canary Customer 47B32B",
+      "phone": "03134940293",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Beta Canary Customer 47B32B! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911288313",
+      "timestamp": "2026-10-13T17:08:08.313Z",
+      "customerName": "Alpha Canary Customer 47B32B",
+      "phone": "03133664641",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Alpha Canary Customer 47B32B! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911250667",
+      "timestamp": "2026-10-13T17:07:30.667Z",
+      "customerName": "Beta Canary Customer 33AC2A",
+      "phone": "03137017266",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Beta Canary Customer 33AC2A! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 63,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911250657",
+      "timestamp": "2026-10-13T17:07:30.657Z",
+      "customerName": "Alpha Canary Customer 33AC2A",
+      "phone": "03138024633",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Alpha Canary Customer 33AC2A! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 120,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911250558",
+      "timestamp": "2026-10-13T17:07:30.558Z",
+      "customerName": "Beta Canary Customer 33AC2A",
+      "phone": "03137017266",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Beta Canary Customer 33AC2A! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911250549",
+      "timestamp": "2026-10-13T17:07:30.549Z",
+      "customerName": "Alpha Canary Customer 33AC2A",
+      "phone": "03138024633",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Alpha Canary Customer 33AC2A! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911211390",
+      "timestamp": "2026-10-13T17:06:51.390Z",
+      "customerName": "Beta Canary Customer 466269",
+      "phone": "03131486334",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Beta Canary Customer 466269! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 63,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911211382",
+      "timestamp": "2026-10-13T17:06:51.382Z",
+      "customerName": "Alpha Canary Customer 466269",
+      "phone": "03139204023",
+      "eventType": "quote_generation",
+      "messageText": "☀️ Hi Alpha Canary Customer 466269! Sunchaser has unlocked your custom solar proposal: 5 kW with Synthetic 5kW. Total final cost is Rs. 120,000. Open file: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911211304",
+      "timestamp": "2026-10-13T17:06:51.304Z",
+      "customerName": "Beta Canary Customer 466269",
+      "phone": "03131486334",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Beta Canary Customer 466269! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
+      "id": "wa-1791911211299",
+      "timestamp": "2026-10-13T17:06:51.299Z",
+      "customerName": "Alpha Canary Customer 466269",
+      "phone": "03139204023",
+      "eventType": "survey_confirmation",
+      "messageText": "☀️ Hi Alpha Canary Customer 466269! Sunchaser Energy has scheduled your structural solar survey. Our team will coordinate framing loads and meter layout. Review options: http://sunchaser.co/portal",
+      "status": "Delivered"
+    },
+    {
       "id": "wa-1791910947291",
       "timestamp": "2026-10-13T17:02:27.291Z",
       "customerName": "Beta Canary Customer B4E784",
@@ -8127,8 +8928,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-3kw-standard-premium",
@@ -8475,8 +9276,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-3kw-elevated-budgeted",
@@ -8823,8 +9624,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-3kw-elevated-premium",
@@ -9171,8 +9972,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-4kw-standard-budgeted",
@@ -9531,8 +10332,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-4kw-standard-premium",
@@ -9891,8 +10692,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-4kw-elevated-budgeted",
@@ -10251,8 +11052,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-4kw-elevated-premium",
@@ -10611,8 +11412,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-6kw-standard-budgeted",
@@ -10971,8 +11772,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-6kw-standard-premium",
@@ -11331,8 +12132,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-6kw-elevated-budgeted",
@@ -11691,8 +12492,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-6kw-elevated-premium",
@@ -12051,8 +12852,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-8kw-standard-budgeted",
@@ -12411,8 +13212,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-8kw-standard-premium",
@@ -12771,8 +13572,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-8kw-elevated-budgeted",
@@ -13131,8 +13932,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-8kw-elevated-premium",
@@ -13491,8 +14292,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-10kw-standard-budgeted",
@@ -13851,8 +14652,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-10kw-standard-premium",
@@ -14211,8 +15012,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-10kw-elevated-budgeted",
@@ -14571,8 +15372,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-10kw-elevated-premium",
@@ -14931,8 +15732,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-12kw-standard-budgeted",
@@ -15291,8 +16092,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-12kw-standard-premium",
@@ -15651,8 +16452,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-12kw-elevated-budgeted",
@@ -16011,8 +16812,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.118Z",
-      "updatedAt": "2026-10-13T17:02:30.118Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-12kw-elevated-premium",
@@ -16371,8 +17172,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-15kw-standard-budgeted",
@@ -16731,8 +17532,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-15kw-standard-premium",
@@ -17091,8 +17892,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-15kw-elevated-budgeted",
@@ -17451,8 +18252,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-15kw-elevated-premium",
@@ -17811,8 +18612,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-20kw-standard-budgeted",
@@ -18159,8 +18960,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-20kw-standard-premium",
@@ -18507,8 +19308,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-20kw-elevated-budgeted",
@@ -18855,8 +19656,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-20kw-elevated-premium",
@@ -19203,8 +20004,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-25kw-standard-budgeted",
@@ -19551,8 +20352,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-25kw-standard-premium",
@@ -19899,8 +20700,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-25kw-elevated-budgeted",
@@ -20247,8 +21048,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     },
     {
       "id": "pkg-25kw-elevated-premium",
@@ -20595,8 +21396,8 @@
       "discountValue": 0,
       "enabled": true,
       "archived": false,
-      "createdAt": "2026-10-13T17:02:30.119Z",
-      "updatedAt": "2026-10-13T17:02:30.119Z"
+      "createdAt": "2026-10-13T17:09:03.990Z",
+      "updatedAt": "2026-10-13T17:09:03.990Z"
     }
   ],
   "settings": {

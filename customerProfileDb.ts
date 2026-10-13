@@ -13,6 +13,7 @@ import {
   buildRailwayObjectProxyUrl,
   isRailwayObjectStorageConfigured,
   isStoragePathForCustomer,
+  scopeObjectKey,
   putRailwayObject,
   rewriteLegacyStorageUrl,
 } from "./server/storage/railwayObjectStorage.ts";
@@ -396,7 +397,7 @@ export async function uploadFileToCustomerStorage(
 
   // Keep the tail so the extension survives; the whole bucket key must stay under 1024 characters.
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
-  const storagePath = `${customerId}/${options.objectId || Date.now()}_${safeName}`;
+  const storagePath = scopeObjectKey(`${customerId}/${options.objectId || Date.now()}_${safeName}`);
 
   if (isRailwayObjectStorageConfigured()) {
     await putRailwayObject("customer-documents", storagePath, buffer, contentType);
