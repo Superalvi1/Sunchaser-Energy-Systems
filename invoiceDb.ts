@@ -267,11 +267,30 @@ function toRequestActor(userId: string, username: string, role: string): Request
   };
 }
 
+function isMissingDbFunction(error: { message?: string; code?: string } | null | undefined): boolean {
+  const message = String(error?.message || "");
+  const code = String(error?.code || "");
+  return code === "PGRST202" || code === "42883" || /could not find the function/i.test(message);
+}
+
+/**
+ * Next invoice number for the calling company. With the numbering migration (scripts/saas/phase2c-document-numbering.sql) the number
+ * comes from a per-company counter advanced atomically in the database: two requests never get the same number and a deleted or
+ * archived invoice never frees its number. Without the migration the previous count-based numbering is used (single-company only).
+ */
 async function nextInvoiceNumber(localDb?: Database): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `INV-${year}-`;
   let count = 0;
   if (isSupabaseActive()) {
+    const rpc = await getSupabase()!.rpc("next_document_number", { p_kind: "invoice", p_prefix: "INV", p_period: String(year), p_width: 4 });
+    if (!rpc.error && typeof rpc.data === "string" && rpc.data) return rpc.data;
+    // Only "the function is not installed" may fall back; any other failure (no company, permission, database down) must not
+    // silently number from a different source.
+    if (rpc.error && !isMissingDbFunction(rpc.error)) {
+      console.error(`[Invoice] next_document_number failed: ${rpc.error.code} ${rpc.error.message}`);
+      throw new InvoiceDbError("The next invoice number could not be reserved. Nothing was saved; please try again.", 503, "INVOICE_NUMBER_UNAVAILABLE");
+    }
     const { count: c, error } = await getSupabase()!
       .from("invoices")
       .select("id", { count: "exact", head: true })
@@ -808,7 +827,7 @@ async function saveInvoiceAtomically(
   if (!error) return "saved";
   const message = String(error.message || "");
   const code = String(error.code || "");
-  if (code === "PGRST202" || code === "42883" || /could not find the function/i.test(message)) return "unavailable";
+  if (isMissingDbFunction(error)) return "unavailable";
   if (message.startsWith("invoice_conflict")) {
     throw new InvoiceDbError("This invoice was changed by someone else after you opened it. Nothing was saved; reload the invoice and apply your change again.", 409, "INVOICE_CONFLICT");
   }

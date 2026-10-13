@@ -10,7 +10,12 @@ const classification = JSON.parse(readFileSync(join(root, "scripts/saas/table-cl
 };
 
 function tablesInTrackedSql(): Set<string> {
-  const files = ["supabase-schema.sql", ...readdirSync(join(root, "scripts")).filter((f) => f.endsWith(".sql")).map((f) => `scripts/${f}`)];
+  const files = [
+    "supabase-schema.sql",
+    ...readdirSync(join(root, "scripts")).filter((f) => f.endsWith(".sql")).map((f) => `scripts/${f}`),
+    // Tables created by the SaaS migrations themselves (rollback scripts only restore or copy tables).
+    ...readdirSync(join(root, "scripts/saas")).filter((f) => f.endsWith(".sql") && !f.includes("rollback")).map((f) => `scripts/saas/${f}`),
+  ];
   const found = new Set<string>();
   const rx = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(/gi;
   for (const f of files) {

@@ -8,7 +8,9 @@
   "role_template": "System rows (company_id NULL) readable by all; company rows isolated.",
   "dormant": "Feature not enabled in production. No tenant access until a scoping review is done.",
   "sunchaser_only": "Module owned by the founding company. No tenant access; routes blocked for other companies.",
-  "rollback_artefact": "Created only by a rollback script to keep a copy of removed data. No tenant access; excluded from company export; never part of the application schema."
+  "rollback_artefact": "Created only by a rollback script to keep a copy of removed data. No tenant access; excluded from company export; never part of the application schema.",
+  "tenant_system": "Company-owned rows written only by SECURITY DEFINER functions (for example numbering counters). Has company_id; the tenant role has no privilege on the table; included in company export.",
+  "platform": "Platform-owned table created by a SaaS migration (companies, memberships). Privileges are set by that migration, not by the generated tenant policies; not part of the tenant attack matrix; not exported as one company's data."
  },
  "tables": {
   "activity_logs": {
@@ -35,6 +37,14 @@
   "ceo_messages": {
    "class": "tenant_config",
    "note": "Public website/branding content; per company. Pilot scope: only branding fields are exposed."
+  },
+  "companies": {
+   "class": "platform",
+   "note": "One row per customer company. A tenant sees only its own row (policy tenant_sees_own_company)."
+  },
+  "company_memberships": {
+   "class": "platform",
+   "note": "Which user works for which company, with a per-company role and status. Written by the platform (service role) only."
   },
   "company_terms": {
    "class": "tenant_config",
@@ -91,6 +101,10 @@
   "design_sessions": {
    "class": "tenant",
    "note": "Core CRM record."
+  },
+  "document_counters": {
+   "class": "tenant_system",
+   "note": "Last invoice (document) number per company, kind and period. Created by scripts/saas/phase2c-document-numbering.sql; advanced only by next_document_number()."
   },
   "energy_alerts": {
    "class": "tenant",
