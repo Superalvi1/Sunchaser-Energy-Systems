@@ -29,6 +29,8 @@ export type InboxAssigneeDirectory = {
 export type InboxCrmDuplicateSuggestion = {
   linkedEntityType: WhatsAppCrmLinkEntityType;
   linkedEntityId: string;
+  /** More than one active CRM record uses this phone (a shared number): fine as a suggestion, never as an automatic link. */
+  ambiguous?: boolean;
 };
 
 export type InboxCrmDuplicateLookup = (input: {

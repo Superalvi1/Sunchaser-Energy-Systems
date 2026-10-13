@@ -141,7 +141,15 @@ const PRODUCTION_APP_ROLE_BY_USERNAME: Record<string, string> = {
 };
 
 export function resolveAppUserRole(username: string, dbRole: string): string {
+  // A stored Customer role is never promoted by username. Without this, anyone could self-register a free
+  // "allauddin" (public sign-up creates approved Customers) and be treated as Super Admin.
+  if (dbRole === "Customer") return dbRole;
   return PRODUCTION_APP_ROLE_BY_USERNAME[String(username || "").toLowerCase()] || dbRole;
+}
+
+/** Usernames whose role is fixed by the mapping above; public sign-up must not be able to claim them. */
+export function isReservedStaffUsername(username: string): boolean {
+  return Object.prototype.hasOwnProperty.call(PRODUCTION_APP_ROLE_BY_USERNAME, String(username || "").trim().toLowerCase());
 }
 
 export function toSupabaseStorageRole(role: string): string {

@@ -2,14 +2,21 @@ import React, { useRef, useState } from "react";
 import type { Lead } from "../types";
 import AppModal from "./ui/AppModal";
 import { formatLeadReceivedAt, parseSmartQuoteLeadNotes, quoteSnapshot, parseSmartQuotePdfArchive } from "../lib/smartQuoteLead";
+import type { SmartQuoteVersionView } from "../services/api";
 
-export default function SmartQuotePreview({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+/** Renders the stored quotation exactly as saved; catalogue changes never re-price it. */
+export default function SmartQuotePreview({ lead, version, onClose }: { lead: Lead; version?: SmartQuoteVersionView; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const summary = parseSmartQuoteLeadNotes(lead.notes);
-  const archive = parseSmartQuotePdfArchive(lead.notes);
-  const snapshot = quoteSnapshot(lead.notes);
+  const summary = version
+    ? { quoteNumber: version.quoteNumber, system: `${version.systemCapacityKw} kW`, estimatePkr: version.totalPkr, panel: version.panel, inverter: version.inverter, battery: version.battery, structure: version.structure, generatedAt: version.generatedAt }
+    : parseSmartQuoteLeadNotes(lead.notes);
+  const archive = version ? version.pdf : parseSmartQuotePdfArchive(lead.notes);
+  const snapshot = version
+    ? version.lines ? { lines: version.lines, subtotalPkr: version.subtotalPkr ?? version.totalPkr, discountPkr: version.discountPkr ?? 0 } : null
+    : quoteSnapshot(lead.notes);
+  const client = version ? { name: version.clientName, phone: version.clientPhone, city: version.clientCity || "", receivedAt: version.createdAt } : { name: lead.name, phone: lead.phone, city: lead.location, receivedAt: lead.createdAt };
   const money = (n: number) => `PKR ${Math.round(n).toLocaleString("en-PK")}`;
   const download = async (kind: "pdf" | "png") => {
     if (!ref.current) return;
@@ -35,8 +42,8 @@ export default function SmartQuotePreview({ lead, onClose }: { lead: Lead; onClo
       <div className="flex gap-3"><button disabled={busy} onClick={() => download("pdf")}>Download preview PDF</button><button disabled={busy} onClick={() => download("png")}>Download picture</button></div>
       {error && <p role="alert">{error}</p>}
       <div className="overflow-auto"><div ref={ref} style={{ background: "white", color: "#172033", padding: 24, minWidth: 550, fontFamily: "Arial" }}>
-        <h2>Sunchaser Energy Systems</h2><h3>Client quotation · {summary?.quoteNumber}</h3>
-        <p>{lead.name} · {lead.phone} · {lead.location}</p><p>Received: {formatLeadReceivedAt(lead.createdAt)}</p>
+        <h2>Sunchaser Energy Systems</h2><h3>Client quotation · {summary?.quoteNumber}{version ? ` · Version ${version.versionNumber}` : ""}</h3>
+        <p>{client.name} · {client.phone} · {client.city}</p><p>Received: {formatLeadReceivedAt(client.receivedAt)}</p>
         <p>{summary?.system} · Client-submitted estimate</p>
         {snapshot ? <><table style={{ width: "100%", borderCollapse: "collapse" }}><thead><tr>{["Item / specification", "Qty", "Unit price", "Amount"].map(t => <th key={t} style={{ textAlign: "left", padding: 8 }}>{t}</th>)}</tr></thead><tbody>{snapshot.lines.map((line, i) => <tr key={i}><td style={{ padding: 8, borderBottom: "1px solid #ddd" }}>{line.description}<br/><small>{line.specification}</small></td><td>{line.quantity} {line.unit}</td><td>{money(line.unitPricePkr)}</td><td>{money(line.totalPkr)}</td></tr>)}</tbody></table><p>Subtotal: {money(snapshot.subtotalPkr)} · Discount: {money(snapshot.discountPkr)}</p></> : <><p>Historical summary only. The original itemized quotation was not saved.</p>{[summary?.panel, summary?.inverter, summary?.battery, summary?.structure].map((text, i) => <p key={i}>{text}</p>)}</>}
         <h3>Total estimate: {money(summary?.estimatePkr || 0)}</h3>

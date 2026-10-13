@@ -1,6 +1,7 @@
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
 import { generateCustomerCode } from "./customerCode.js";
 import { normalizePakistanPhone, phonesMatch } from "./src/lib/phoneNormalize.ts";
+import { namesPlausiblyMatch } from "./src/lib/clientIdentity.ts";
 
 export type InvoiceCustomerInput = {
   customerId?: string | null;
@@ -27,14 +28,18 @@ async function loadAllCustomers(localDb?: Database): Promise<any[]> {
 
 async function findCustomerByPhone(
   phone: string,
-  localDb?: Database
+  localDb?: Database,
+  name?: string | null
 ): Promise<string | null> {
   const norm = normalizePakistanPhone(phone);
   if (!norm) return null;
   const customers = await loadAllCustomers(localDb);
+  // A phone number is shared by families, offices and agents. When the caller knows who the buyer is, the name must
+  // plausibly agree too; otherwise the document or invoice would be filed under someone else's customer record.
+  const needsName = String(name ?? "").trim() !== "";
   for (const c of customers) {
     const cPhone = c.phone || "";
-    if (cPhone && phonesMatch(cPhone, phone)) return c.id;
+    if (cPhone && phonesMatch(cPhone, phone) && (!needsName || namesPlausiblyMatch(c.name, name))) return c.id;
   }
   return null;
 }
@@ -116,14 +121,14 @@ async function insertCustomer(
  * Used by portal registration to link self-signup to CRM records.
  */
 export async function findExistingCustomerIdForLinking(
-  input: { phone?: string | null; email?: string | null; cnicNtn?: string | null },
+  input: { phone?: string | null; email?: string | null; cnicNtn?: string | null; name?: string | null },
   localDb?: Database
 ): Promise<string | null> {
   const phone = String(input.phone || "").trim();
   const email = String(input.email || "").trim();
   const cnic = String(input.cnicNtn || "").trim();
   let matched: string | null = null;
-  if (phone) matched = await findCustomerByPhone(phone, localDb);
+  if (phone) matched = await findCustomerByPhone(phone, localDb, input.name);
   if (!matched && email) matched = await findCustomerByEmail(email, localDb);
   if (!matched && cnic) matched = await findCustomerByCnicNtn(cnic, localDb);
   return matched;
@@ -147,7 +152,7 @@ export async function resolveInvoiceCustomerId(
   const address = String(input.customerAddress || "").trim() || null;
 
   const matched = await findExistingCustomerIdForLinking(
-    { phone, email, cnicNtn: cnic },
+    { phone, email, cnicNtn: cnic, name },
     localDb
   );
   if (matched) return matched;

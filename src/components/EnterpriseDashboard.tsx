@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { motion } from "motion/react";
+import { motion, type Variants } from "motion/react";
 import {
   Activity,
   AlertTriangle,
@@ -61,7 +61,7 @@ const priorityStyles: Record<string, string> = {
   Critical: "text-rose-300 bg-rose-500/15 border-rose-500/25",
 };
 
-const stagger = {
+const stagger: Variants = {
   hidden: { opacity: 0 },
   show: {
     opacity: 1,
@@ -69,7 +69,7 @@ const stagger = {
   },
 };
 
-const fadeUp = {
+const fadeUp: Variants = {
   hidden: { opacity: 0, y: 14 },
   show: { opacity: 1, y: 0, transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] } },
 };

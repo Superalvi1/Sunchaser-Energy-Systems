@@ -12,6 +12,7 @@ import {
   type VyaparImportPayload,
   type VyaparImportSummary,
 } from "../lib/vyaparMatchedImport";
+import { newPaymentRequestId } from "../lib/invoicePayments";
 
 type ImportResult = {
   invoicesCreated: number;
@@ -107,7 +108,9 @@ export default function VyaparMatchedImporter({
           const missing = findMissingPayments(source.payments, target.payments || []);
           next.paymentsSkipped += source.payments.length - missing.length;
           for (const payment of missing) {
-            await recordAdminInvoicePayment(staffUser, target.id, payment);
+            // A fresh id per receipt: two genuine receipts with identical fields are both recorded, and a
+            // double submit of one receipt cannot be mistaken for a second one.
+            await recordAdminInvoicePayment(staffUser, target.id, { ...payment, clientRequestId: newPaymentRequestId() });
             next.paymentsCreated += 1;
           }
         } catch (cause: any) {

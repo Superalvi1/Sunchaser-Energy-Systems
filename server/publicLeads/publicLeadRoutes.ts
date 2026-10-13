@@ -18,10 +18,22 @@ import {
   validatePublicLeadPayload,
 } from "./publicLeadValidation.ts";
 import { createQuotePdfUploadToken, verifyQuotePdfUploadToken, parseQuotePdfBase64 } from "./smartQuotePdfArchive";
-import { toPublicLeadInput, validateSmartQuoteLeadPayload } from "./smartQuoteLead.ts";
+import { toPublicLeadInput, validateSmartQuoteLeadPayload, type SmartQuoteLeadInput } from "./smartQuoteLead.ts";
+import { SmartQuoteVersionsUnavailableError, type SaveSmartQuoteResult, type SmartQuoteSource } from "./smartQuoteVersions.ts";
+import { verifySmartQuoteLinkToken } from "./smartQuoteLinkToken.ts";
+
+/** Header carrying a staff-issued link token. Never logged; never part of the quotation fingerprint. */
+export const SMART_QUOTE_LINK_HEADER = "x-smart-quote-link";
 
 export type PublicLeadRouterDeps = {
   persistLead: PersistPublicLeadFn;
+  /** Durable versioned save; when absent or not yet migrated, the legacy one-lead-per-quote path is used. */
+  saveSmartQuote?: (input: SmartQuoteLeadInput, source: SmartQuoteSource) => Promise<SaveSmartQuoteResult>;
+  /**
+   * The lead owned by the logged-in portal customer making this request, or null. Verified by the caller from the
+   * request's own session; the public form sends no identity in its body.
+   */
+  resolvePortalLeadId?: (req: Request, quote: SmartQuoteLeadInput) => Promise<string | null>;
   archivePdf?: (leadId: string, quoteNumber: string, pdf: Buffer) => Promise<import("./smartQuotePdfArchive").SmartQuotePdfArchive>;
   issuePdfUploadToken?: (leadId: string, quoteNumber: string) => string;
   idempotencyStore?: IdempotencyStore;
@@ -113,6 +125,31 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
     }
   });
 
+  /**
+   * Anonymous unless the request proves otherwise. A bad, expired, forged or mismatched proof is treated exactly like no
+   * proof: the response never says whether a token was valid. The reason is logged for operators (never the token).
+   */
+  async function resolveSource(req: Request, quote: SmartQuoteLeadInput): Promise<SmartQuoteSource> {
+    const header = req.headers[SMART_QUOTE_LINK_HEADER];
+    const token = Array.isArray(header) ? header[0] : header;
+    if (typeof token === "string" && token.trim()) {
+      const verified = verifySmartQuoteLinkToken(token.trim(), { env });
+      if (verified.ok === true) {
+        return { kind: "verified-lead", leadId: verified.claims.leadId, via: "staff-link-token", issuedForPhone: verified.claims.phone };
+      }
+      console.warn(`[smart-quotes] link token ignored (${verified.reason}); treating as anonymous quote=${quote.quoteNumber}`);
+    }
+    if (deps.resolvePortalLeadId) {
+      try {
+        const leadId = await deps.resolvePortalLeadId(req, quote);
+        if (leadId) return { kind: "verified-lead", leadId, via: "portal-session" };
+      } catch (error) {
+        console.warn("[smart-quotes] portal session lookup failed; treating as anonymous:", error instanceof Error ? error.message : error);
+      }
+    }
+    return { kind: "anonymous" };
+  }
+
   router.get("/smart-quotes", (_req, res) => {
     return res.status(405).set("Allow", "POST").json({ ok: false, error: "Method not allowed." });
   });
@@ -131,6 +168,28 @@ export function createPublicLeadRouter(deps: PublicLeadRouterDeps): Router {
       const validation = validateSmartQuoteLeadPayload(req.body);
       if (validation.ok === false) {
         return res.status(validation.status).json({ ok: false, error: validation.error });
+      }
+
+      if (deps.saveSmartQuote) {
+        try {
+          const source = await resolveSource(req, validation.value);
+          const saved = await deps.saveSmartQuote(validation.value, source);
+          if (saved.kind === "conflict") {
+            return res.status(409).json({ ok: false, error: "This quotation number is already in use. Generate a new quotation." });
+          }
+          console.info(`[smart-quotes] ${saved.kind} leadId=${saved.leadId} quote=${validation.value.quoteNumber} version=${saved.versionNumber} source=${source.kind === "verified-lead" ? source.via : source.kind}${saved.attached ? " attached=1" : ""}${saved.fallback ? ` verified-source-ignored=${saved.fallback}` : ""}`);
+          return res.status(saved.kind === "created" ? 201 : 200).json({
+            ok: true,
+            success: true,
+            leadId: saved.leadId,
+            versionNumber: saved.versionNumber,
+            pdfUploadToken: uploadToken(saved.leadId, validation.value.quoteNumber),
+            message: "Smart Quote saved",
+          });
+        } catch (error) {
+          if (!(error instanceof SmartQuoteVersionsUnavailableError)) throw error;
+          console.warn("[smart-quotes] version history table missing; using legacy lead capture.");
+        }
       }
 
       const idempotencyKey =

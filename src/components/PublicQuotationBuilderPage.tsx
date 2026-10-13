@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -333,6 +333,9 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   const [quoteNumber, setQuoteNumber] = useState(makeQuoteNumber);
   const [exporting, setExporting] = useState<"pdf" | "image" | null>(null);
   const [exportMessage, setExportMessage] = useState("");
+  const [exportFailed, setExportFailed] = useState(false);
+  // A retry of an unchanged quotation reuses its number so the server replays instead of duplicating.
+  const pendingQuoteRef = useRef<{ key: string; quoteNumber: string; generatedAt: string } | null>(null);
   const [savingLead, setSavingLead] = useState(false);
   const [leadMessage, setLeadMessage] = useState("");
   const [leadError, setLeadError] = useState("");
@@ -472,13 +475,13 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   };
 
   const generateQuote = async () => {
-    if (!calculation) return;
-    const nextQuoteNumber = makeQuoteNumber();
-    const capturedAt = new Date().toISOString();
+    if (!calculation || savingLead) return;
+    let nextQuoteNumber = makeQuoteNumber();
+    let capturedAt = new Date().toISOString();
     setSavedLead(null);
-    setGeneratedAt(capturedAt);
 
     if (isStaffMode) {
+      setGeneratedAt(capturedAt);
       setQuoteNumber(nextQuoteNumber);
       setGenerated(true);
       setLeadError("");
@@ -503,21 +506,36 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
     setSavingLead(true);
     setLeadError("");
     setLeadMessage("");
+    setExportMessage("");
+    setExportFailed(false);
     try {
-      const submission = await submitPublicSmartQuoteLead({
+      const quotation = {
         name,
         phone,
         city: clientCity.trim() || undefined,
-        quoteNumber: nextQuoteNumber,
         systemCapacityKw: calculation.systemCapacityKw,
         estimatedTotalPkr: calculation.totalPkr,
         panel: config.included.panels ? `${config.panelQuantity} × ${calculation.panel.brand} ${calculation.panel.watts}W` : "Not included",
         inverter: config.included.inverter ? `${config.inverterQuantity} × ${inverterDisplayName(calculation.inverter)}` : "Not included",
         battery: config.included.battery ? `${selectedInverter?.bundle ? config.inverterQuantity : config.batteryQuantity} × ${calculation.battery.brand} ${calculation.battery.capacityKwh}kWh` : "Not included",
         structure: calculation.structureLabel,
-        generatedAt: capturedAt,
         snapshot: { lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr },
-      });
+      };
+      const key = JSON.stringify(quotation);
+      if (pendingQuoteRef.current?.key === key) ({ quoteNumber: nextQuoteNumber, generatedAt: capturedAt } = pendingQuoteRef.current);
+      pendingQuoteRef.current = { key, quoteNumber: nextQuoteNumber, generatedAt: capturedAt };
+      let submission;
+      try {
+        submission = await submitPublicSmartQuoteLead({ ...quotation, quoteNumber: nextQuoteNumber, generatedAt: capturedAt });
+      } catch (error) {
+        // A different quotation already holds this random number: retry once with a fresh one.
+        if ((error as { status?: number }).status !== 409) throw error;
+        nextQuoteNumber = makeQuoteNumber();
+        capturedAt = new Date().toISOString();
+        pendingQuoteRef.current = { key, quoteNumber: nextQuoteNumber, generatedAt: capturedAt };
+        submission = await submitPublicSmartQuoteLead({ ...quotation, quoteNumber: nextQuoteNumber, generatedAt: capturedAt });
+      }
+      setGeneratedAt(capturedAt);
       setSavedLead({ leadId: submission.leadId, pdfUploadToken: submission.pdfUploadToken });
       setQuoteNumber(nextQuoteNumber);
       setGenerated(true);
@@ -531,11 +549,16 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
         await archivePublicSmartQuotePdf(submission.leadId, nextQuoteNumber, submission.pdfUploadToken, pdf.output("blob"));
         setLeadMessage("Quotation and PDF saved to Sunchaser CRM. You can now download your copy.");
       } catch {
+        setExportFailed(true);
         setExportMessage("Your quotation details are saved, but the PDF archive needs a retry. Press Save PDF to save both copies.");
       }
       window.setTimeout(() => document.getElementById("generated-quotation")?.scrollIntoView({ behavior: "smooth" }), 50);
     } catch (error) {
-      setLeadError(error instanceof Error ? error.message : "Could not save your details. Please try again.");
+      // fetch() rejects with TypeError when the connection drops; the save may or may not have reached us.
+      setLeadError(error instanceof TypeError
+        ? "We could not confirm that your quotation was saved because the connection was interrupted. Check your internet and press Generate My Quote again — it will not create a duplicate."
+        : error instanceof Error ? error.message : "Could not save your details. Please try again.");
+      window.setTimeout(() => document.getElementById("smart-quote-lead-error")?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
     } finally {
       setSavingLead(false);
     }
@@ -564,6 +587,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   const savePdf = async () => {
     setExporting("pdf");
     setExportMessage("");
+    setExportFailed(false);
     try {
       if (!calculation) throw new Error("Generate your quotation first.");
       const logoDataUrl = await loadQuotationLogo();
@@ -577,6 +601,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       setExportMessage(method === "share" ? (isStaffMode ? "PDF is ready. Choose Save to Files or share it." : "PDF saved to Sunchaser CRM. Choose Save to Files or share your copy.") : isStaffMode ? "PDF downloaded successfully." : "PDF saved to Sunchaser CRM and downloaded for you.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
+      setExportFailed(true);
       setExportMessage(error instanceof Error ? error.message : "Could not save the PDF. Please try again.");
     } finally {
       setExporting(null);
@@ -586,6 +611,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   const savePicture = async () => {
     setExporting("image");
     setExportMessage("");
+    setExportFailed(false);
     try {
       const canvas = await renderQuotationCanvas();
       const blob = await canvasToBlob(canvas, "image/png");
@@ -593,6 +619,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       setExportMessage(method === "share" ? "Picture is ready. Choose Save Image or share it." : "Quotation picture downloaded successfully.");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
+      setExportFailed(true);
       setExportMessage(error instanceof Error ? error.message : "Could not save the picture. Please try again.");
     } finally {
       setExporting(null);
@@ -930,7 +957,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
                 </label>
               ))}
             </div>
-            {leadError ? <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">{leadError}</div> : null}
+            {leadError ? <div id="smart-quote-lead-error" role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">{leadError}</div> : null}
             {leadMessage ? <div role="status" className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{leadMessage}</div> : null}
           </div>
         </section>
@@ -983,14 +1010,14 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
             <button type="button" onClick={sendToWhatsApp} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 font-black text-white shadow-sm"><MessageCircle className="h-5 w-5" /> WhatsApp</button>
             <button type="button" onClick={reset} className="flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 font-black text-slate-800 shadow-sm"><RotateCcw className="h-5 w-5" /> Start again</button>
           </div>
-          {exportMessage ? <div className="public-quote-no-print mx-auto mt-3 max-w-4xl rounded-2xl bg-emerald-50 px-4 py-3 text-center text-sm font-semibold text-emerald-800">{exportMessage}</div> : null}
+          {exportMessage ? <div role={exportFailed ? "alert" : "status"} className={`public-quote-no-print mx-auto mt-3 max-w-4xl rounded-2xl px-4 py-3 text-center text-sm font-semibold ${exportFailed ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}>{exportMessage}</div> : null}
         </section>
       ) : null}
 
       {calculation && !generated ? (
         <div className="public-quote-no-print fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white p-3 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] lg:hidden">
-          <button type="button" onClick={generateQuote} className="mx-auto flex min-h-14 w-full max-w-lg items-center justify-between rounded-2xl bg-amber-400 px-5 text-slate-950">
-            <span className="font-black">{isStaffMode ? "Generate Quotation" : "Generate My Quote"}</span><span className="font-black">{formatPkr(calculation.totalPkr)}</span>
+          <button type="button" disabled={savingLead} onClick={() => void generateQuote()} className="mx-auto flex min-h-14 w-full max-w-lg items-center justify-between rounded-2xl bg-amber-400 px-5 text-slate-950 disabled:cursor-wait disabled:opacity-70">
+            <span className="font-black">{savingLead ? "Saving…" : isStaffMode ? "Generate Quotation" : "Generate My Quote"}</span><span className="font-black">{formatPkr(calculation.totalPkr)}</span>
           </button>
         </div>
       ) : null}

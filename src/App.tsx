@@ -45,7 +45,7 @@ import {
   EXTERNAL_LINK_PROPS,
   PRIVACY_POLICY_URL,
 } from "./lib/complianceLinks";
-import { restoreAuthSession, clearAuthSession } from "./lib/authSession";
+import { restoreAuthSession, clearAuthSession, logoutSession } from "./lib/authSession";
 import { useIsMobile } from "./components/ui/MobileDisclosure";
 import { mobileUi } from "./lib/mobileUi";
 import {
@@ -372,7 +372,9 @@ function AuthenticatedApp() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Revoke this device's token on the server FIRST (best effort, bounded wait), then clear local state regardless.
+    await logoutSession();
     setCurrentUser(null);
     setPortalData(null);
     setPortalError(null);
@@ -643,7 +645,7 @@ function AuthenticatedApp() {
   const mobileScreenTitle =
     shellTabs.find((t) => t.id === activeTab)?.label ?? "Sunchaser CRM";
 
-  if (!currentUser && sessionRestoreUnavailable) return <main className="min-h-screen grid place-items-center bg-slate-950 px-6 text-slate-100"><section className="max-w-md space-y-4 text-center"><h1 className="text-xl font-bold">Reconnect to your saved session</h1><p className="text-slate-400">Your login is still saved. The server could not be reached. Check your connection and retry.</p><button onClick={()=>window.location.reload()} className="min-h-12 w-full rounded-xl bg-amber-400 font-bold text-slate-950">Retry connection</button><button onClick={()=>{clearAuthSession();setSessionRestoreUnavailable(false);setGuestView("login");}} className="min-h-11 text-slate-400">Use another account</button></section></main>;
+  if (!currentUser && sessionRestoreUnavailable) return <main className="min-h-screen grid place-items-center bg-slate-950 px-6 text-slate-100"><section className="max-w-md space-y-4 text-center"><h1 className="text-xl font-bold">Reconnect to your saved session</h1><p className="text-slate-400">Your login is still saved. The server could not be reached. Check your connection and retry.</p><button onClick={()=>window.location.reload()} className="min-h-12 w-full rounded-xl bg-amber-400 font-bold text-slate-950">Retry connection</button><button onClick={()=>{void logoutSession();setSessionRestoreUnavailable(false);setGuestView("login");}} className="min-h-11 text-slate-400">Use another account</button></section></main>;
   if (currentUser && !showOnboarding && activeTab === "Accounts" && canCreateInvoice(currentUser.username,currentUser.role)) return <AccountsWorkspace staffUser={currentUser} leads={appState?.leads || []} products={appState?.products || []} initialView={accountsInitialView} onAddParty={handleAddLead} onExit={()=>{window.history.replaceState(null,"","/");setActiveTab("Admin Dashboard");}}/>;
   if (currentUser && showOnboarding) {
     const variant =
@@ -767,7 +769,7 @@ function AuthenticatedApp() {
             {/* Sync trigger */}
             {currentUser && needsCrmAppState(currentUser.role) ? (
               <button
-                onClick={loadDatabaseState}
+                onClick={() => void loadDatabaseState()}
                 className="bg-slate-800 hover:bg-slate-700 p-2.5 rounded-xl text-slate-350 transition hover:text-white"
                 title="Force Sync Database State"
               >

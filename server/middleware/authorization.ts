@@ -8,6 +8,8 @@ declare global {
   namespace Express {
     interface Request {
       actor?: import("./actor.ts").RequestActor;
+      /** Session details of the verified JWT (start time, current password version); set with `actor`. */
+      authSession?: import("./actor.ts").AuthSessionInfo;
     }
   }
 }
@@ -18,7 +20,7 @@ export type AuthorizationMiddlewareDeps = {
 
 function sendAuthFailure(
   res: Response,
-  status: 401 | 403,
+  status: 401 | 403 | 503,
   error: string
 ): void {
   res.status(status).json({ error });
@@ -56,13 +58,22 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
       return;
     }
 
-    const hydrated = await hydrateActorFromJwt(token, deps.resolveLocalDb());
+    let hydrated;
+    try {
+      hydrated = await hydrateActorFromJwt(token, deps.resolveLocalDb());
+    } catch (err) {
+      // The account/session store could not be read: refuse (fail closed) instead of hanging the request.
+      console.error("[Auth] session lookup failed:", (err as Error)?.message);
+      sendAuthFailure(res, 503, "Authentication service temporarily unavailable.");
+      return;
+    }
     if (!hydrated.ok) {
       sendAuthFailure(res, (hydrated as any).status, (hydrated as any).error);
       return;
     }
 
     req.actor = hydrated.actor;
+    req.authSession = hydrated.session;
     if (req.actor.role === "Customer" && !isCustomerAllowedApiRoute(path)) {
       sendAuthFailure(res, 403, "Not authorized for staff routes.");
       return;

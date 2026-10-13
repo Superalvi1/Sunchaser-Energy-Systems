@@ -570,7 +570,7 @@ export default function InstallationTeamApp({
                               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/50">
                                 {activeLead.installation.completionPhotos.map((p, idx) => (
                                   <div key={idx} className="relative aspect-square bg-slate-950 border border-slate-850 rounded-xl overflow-hidden group">
-                                    <img src={p} className="w-full h-full object-cover" referrerpolicy="no-referrer" />
+                                    <img src={p} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                                     <span className="absolute bottom-1 right-1 bg-slate-900/80 px-1 text-[8px] text-amber-400 font-mono rounded">Photo #{idx+1}</span>
                                   </div>
                                 ))}

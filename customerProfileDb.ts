@@ -5,13 +5,14 @@ import {
   verifyCustomerPortalUser,
   type Database,
 } from "./dbManager";
-import { mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from "./src/lib/clientPortalPhase2";
+import { DOCUMENT_WALLET_TYPES, mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from "./src/lib/clientPortalPhase2";
 import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";
 import { randomUUID } from "node:crypto";
 import { generateCustomerCode } from "./customerCode";
 import {
   buildRailwayObjectProxyUrl,
   isRailwayObjectStorageConfigured,
+  isStoragePathForCustomer,
   putRailwayObject,
   rewriteLegacyStorageUrl,
 } from "./server/storage/railwayObjectStorage.ts";
@@ -34,7 +35,7 @@ function mapCustomerDocumentForResponse(row: any) {
   });
 }
 
-async function assertCustomerAdmin(
+export async function assertCustomerAdmin(
   actorId: string,
   actorUsername: string,
   actorRole: string,
@@ -224,6 +225,15 @@ export async function prepareLeadCustomerProfile(actorId: string, actorUsername:
   return { customerId };
 }
 
+async function findCustomerDocument(id: string, localDb?: Database): Promise<any | null> {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!.from("customer_documents").select("*").eq("id", id).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return (localDb?.customerDocuments || []).find((d: any) => d.id === id) || null;
+}
+
 export async function assignCustomerDocument(
   actorId: string,
   actorUsername: string,
@@ -241,6 +251,7 @@ export async function assignCustomerDocument(
     notes?: string;
     projectId?: string;
     uploadedBy?: string;
+    documentId?: string;
   },
   localDb?: Database
 ) {
@@ -249,12 +260,23 @@ export async function assignCustomerDocument(
   if (!customerId || !body.fileUrl) {
     throw new CustomerProfileError("customerId and fileUrl required.");
   }
+  // With bucket storage the path is an object key: it must be this client's own folder or a Smart Quote archive.
+  if (body.storagePath && isRailwayObjectStorageConfigured() && !isStoragePathForCustomer(customerId, String(body.storagePath))) {
+    throw new CustomerProfileError("storagePath does not belong to this client.", 422);
+  }
+  const documentId = body.documentId || `doc-${randomUUID()}`;
+  const existing = await findCustomerDocument(documentId, localDb);
+  if (existing) {
+    // A retried upload: return the saved row, never a copy or another customer's document.
+    if ((existing.customer_id ?? existing.customerId) !== customerId) throw new CustomerProfileError("Upload id belongs to another client.", 409);
+    return mapCustomerDocumentForResponse(existing);
+  }
 
   const internalOnly = !!body.internalOnly;
   const visibleToCustomer = body.visibleToCustomer !== false && !internalOnly;
 
   const doc = {
-    id: `doc-${randomUUID()}`,
+    id: documentId,
     customer_id: customerId,
     project_id: body.projectId || null,
     document_type: body.documentType,
@@ -276,7 +298,17 @@ export async function assignCustomerDocument(
       .insert(doc)
       .select("*")
       .single();
-    if (error) throw error;
+    if (error) {
+      // Two requests with one clientUploadId raced past the lookup above: the loser returns the saved row.
+      if ((error as { code?: string }).code === "23505") {
+        const saved = await findCustomerDocument(documentId, localDb);
+        if (saved) {
+          if ((saved.customer_id ?? saved.customerId) !== customerId) throw new CustomerProfileError("Upload id belongs to another client.", 409);
+          return mapCustomerDocumentForResponse(saved);
+        }
+      }
+      throw error;
+    }
     return mapCustomerDocumentForResponse(data);
   }
 
@@ -310,14 +342,46 @@ function assertCustomerDocumentUpload(fileName: string, buffer: Buffer, contentT
   if (!extOk || !mimeOk) {
     throw new CustomerProfileError("Only PDF, JPG, PNG, and DOCX files are allowed.", 422);
   }
+  // The name and declared type come from the browser; the bytes must match them too.
+  const signatures: Record<string, number[]> = {
+    "application/pdf": [0x25, 0x50, 0x44, 0x46],
+    "image/png": [0x89, 0x50, 0x4e, 0x47],
+    "image/jpeg": [0xff, 0xd8, 0xff],
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [0x50, 0x4b, 0x03, 0x04],
+  };
+  if (!signatures[contentType].every((byte, index) => buffer[index] === byte)) {
+    throw new CustomerProfileError("The file content does not match its type. Upload the original PDF, JPG, PNG or DOCX file.", 422);
+  }
+}
+
+/**
+ * Checked BEFORE any bytes are written to storage, so an unknown client or document type cannot leave an
+ * object in the bucket that no database row will ever reference.
+ */
+export async function assertCustomerUploadTarget(customerId: string, documentType: unknown, localDb?: Database) {
+  const id = String(customerId || "").trim();
+  if (!id) throw new CustomerProfileError("customerId required.", 400);
+  if (!DOCUMENT_WALLET_TYPES.some((entry) => entry.type === documentType)) {
+    throw new CustomerProfileError("Unknown document type.", 422);
+  }
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()!.from("customers").select("id").eq("id", id).maybeSingle();
+    if (error) throw error;
+    if (!data) throw new CustomerProfileError("Client not found.", 404);
+  }
+  void localDb; // the local JSON fallback has no foreign keys, so it cannot produce orphans
 }
 
 export async function uploadFileToCustomerStorage(
   customerId: string,
   base64Data: string,
   fileName: string,
-  mimeType?: string
+  mimeType?: string,
+  options: { objectId?: string } = {}
 ): Promise<{ url: string; storagePath: string }> {
+  if (!/^(?!.*\.\.)[A-Za-z0-9._-]{1,120}$/.test(customerId)) {
+    throw new CustomerProfileError("Invalid customer id.", 400);
+  }
   const matches = base64Data.match(/^data:([^;]*);base64,(.+)$/);
   let buffer: Buffer;
   let contentType = mimeType || "application/octet-stream";
@@ -330,8 +394,9 @@ export async function uploadFileToCustomerStorage(
 
   assertCustomerDocumentUpload(fileName, buffer, contentType);
 
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `${customerId}/${Date.now()}_${safeName}`;
+  // Keep the tail so the extension survives; the whole bucket key must stay under 1024 characters.
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
+  const storagePath = `${customerId}/${options.objectId || Date.now()}_${safeName}`;
 
   if (isRailwayObjectStorageConfigured()) {
     await putRailwayObject("customer-documents", storagePath, buffer, contentType);

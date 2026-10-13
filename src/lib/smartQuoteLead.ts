@@ -96,3 +96,43 @@ export function parseSmartQuotePdfArchive(notes: string | null | undefined): Sma
 export function visibleLeadNotes(notes: string | null | undefined) {
   return String(notes || "").split(/\r?\n/).filter(line => !/^(Snapshot|PdfArchive): /.test(line)).join("\n");
 }
+
+const SMART_QUOTE_BLOCK_KEYS = new Set(["Quote", "Version", "System", "Estimate", "Panel", "Inverter", "Battery", "Structure", "Generated", "Snapshot", "PdfArchive"]);
+
+/** Server-written Smart Quote lines (the SMART_QUOTE_V1 block) versus staff-written notes. */
+export function splitSmartQuoteNotes(notes: string | null | undefined): { machine: string[]; human: string[] } {
+  const machine: string[] = [];
+  const human: string[] = [];
+  let inBlock = false;
+  for (const line of String(notes || "").split(/\r?\n/)) {
+    const key = line.slice(0, Math.max(0, line.indexOf(":"))).trim();
+    if (line.trim() === "SMART_QUOTE_V1") { inBlock = true; machine.push(line); continue; }
+    if ((inBlock && SMART_QUOTE_BLOCK_KEYS.has(key)) || /^(Snapshot|PdfArchive): \{/.test(line)) { machine.push(line); continue; }
+    inBlock = false;
+    human.push(line);
+  }
+  return { machine, human };
+}
+
+/** Staff edit notes only; the saved quotation block cannot be removed or forged through a notes edit. */
+export function mergeStaffEditedLeadNotes(existing: string | null | undefined, edited: string | null | undefined): string {
+  const { machine } = splitSmartQuoteNotes(existing);
+  const human = splitSmartQuoteNotes(edited).human.join("\n").trim();
+  return [...machine, ...(human ? [human] : [])].join("\n");
+}
+
+/** Replace the latest-quotation block while keeping staff notes. */
+export function replaceSmartQuoteBlock(existing: string | null | undefined, latestBlock: string): string {
+  const human = splitSmartQuoteNotes(existing).human.join("\n").trim();
+  return [latestBlock.trim(), ...(human ? [human] : [])].join("\n");
+}
+
+export function editableLeadNotes(notes: string | null | undefined) {
+  return splitSmartQuoteNotes(notes).human.join("\n").trim();
+}
+
+/** Newest client activity: lead creation or its latest Smart Quote. */
+export function leadLatestActivityAt(lead: Pick<Lead, "createdAt"> & { notes?: string }) {
+  const generated = Date.parse(parseSmartQuoteLeadNotes(lead.notes)?.generatedAt || "");
+  return Math.max(leadReceivedAt(lead), Number.isFinite(generated) ? generated : 0);
+}
