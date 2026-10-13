@@ -6493,20 +6493,21 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     clientEmail: clientEmail || lead.email,
     clientAddress: clientAddress || lead.address,
     cnic: cnic || "",
-    cityArea: cityArea || lead.location || "Lahore",
+    cityArea: cityArea || lead.location || (usesNeutralIdentity() ? "" : "Lahore"),
     bdmName: bdmName || sanitizeLeadAdvisorInput(lead.assignedSalesperson) || "",
     quoteDate: quoteDate || new Date().toISOString().split('T')[0],
     systemType: systemType || "Hybrid",
-    panelBrand: panelBrand || "Jinko",
-    panelWattage: Number(panelWattage) || 580,
-    inverterBrand: inverterBrand || "Knox",
-    inverterCapacity: inverterCapacity || "10kW",
+    // Equipment and payment defaults are the founding company's; another company states its own or nothing is printed.
+    panelBrand: panelBrand || (usesNeutralIdentity() ? "" : "Jinko"),
+    panelWattage: Number(panelWattage) || (usesNeutralIdentity() ? 0 : 580),
+    inverterBrand: inverterBrand || (usesNeutralIdentity() ? "" : "Knox"),
+    inverterCapacity: inverterCapacity || (usesNeutralIdentity() ? "" : "10kW"),
     batteryOption: batteryOption || "None",
     netMeteringRequired: netMeteringRequired || "Yes",
     discount: disc,
     discountType: resolvedDiscount.discountType,
     discountValue: resolvedDiscount.discountValue,
-    paymentSchedule: paymentSchedule || paymentTerms || "50% Advance, 40% Delivery, 10% Commissioning",
+    paymentSchedule: paymentSchedule || paymentTerms || (usesNeutralIdentity() ? "" : "50% Advance, 40% Delivery, 10% Commissioning"),
     boqItems: boqItems || [],
 
     // Redesigned Manual Builder fields
@@ -10161,7 +10162,7 @@ app.get("/api/export/pdf/auto-sizer/:leadId/download", async (req, res) => {
     if (rendered.exportBlocked) {
       return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
     }
-    const filename = buildQuotationPdfFilename(lead, quote);
+    const filename = buildQuotationPdfFilename(lead, quote, pdfFileBrand());
     await sendQuotationPdfResponse(res, rendered.html, filename);
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);
@@ -10254,7 +10255,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
           rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."
         );
       }
-      const filename = buildQuotationPdfFilename(lead, quoteForExport);
+      const filename = buildQuotationPdfFilename(lead, quoteForExport, pdfFileBrand());
       const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
       const token = stageQuotationPdf(pdfBuffer, filename);
       return res.json({
@@ -10269,7 +10270,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
           rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."
         );
       }
-      const filename = buildQuotationPdfFilename(lead, quoteForExport);
+      const filename = buildQuotationPdfFilename(lead, quoteForExport, pdfFileBrand());
       await sendQuotationPdfResponse(res, rendered.html, filename);
       return;
     }
@@ -10347,7 +10348,7 @@ async function compileTemplatePreviewHtml(
     const pageRow = (activeState.quoteTemplatePages || []).find((p: any) => p.id === pageId);
     pageTitle = pageRow?.title || "";
   }
-  const filename = buildTemplateTestPdfFilename(pageTitle, scope);
+  const filename = buildTemplateTestPdfFilename(pageTitle, scope, usesNeutralIdentity() ? "" : "sunchaser");
   return { html, filename };
 }
 
@@ -10373,6 +10374,11 @@ function takeStagedQuotationPdf(token: string) {
   if (!entry) return null;
   stagedQuotationPdfs.delete(token);
   return entry;
+}
+
+/** File-name prefix of exported quotation PDFs: the founding company keeps "Sunchaser", every other company gets none. */
+function pdfFileBrand(): string {
+  return usesNeutralIdentity() ? "" : "Sunchaser";
 }
 
 async function sendQuotationPdfResponse(
@@ -10569,7 +10575,7 @@ app.post("/api/export/pdf/stage-saved-quote", async (req, res) => {
     const { activeState, lead, quote, options } = resolved;
     const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, hideActionBar: true });
     if (rendered.exportBlocked) return res.status(409).json({ error: rendered.exportBlockReason || "Quotation cannot be exported." });
-    const filename = buildQuotationPdfFilename(lead, quote);
+    const filename = buildQuotationPdfFilename(lead, quote, pdfFileBrand());
     const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
     const token = stageQuotationPdf(pdfBuffer, filename);
     return res.json({ downloadUrl: `/api/export/pdf/staged-public/${token}`, filename, expiresInSeconds: 120 });
@@ -10646,7 +10652,7 @@ app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
     if (rendered.exportBlocked) {
       return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
     }
-    const filename = buildQuotationPdfFilename(lead, quote);
+    const filename = buildQuotationPdfFilename(lead, quote, pdfFileBrand());
     await sendQuotationPdfResponse(res, rendered.html, filename);
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);

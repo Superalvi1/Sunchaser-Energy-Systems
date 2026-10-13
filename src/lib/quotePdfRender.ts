@@ -5,7 +5,7 @@ import { getQuotePdfAppBaseUrl } from "./quotePdfLayout.ts";
 
 export { PDF_ENGINE_MISSING_MESSAGE, formatQuotationPdfError };
 
-export function buildTemplateTestPdfFilename(title?: string, scope: "page" | "full" = "full"): string {
+export function buildTemplateTestPdfFilename(title?: string, scope: "page" | "full" = "full", brand: string = "sunchaser"): string {
   if (scope === "page" && title) {
     const safe = String(title)
       .replace(/[^\w\s-]/g, "")
@@ -14,10 +14,11 @@ export function buildTemplateTestPdfFilename(title?: string, scope: "page" | "fu
       .slice(0, 48) || "page";
     return `template-page-${safe}.pdf`;
   }
-  return "sunchaser-template-test.pdf";
+  return `${brand ? `${brand}-` : ""}template-test.pdf`;
 }
 
-export function buildQuotationPdfFilename(lead: any, quote: any): string {
+/** `brand` is the file-name prefix: "Sunchaser" for the founding company (unchanged), neutral "Quotation" for any other company. */
+export function buildQuotationPdfFilename(lead: any, quote: any, brand: string = "Sunchaser"): string {
   const client = String(quote?.clientName || lead?.name || "Client").trim();
   const safe = client
     .replace(/[^\w\s-]/g, "")
@@ -26,7 +27,7 @@ export function buildQuotationPdfFilename(lead: any, quote: any): string {
     .slice(0, 48) || "Client";
   const kwRaw = quote?.systemSizekW ?? lead?.systemSizekW;
   const kw = kwRaw != null && kwRaw !== "" ? `${Number(kwRaw)}kW` : "";
-  return `Sunchaser-Quotation-${safe}${kw ? `-${kw}` : ""}.pdf`;
+  return `${brand ? `${brand}-` : ""}Quotation-${safe}${kw ? `-${kw}` : ""}.pdf`;
 }
 
 const CHROMIUM_LAUNCH_OPTIONS = {

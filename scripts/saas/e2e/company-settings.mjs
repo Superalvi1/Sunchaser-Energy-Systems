@@ -101,6 +101,7 @@ for (const c of Object.values(CO)) {
   const qd = await quoteDoc(c, c.q1), idoc = c.inv1 ? await invoiceDoc(c, c.inv1) : { status: 0, html: "" };
   const qv = visible(qd.html), iv = visible(idoc.html);
   check(`${c.t}: quotation shows its own name, address, logo and terms`, qd.status === 200 && [c.name, c.address, c.logo, c.terms[0], c.terms[1]].every((s) => qv.includes(s)), [c.name, c.address, c.logo, ...c.terms].filter((s) => !qv.includes(s)).join(" | "));
+  check(`${c.t}: quotation prints no equipment brand the company never entered (no default Jinko / Knox / Lahore)`, !/Jinko|Knox|Lahore/.test(qv.replace(c.address, "")), (qv.match(/Jinko|Knox|Lahore/) || [])[0]);
   check(`${c.t}: quotation shows its amounts (rate ${c.rate} x ${c.qty} = ${c.q1.total})`, amount(c.q1.total).test(qv) && amount(c.rate).test(qv));
   check(`${c.t}: quotation carries nothing of ${o.t} and nothing of Sunchaser`, ![o.name, o.address, o.email, o.terms[0], o.bank.accountNumber, o.t].some((s) => qv.includes(s)) && !SUNCHASER.test(qv), (qv.match(SUNCHASER) || [])[0]);
   check(`${c.t}: quotation validity follows the company setting (${c.validity} days)`, new RegExp(`${c.validity}\\s*(calendar\\s*)?days|valid[^<]{0,40}${c.validity}`, "i").test(qv) || true);
