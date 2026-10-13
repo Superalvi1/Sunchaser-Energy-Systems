@@ -13,7 +13,7 @@ const sets = {
   tenantNew: [...by("tenant"), ...by("tenant_config")].sort(),
   tenantExisting: by("tenant_existing_company_id"),
   roleTemplate: by("role_template"),
-  noAccess: [...by("sunchaser_only"), ...by("dormant"), ...by("identity")].sort(),
+  noAccess: [...by("sunchaser_only"), ...by("dormant"), ...by("identity"), ...by("rollback_artefact")].sort(),
 };
 
 export function renderUp() {

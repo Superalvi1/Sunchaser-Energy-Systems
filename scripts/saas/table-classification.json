@@ -7,7 +7,8 @@
   "identity": "Global identity table; visibility to a company only via company_memberships.",
   "role_template": "System rows (company_id NULL) readable by all; company rows isolated.",
   "dormant": "Feature not enabled in production. No tenant access until a scoping review is done.",
-  "sunchaser_only": "Module owned by the founding company. No tenant access; routes blocked for other companies."
+  "sunchaser_only": "Module owned by the founding company. No tenant access; routes blocked for other companies.",
+  "rollback_artefact": "Created only by a rollback script to keep a copy of removed data. No tenant access; excluded from company export; never part of the application schema."
  },
  "tables": {
   "activity_logs": {
@@ -419,6 +420,10 @@
    "class": "tenant_config",
    "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
   },
+  "revoked_sessions": {
+   "class": "identity",
+   "note": "Revoked token ids and session families. Sessions belong to a global login identity (users), so revocation is global; read only with the system client, never with a company-scoped one."
+  },
   "role_permissions": {
    "class": "role_template",
    "note": "company_id NULL = system template visible to all; company rows = custom roles owned by one company."
@@ -450,6 +455,10 @@
   "smart_quote_versions": {
    "class": "tenant",
    "note": "Core CRM record."
+  },
+  "smart_quote_versions_rollback_backup": {
+   "class": "rollback_artefact",
+   "note": "Copy of smart_quote_versions made by smart-quote-versions-rollback.sql. Exists only after a rollback; contains company data, so it must stay invisible to the tenant role and out of exports."
   },
   "social_links": {
    "class": "tenant_config",
