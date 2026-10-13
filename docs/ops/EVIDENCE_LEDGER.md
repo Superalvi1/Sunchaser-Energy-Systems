@@ -26,6 +26,11 @@ The rows below keep these separate.
 | Compatibility matrix (13 observations), concurrent invoice edits (300 rounds), two-instance payments (40 rounds) | 0 unsafe, 0 degraded; 0 inconsistent; 0 overpaid | same |
 | 17.11 -> 17.11 encrypted backup, restore, migrate M1-M4, roll back, re-apply | 0 failures; 106 tables, 7,973 rows matched | scratch PostgreSQL 17.11 pair |
 | Same rehearsal fed an archive in the exact format of the existing production backup job | 0 failures (34 PASS) | same |
+| Same rehearsal on a synthetic post-reset archive (six accounting tables empty, six `crm_recovery` tables with 2/13/2/3/27/1 rows): none of the recovered records back in `public`; recovery copies unchanged through apply/rollback/re-apply | 0 failures (41 PASS) | PostgreSQL 17.11 |
+| Same, with legitimate NEW records in the cleared tables (a new invoice and item): reported as NOTE, preserved, rows and hashes identical after all steps | 0 failures | PostgreSQL 17.11 |
+| Final Mac script (`mac-run.sh`) end to end against a Railway CLI stub and signature-verifying S3 stand-in: fixed RETURN filename, work folder **and downloaded backup kept**, nothing deleted automatically | worked | Linux, **not macOS** |
+| `cleanup-rehearsal.sh`: refuses `/`, the temp directory, a checkout, a sub-folder, a running scratch server; cancels unless `yes`; deletes exactly the work folder and the checkout | worked | Linux |
+| `postgrest-record.sh` with simulated running versions: 16.4 -> record file with the exact rollback reference, exit 0; 16.3 -> STOP, exit 3; unreadable -> exit 1 | worked (Docker Hub lookup live) | the `railway ssh` call that reads the real version is **untested** |
 | Mac-procedure logic: newest-object selection, path/virtual addressing fallback, SigV4 downloads, credential-free output, cleanup, local-only guard | worked end to end with a stub Railway CLI and a signature-verifying S3 stand-in | Linux, **not macOS, not the real CLI or bucket** |
 | Guards: a backup that contains accounting rows is flagged FAIL; a non-local scratch server is refused | both behaved as designed | synthetic archives |
 | Catalogue repository against the real v2 function with 1,100+ products | 67 of 67 | PostgreSQL 16 |
@@ -62,7 +67,7 @@ On commit `b4020c8`: typecheck, build, tests, crm-contract, listen-port, overlay
 |---|---|
 | Restore of the real production backup file | no access from the sandbox; procedure in `MAC_RESTORE_REHEARSAL.md` |
 | Real Railway bucket, real `railway run` behaviour, macOS execution of the scripts | not reachable from here |
-| Version/digest actually running in production PostgREST | Railway does not expose it; inferred v16.4 (`POSTGREST_PIN.md`) |
+| Version/digest actually running in production PostgREST | version is read by `postgrest-record.sh` before any change (not yet run); the digest cannot be read from PostgREST, only taken from Docker Hub for that version; until then inferred v16.4 (`POSTGREST_PIN.md`) |
 | Whether Railway accepts an `image:tag@sha256:...` reference | unknown |
 | M1-M4 on the real production schema; preflights on production | not run (read access needed) |
 | Logout inside the Android WebView on a physical device; any physical-device test | no device |

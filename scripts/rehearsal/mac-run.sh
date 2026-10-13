@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One command, on YOUR computer (macOS or Linux): download the newest production backup (read-only), restore it into a THROW-AWAY local PostgreSQL 17
-# server that listens on a private unix socket only, run the migration rehearsal on that copy, write a short RETURN file, then delete everything.
+# server that listens on a private unix socket only, run the migration rehearsal on that copy and write a short RETURN file. NOTHING is deleted
+# automatically: the downloaded backup and the restored copy stay in the work folder until you have reviewed the result and run cleanup-rehearsal.sh.
 #
 #   bash scripts/rehearsal/mac-run.sh                    # downloads through the Railway CLI (you must be logged in: `railway login`)
 #   bash scripts/rehearsal/mac-run.sh --tarball FILE     # use a backup file you already downloaded (dashboard)
@@ -21,16 +22,22 @@ while [ $# -gt 0 ]; do case "$1" in --tarball) TARBALL="$2"; shift 2;; -h|--help
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 WORK="$(mktemp -d /private/tmp/sunchaser-rehearsal.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/sunchaser-rehearsal.XXXXXX")" || { echo "cannot create a work directory"; exit 1; }
 chmod 700 "$WORK"
-RETURN_FILE="${RETURN_FILE:-$HOME/sunchaser-rehearsal-RETURN-$STAMP.txt}"
+RETURN_FILE="${RETURN_FILE:-$HOME/sunchaser-rehearsal-RETURN.txt}"   # fixed name; an older file is moved to ...RETURN.previous.txt
 STARTED_PG=0
 say() { printf '\n== %s\n' "$*"; }
 cleanup() {
   local rc=$?
-  say "cleanup"
-  if [ "$STARTED_PG" = 1 ] && [ -n "${PGBIN:-}" ]; then "$PGBIN/pg_ctl" -D "$WORK/pgdata" -m immediate stop >/dev/null 2>&1 && echo "scratch PostgreSQL stopped"; fi
-  if [ "${KEEP_WORK:-0}" = 1 ]; then echo "KEEP_WORK=1: leaving $WORK (it contains customer data - delete it yourself: rm -rf '$WORK')"
-  else rm -rf "$WORK" && echo "deleted $WORK (downloaded backup, restored copy, logs)"; fi
-  [ -f "$RETURN_FILE" ] && echo "kept only: $RETURN_FILE (counts and PASS/FAIL lines, no customer values)"
+  say "stop (nothing is deleted automatically)"
+  if [ "$STARTED_PG" = 1 ] && [ -n "${PGBIN:-}" ]; then "$PGBIN/pg_ctl" -D "$WORK/pgdata" -m fast stop >/dev/null 2>&1 && echo "scratch PostgreSQL stopped (its data stays in the work folder)"; fi
+  echo "work folder (holds the downloaded backup and the restored copy = customer data):"
+  echo "    $WORK"
+  [ -f "$RETURN_FILE" ] && echo "RETURN file (counts and PASS/FAIL lines only):  $RETURN_FILE"
+  echo "After the result has been reviewed, remove everything with:"
+  echo "    bash '$REPO/scripts/rehearsal/cleanup-rehearsal.sh' '$WORK' '$REPO'"
+  if [ -d "$WORK/pgdata" ] && [ -n "${PGBIN:-}" ]; then
+    echo "To look at the restored copy again before that:"
+    echo "    '$PGBIN/pg_ctl' -D '$WORK/pgdata' -o \"-p $PORT -k $WORK/sock -c listen_addresses=''\" -l '$WORK/pg.log' -w start && '$PGBIN/psql' -h '$WORK/sock' -p $PORT -U postgres -d restore_rehearsal"
+  fi
   exit $rc
 }
 trap cleanup EXIT INT TERM
@@ -45,6 +52,7 @@ major() { "$1" --version | sed -E 's/^[^0-9]*([0-9]+).*/\1/'; }
 [ "$(major psql)" = 17 ] && [ "$(major pg_restore)" = 17 ] || { echo "psql/pg_restore must be version 17 (found $(psql --version), $(pg_restore --version))"; exit 1; }
 echo "tools: $(psql --version | head -1) | $(pg_restore --version | head -1) | $(curl --version | head -1 | cut -d' ' -f1-2)"
 COMMIT="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"; echo "repository commit: $COMMIT"
+if [ -n "${EXPECTED_COMMIT:-}" ] && [ "$COMMIT" != "$EXPECTED_COMMIT" ]; then echo "STOP: this checkout is $COMMIT but the tested commit is $EXPECTED_COMMIT. Nothing was downloaded."; exit 1; fi
 [ -z "$(git -C "$REPO" status --porcelain 2>/dev/null)" ] || echo "WARNING: the working tree has local changes; the rehearsal is only comparable if the commit is clean"
 
 say "1. get the newest production backup (read-only)"
@@ -67,7 +75,7 @@ if [ "${SCRATCH_SERVER:-own}" = external ]; then
   : "${RESTORE_PGHOST:?}" "${RESTORE_PGPORT:?}" "${RESTORE_PGUSER:?}"
 else
   initdb -D "$WORK/pgdata" -U postgres --auth=trust -E UTF8 --locale=C >/dev/null || { echo "initdb failed"; exit 1; }
-  pg_ctl -D "$WORK/pgdata" -o "-p $PORT -k $WORK/sock -c listen_addresses=''" -l "$WORK/pg.log" -w start >/dev/null || { echo "could not start the scratch server (see $WORK/pg.log)"; KEEP_WORK=1; exit 1; }
+  pg_ctl -D "$WORK/pgdata" -o "-p $PORT -k $WORK/sock -c listen_addresses=''" -l "$WORK/pg.log" -w start >/dev/null || { echo "could not start the scratch server (see $WORK/pg.log)"; exit 1; }
   STARTED_PG=1
   export RESTORE_PGHOST="$WORK/sock" RESTORE_PGPORT="$PORT" RESTORE_PGUSER=postgres
 fi
@@ -79,6 +87,7 @@ bash "$REPO/scripts/rehearsal/run-rehearsal.sh" 2>&1 | tee "$WORK/rehearsal.out"
 FAILS="$(grep -c '^FAIL' "$WORK/rehearsal.out" || true)"; PASSES="$(grep -c '^PASS' "$WORK/rehearsal.out" || true)"
 
 say "4. RETURN file"
+[ -f "$RETURN_FILE" ] && mv -f "$RETURN_FILE" "${RETURN_FILE%.txt}.previous.txt"
 {
   echo "=== SUNCHASER RESTORE REHEARSAL - RETURN BLOCK (contains no customer values) ==="
   echo "run (UTC):        $STAMP"
@@ -98,11 +107,14 @@ say "4. RETURN file"
   echo "--- crm_recovery tables (name, row count) ---"
   [ -f "$WORK/rehearsal/crm-recovery-counts.tsv" ] && cat "$WORK/rehearsal/crm-recovery-counts.tsv"
   echo
+  echo "--- cleared accounting tables: base name, recovered rows, public rows now, recovered rows back in public ---"
+  [ -f "$WORK/rehearsal/six-tables.tsv" ] && cat "$WORK/rehearsal/six-tables.tsv"
+  echo
   echo "--- all schemas / table count in the restored copy ---"
   grep -E '^(restored:|restored copy:)' "$WORK/rehearsal.out"
   echo "=== END ==="
 } > "$RETURN_FILE"
 chmod 600 "$RETURN_FILE"
 echo "written: $RETURN_FILE   ($PASSES PASS, $FAILS FAIL)"
-echo "to copy it to the clipboard on a Mac:  pbcopy < '$RETURN_FILE'"
+echo "copy it to the clipboard (Mac):  pbcopy < '$RETURN_FILE'"
 [ "$FAILS" = 0 ]

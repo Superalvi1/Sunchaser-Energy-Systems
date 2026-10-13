@@ -72,8 +72,35 @@ TGT psql -X -qAt -d "$DB" -c "$CRQ" > "$REHEARSAL_DIR/crm-recovery-counts.tsv" 2
 CRN="$(wc -l < "$REHEARSAL_DIR/crm-recovery-counts.tsv" | tr -d ' ')"
 check "schema crm_recovery is present in the backup and was restored (the recovery copies are preserved)" "$([ "${CRN:-0}" -gt 0 ] && echo ok || echo bad)" "$CRN table(s)"
 sed 's/^/    /' "$REHEARSAL_DIR/crm-recovery-counts.tsv"
-ACC="$(TGT psql -X -qAt -d "$DB" -F ' ' -c "select 'invoices='||(select count(*) from public.invoices)||' invoice_items='||(select count(*) from public.invoice_items)||' invoice_payments='||(select count(*) from public.invoice_payments)")"
-check "accounting tables in the backup are empty, as after the 9 Oct reset (nothing from crm_recovery is back in public)" "$([ "$ACC" = "invoices=0 invoice_items=0 invoice_payments=0" ] && echo ok || echo bad)" "$ACC  (if this is FAIL the backup predates the reset or records were restored: return the block unchanged)"
+# The six accounting tables cleared on 9 Oct 2026 (invoices, invoice_items, invoice_payments, payments, quotations, party_ledger_archives) and their recovery copies.
+# For each recovery table accounts_reset_20261009_<t>: how many rows it holds, how many rows public.<t> holds NOW, and how many of those are identical
+# to (or share the id of) a recovered row. Rows in public.<t> that are NOT in the recovery copy are legitimate NEW records: they are preserved and are
+# compared (rows + hash) through every migration step below. A recovered record that is back in public is a FAIL.
+cat > "$REHEARSAL_DIR/six.sql" <<'SQL'
+with rec as (
+  select c.relname as rec_name, substr(c.relname, length('accounts_reset_20261009_') + 1) as base
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'crm_recovery' and c.relkind = 'r' and c.relname like 'accounts\_reset\_20261009\_%' escape '\'
+)
+select base,
+  (xpath('/row/c/text()', query_to_xml(format('select count(*) c from crm_recovery.%I', rec_name), false, true, '')))[1]::text::int as recovered_rows,
+  case when to_regclass('public.' || quote_ident(base)) is null then -1
+       else (xpath('/row/c/text()', query_to_xml(format('select count(*) c from public.%I', base), false, true, '')))[1]::text::int end as public_rows_now,
+  case when to_regclass('public.' || quote_ident(base)) is null then -1
+       else (xpath('/row/c/text()', query_to_xml(format('select count(*) c from public.%I a where exists (select 1 from crm_recovery.%I b where to_jsonb(b) = to_jsonb(a) or (to_jsonb(a) ? ''id'' and to_jsonb(a)->>''id'' = to_jsonb(b)->>''id''))', base, rec_name), false, true, '')))[1]::text::int end as back_in_public
+from rec order by base
+SQL
+TGT psql -X -qAt -F "$TAB" -d "$DB" -f "$REHEARSAL_DIR/six.sql" > "$REHEARSAL_DIR/six-tables.tsv" 2>"$REHEARSAL_DIR/logs/six.err"
+cut -f1 "$REHEARSAL_DIR/six-tables.tsv" > "$REHEARSAL_DIR/six-tables.txt"
+GOT="$(awk -F'\t' '$2 > 0 {print $2}' "$REHEARSAL_DIR/six-tables.tsv" | sort -n | tr '\n' ',' | sed 's/,$//')"
+WANT="${EXPECTED_RECOVERY_COUNTS:-1,2,2,3,13,27}"
+check "crm_recovery holds six non-empty accounts_reset_20261009_* tables with the row counts you reported (1 ledger archive, 2 invoices, 2 invoice payments, 3 other payments, 13 invoice items, 27 quotations)" "$([ "$GOT" = "$WANT" ] && echo ok || echo bad)" "found counts: ${GOT:-none}; expected: $WANT"
+while IFS="$TAB" read -r base recovered nowrows back; do
+  [ -n "$base" ] || continue
+  if [ "$nowrows" = "-1" ]; then check "cleared table public.$base exists" bad "the table is missing from the backup (name changed?)"; continue; fi
+  check "public.$base: no recovered record is back (recovery copy $recovered row(s); public now $nowrows row(s); identical to a recovered row: $back)" "$([ "$back" = 0 ] && echo ok || echo bad)"
+  if [ "$nowrows" -gt "$back" ]; then echo "NOTE: public.$base holds $((nowrows - back)) record(s) that are NOT in the recovery copy: treated as legitimate new records, preserved, and verified unchanged below"; fi
+done < "$REHEARSAL_DIR/six-tables.tsv"
 CRREF="$(grep -l 'crm_recovery' "$REPO"/scripts/smart-quote-versions-*.sql "$REPO"/scripts/session-revocation-*.sql "$REPO"/scripts/invoice-payments-integrity*.sql "$REPO"/scripts/invoice-save-atomic*.sql 2>/dev/null | wc -l | tr -d ' ')"
 check "none of the migration or rollback scripts mentions crm_recovery (they cannot read or restore those records)" "$([ "$CRREF" = 0 ] && echo ok || echo bad)" "$CRREF file(s)"
 else
@@ -180,6 +207,10 @@ manifest > "$REHEARSAL_DIR/m3-final.tsv"; A3="$(aclmd5)"
 d="$(diff <(grep -v '^table' "$REHEARSAL_DIR/m1-migrated.tsv" | grep -v relation_acls) <(grep -v '^table' "$REHEARSAL_DIR/m3-final.tsv" | grep -v relation_acls) | wc -l)"
 check "final state equals the first forward run (definitions exactly, ACLs normalised)" "$([ "$d" = 0 ] && [ -n "$A1" ] && [ "$A1" = "$A3" ] && echo ok || echo bad)" "$d differing definition lines; ACL md5 $A1 vs $A3"
 diff <(grep -E '^table.crm_recovery' "$REHEARSAL_DIR/m0-restored.tsv") <(grep -E '^table.crm_recovery' "$REHEARSAL_DIR/m3-final.tsv") > "$REHEARSAL_DIR/crm-recovery.diff"
+if [ -s "$REHEARSAL_DIR/six-tables.txt" ]; then
+  diff <(awk -F'\t' 'NR==FNR{want["public."$1]=1; next} $1=="table" && ($2 in want)' "$REHEARSAL_DIR/six-tables.txt" "$REHEARSAL_DIR/m0-restored.tsv") <(awk -F'\t' 'NR==FNR{want["public."$1]=1; next} $1=="table" && ($2 in want)' "$REHEARSAL_DIR/six-tables.txt" "$REHEARSAL_DIR/m3-final.tsv") > "$REHEARSAL_DIR/six-unchanged.diff"
+  check "the cleared accounting tables, including any records created since the reset, are identical (rows and hashes) after all migrations, rollbacks and re-applies" "$([ ! -s "$REHEARSAL_DIR/six-unchanged.diff" ] && echo ok || echo bad)" "$(wc -l < "$REHEARSAL_DIR/six-tables.txt" | tr -d ' ') table(s) compared"
+fi
 CRBASE="$(grep -cE '^table.crm_recovery' "$REHEARSAL_DIR/m0-restored.tsv" | tr -d ' ')"
 if [ "${CRBASE:-0}" -gt 0 ]; then check "crm_recovery tables (rows and hashes) are identical after all migrations, rollbacks and re-applies" "$([ ! -s "$REHEARSAL_DIR/crm-recovery.diff" ] && echo ok || echo bad)" "$CRBASE table(s) compared"; fi
 

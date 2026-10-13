@@ -71,7 +71,7 @@ a physical Android device; the Play Console key roles; the credentials' current 
 
 ### Step 0. Decisions only the owner can make
 1. Merge order. **Recommended:** PR #112 (reset-link fix, no migration) first; PR #111 already contains its commit, so there is no conflict afterwards.
-2. Pin the PostgREST image (`POSTGREST_PIN.md`: `postgrest/postgrest:v16.4`, digest recorded there; production almost certainly runs it already and the journeys pass on it). Needs a Railway change: G3-class, do it before M1 and not in the same window as any migration.
+2. Pin the PostgREST image (`POSTGREST_PIN.md`: `postgrest/postgrest:v16.4`, digest recorded there; production almost certainly runs it already and the journeys pass on it). **First record what runs now** (`scripts/rehearsal/postgrest-record.sh`); rollback is only to that recorded exact image, never `latest`. Needs a Railway change: G3-class, do it before M1 and not in the same window as any migration.
 3. Backup storage: separate bucket + credentials + encryption (adopt `pg-backup.sh` next to the existing job), or accept the current job as is.
 4. Replicas: stay at 1 until M3 is live.
 5. Confirm which Railway services are production (the project and several service names say "staging" / "smoke").
