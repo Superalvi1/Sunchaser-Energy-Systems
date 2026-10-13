@@ -381,6 +381,7 @@ import {
 } from "./server/storage/railwayObjectStorage.ts";
 import { assertRailwayPrivateSmokeEnvironment } from "./server/runtime/railwayPrivateSmoke.ts";
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
+import { createOwnershipMiddleware, type OwnedTable } from "./server/saas/ownershipGuard.ts";
 import { createCorsMiddleware } from "./server/middleware/cors.ts";
 import { createLearningRouter } from "./server/learning/learningRoutes.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
@@ -721,7 +722,14 @@ app.use(
 }
 
 const companyStore = createPostgrestCompanyStore();
-app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, companyStore }));
+// Second, independent company check for object routes: reads the record's company with the service role (not the tenant role), so it still
+// holds if a row-level policy were ever wrong.
+const ownershipGuard = createOwnershipMiddleware(async (table: OwnedTable, id: string) => {
+  const { data, error } = await getSystemSupabase()!.from(table).select("company_id").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return (data as { company_id?: string } | null)?.company_id ?? null;
+});
+app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, companyStore, ownershipGuard }));
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
 // The sales agent is a founding-company feature until WhatsApp is scoped per company.
 if (!railwayPrivateSmokeMode) setInterval(()=>{void runAsFoundingCompany(() => salesAgentRuntime.drain());},5000).unref();

@@ -22,6 +22,8 @@ export type AuthorizationMiddlewareDeps = {
   resolveLocalDb: () => Database;
   /** Required when MULTI_COMPANY_ENABLED=true. */
   companyStore?: CompanyStore;
+  /** Second, independent company check for object routes (see server/saas/ownershipGuard.ts). Runs after the company is resolved. */
+  ownershipGuard?: (req: Request, res: Response, next: NextFunction, companyId: string) => Promise<void>;
 };
 
 function sendAuthFailure(
@@ -118,9 +120,10 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
       }
       // Permissions follow the role the user holds in THIS company, not a global role.
       req.actor = { ...req.actor, role: resolution.role, companyId: resolution.companyId };
+      const companyId = resolution.companyId;
       runWithCompany(
-        { companyId: resolution.companyId, userId: req.actor.id, role: resolution.role, membershipId: resolution.membershipId },
-        () => next()
+        { companyId, userId: req.actor.id, role: resolution.role, membershipId: resolution.membershipId },
+        () => (deps.ownershipGuard ? void deps.ownershipGuard(req, res, next, companyId) : next())
       );
       return;
     }

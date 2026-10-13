@@ -1,0 +1,68 @@
+   MODE: row-level policies OPEN on leads, customers, customer_documents, quotations, invoices, invoice_items, invoice_payments - only the application's ownership guard is active
+PASS: both companies sign in bound to their own company
+PASS: ALPHADA5D45: lead created
+PASS: ALPHADA5D45: quotation created
+PASS: ALPHADA5D45: contracting the lead created an invoice
+PASS: ALPHADA5D45: invoice is stored under co_alpha
+PASS: ALPHADA5D45: the atomic edit replaced the lines (2 lines, total 125000)
+PASS: ALPHADA5D45: every line belongs to co_alpha
+PASS: ALPHADA5D45: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: ALPHADA5D45: over-payment refused
+PASS: ALPHADA5D45: final payment accepted and the invoice is Paid with balance 0
+PASS: ALPHADA5D45: all payments carry co_alpha
+PASS: ALPHADA5D45: invoice document produced and contains its own lines and customer
+PASS: ALPHADA5D45: quotation document produced and contains its own customer
+PASS: ALPHADA5D45: document uploaded, stored under co_alpha
+PASS: BETADA5D45: lead created
+PASS: BETADA5D45: quotation created
+PASS: BETADA5D45: contracting the lead created an invoice
+PASS: BETADA5D45: invoice is stored under co_beta
+PASS: BETADA5D45: the atomic edit replaced the lines (2 lines, total 68000)
+PASS: BETADA5D45: every line belongs to co_beta
+PASS: BETADA5D45: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: BETADA5D45: over-payment refused
+PASS: BETADA5D45: final payment accepted and the invoice is Paid with balance 0
+PASS: BETADA5D45: all payments carry co_beta
+PASS: BETADA5D45: invoice document produced and contains its own lines and customer
+PASS: BETADA5D45: quotation document produced and contains its own customer
+PASS: BETADA5D45: document uploaded, stored under co_beta
+   invoice numbers: alpha INV-2026-0001, beta INV-2026-0001
+PASS: each company's first invoice is INV-<year>-0001: two independent sequences (run on a clean stack: seed --cleanup first)
+PASS: both companies hold the same invoice number without a conflict
+PASS: each company's counter stands at 1
+PASS: the founding company's invoice counter is untouched by the pilot companies' invoices (stays at 165)
+PASS: ALPHADA5D45->BETADA5D45: cannot read the invoice
+PASS: ALPHADA5D45->BETADA5D45: cannot get the invoice PDF
+PASS: ALPHADA5D45->BETADA5D45: cannot get the quotation PDF
+PASS: ALPHADA5D45->BETADA5D45: cannot edit the invoice
+PASS: ALPHADA5D45->BETADA5D45: cannot pay the invoice
+PASS: ALPHADA5D45->BETADA5D45: cannot delete the invoice
+PASS: ALPHADA5D45->BETADA5D45: cannot list the customer's documents
+PASS: ALPHADA5D45->BETADA5D45: cannot upload onto the customer
+PASS: ALPHADA5D45->BETADA5D45: cannot change the lead
+PASS: ALPHADA5D45->BETADA5D45: cannot read the quotation versions
+PASS: BETADA5D45->ALPHADA5D45: cannot read the invoice
+PASS: BETADA5D45->ALPHADA5D45: cannot get the invoice PDF
+PASS: BETADA5D45->ALPHADA5D45: cannot get the quotation PDF
+PASS: BETADA5D45->ALPHADA5D45: cannot edit the invoice
+PASS: BETADA5D45->ALPHADA5D45: cannot pay the invoice
+PASS: BETADA5D45->ALPHADA5D45: cannot delete the invoice
+PASS: BETADA5D45->ALPHADA5D45: cannot list the customer's documents
+PASS: BETADA5D45->ALPHADA5D45: cannot upload onto the customer
+PASS: BETADA5D45->ALPHADA5D45: cannot change the lead
+PASS: BETADA5D45->ALPHADA5D45: cannot read the quotation versions
+PASS: the victims' invoices, lines, payments, documents and leads are byte-for-byte unchanged by all of those attacks
+PASS: ALPHADA5D45: its own stored file downloads through its signed link and is the file it uploaded
+PASS: ALPHADA5D45: the object key does not contain the other company's ids
+PASS: BETADA5D45: its own stored file downloads through its signed link and is the file it uploaded
+PASS: BETADA5D45: the object key does not contain the other company's ids
+PASS: alpha cannot fetch beta's file with alpha's signature (the signature belongs to one object)
+PASS: beta cannot fetch alpha's file with beta's signature
+PASS: a guessed signature is refused
+PASS: a file link without a signature is refused
+PASS: alpha's signature cannot be re-used for beta's key (key swapped in the URL)
+PASS: no invoice line, payment or document belongs to a different company than its parent
+PASS: each company's ledger equals its invoice header
+   KNOWN GAPS shown by this run (not hidden): both printable documents still carry the Sunchaser brand header, bank details and terms (settings are still one row per database); file links are non-expiring bearer links.
+
+63 passed, 0 failed

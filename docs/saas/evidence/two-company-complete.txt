@@ -1,60 +1,60 @@
 PASS: both companies sign in bound to their own company
-PASS: ALPHAEFAFA3: lead created
-PASS: ALPHAEFAFA3: quotation created
-PASS: ALPHAEFAFA3: contracting the lead created an invoice
-PASS: ALPHAEFAFA3: invoice is stored under co_alpha
-PASS: ALPHAEFAFA3: the atomic edit replaced the lines (2 lines, total 125000)
-PASS: ALPHAEFAFA3: every line belongs to co_alpha
-PASS: ALPHAEFAFA3: the partial payment, and its replay with the same request id, recorded ONE payment
-PASS: ALPHAEFAFA3: over-payment refused
-PASS: ALPHAEFAFA3: final payment accepted and the invoice is Paid with balance 0
-PASS: ALPHAEFAFA3: all payments carry co_alpha
-PASS: ALPHAEFAFA3: invoice document produced and contains its own lines and customer
-PASS: ALPHAEFAFA3: quotation document produced and contains its own customer
-PASS: ALPHAEFAFA3: document uploaded, stored under co_alpha
-PASS: BETAEFAFA3: lead created
-PASS: BETAEFAFA3: quotation created
-PASS: BETAEFAFA3: contracting the lead created an invoice
-PASS: BETAEFAFA3: invoice is stored under co_beta
-PASS: BETAEFAFA3: the atomic edit replaced the lines (2 lines, total 68000)
-PASS: BETAEFAFA3: every line belongs to co_beta
-PASS: BETAEFAFA3: the partial payment, and its replay with the same request id, recorded ONE payment
-PASS: BETAEFAFA3: over-payment refused
-PASS: BETAEFAFA3: final payment accepted and the invoice is Paid with balance 0
-PASS: BETAEFAFA3: all payments carry co_beta
-PASS: BETAEFAFA3: invoice document produced and contains its own lines and customer
-PASS: BETAEFAFA3: quotation document produced and contains its own customer
-PASS: BETAEFAFA3: document uploaded, stored under co_beta
+PASS: ALPHAB4E784: lead created
+PASS: ALPHAB4E784: quotation created
+PASS: ALPHAB4E784: contracting the lead created an invoice
+PASS: ALPHAB4E784: invoice is stored under co_alpha
+PASS: ALPHAB4E784: the atomic edit replaced the lines (2 lines, total 125000)
+PASS: ALPHAB4E784: every line belongs to co_alpha
+PASS: ALPHAB4E784: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: ALPHAB4E784: over-payment refused
+PASS: ALPHAB4E784: final payment accepted and the invoice is Paid with balance 0
+PASS: ALPHAB4E784: all payments carry co_alpha
+PASS: ALPHAB4E784: invoice document produced and contains its own lines and customer
+PASS: ALPHAB4E784: quotation document produced and contains its own customer
+PASS: ALPHAB4E784: document uploaded, stored under co_alpha
+PASS: BETAB4E784: lead created
+PASS: BETAB4E784: quotation created
+PASS: BETAB4E784: contracting the lead created an invoice
+PASS: BETAB4E784: invoice is stored under co_beta
+PASS: BETAB4E784: the atomic edit replaced the lines (2 lines, total 68000)
+PASS: BETAB4E784: every line belongs to co_beta
+PASS: BETAB4E784: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: BETAB4E784: over-payment refused
+PASS: BETAB4E784: final payment accepted and the invoice is Paid with balance 0
+PASS: BETAB4E784: all payments carry co_beta
+PASS: BETAB4E784: invoice document produced and contains its own lines and customer
+PASS: BETAB4E784: quotation document produced and contains its own customer
+PASS: BETAB4E784: document uploaded, stored under co_beta
    invoice numbers: alpha INV-2026-0001, beta INV-2026-0001
 PASS: each company's first invoice is INV-<year>-0001: two independent sequences (run on a clean stack: seed --cleanup first)
 PASS: both companies hold the same invoice number without a conflict
 PASS: each company's counter stands at 1
 PASS: the founding company's invoice counter is untouched by the pilot companies' invoices (stays at 165)
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot read the invoice
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot get the invoice PDF
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot get the quotation PDF
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot edit the invoice
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot pay the invoice
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot delete the invoice
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot list the customer's documents
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot upload onto the customer
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot change the lead
-PASS: ALPHAEFAFA3->BETAEFAFA3: cannot read the quotation versions
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot read the invoice
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot get the invoice PDF
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot get the quotation PDF
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot edit the invoice
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot pay the invoice
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot delete the invoice
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot list the customer's documents
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot upload onto the customer
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot change the lead
-PASS: BETAEFAFA3->ALPHAEFAFA3: cannot read the quotation versions
+PASS: ALPHAB4E784->BETAB4E784: cannot read the invoice
+PASS: ALPHAB4E784->BETAB4E784: cannot get the invoice PDF
+PASS: ALPHAB4E784->BETAB4E784: cannot get the quotation PDF
+PASS: ALPHAB4E784->BETAB4E784: cannot edit the invoice
+PASS: ALPHAB4E784->BETAB4E784: cannot pay the invoice
+PASS: ALPHAB4E784->BETAB4E784: cannot delete the invoice
+PASS: ALPHAB4E784->BETAB4E784: cannot list the customer's documents
+PASS: ALPHAB4E784->BETAB4E784: cannot upload onto the customer
+PASS: ALPHAB4E784->BETAB4E784: cannot change the lead
+PASS: ALPHAB4E784->BETAB4E784: cannot read the quotation versions
+PASS: BETAB4E784->ALPHAB4E784: cannot read the invoice
+PASS: BETAB4E784->ALPHAB4E784: cannot get the invoice PDF
+PASS: BETAB4E784->ALPHAB4E784: cannot get the quotation PDF
+PASS: BETAB4E784->ALPHAB4E784: cannot edit the invoice
+PASS: BETAB4E784->ALPHAB4E784: cannot pay the invoice
+PASS: BETAB4E784->ALPHAB4E784: cannot delete the invoice
+PASS: BETAB4E784->ALPHAB4E784: cannot list the customer's documents
+PASS: BETAB4E784->ALPHAB4E784: cannot upload onto the customer
+PASS: BETAB4E784->ALPHAB4E784: cannot change the lead
+PASS: BETAB4E784->ALPHAB4E784: cannot read the quotation versions
 PASS: the victims' invoices, lines, payments, documents and leads are byte-for-byte unchanged by all of those attacks
-PASS: ALPHAEFAFA3: its own stored file downloads through its signed link and is the file it uploaded
-PASS: ALPHAEFAFA3: the object key does not contain the other company's ids
-PASS: BETAEFAFA3: its own stored file downloads through its signed link and is the file it uploaded
-PASS: BETAEFAFA3: the object key does not contain the other company's ids
+PASS: ALPHAB4E784: its own stored file downloads through its signed link and is the file it uploaded
+PASS: ALPHAB4E784: the object key does not contain the other company's ids
+PASS: BETAB4E784: its own stored file downloads through its signed link and is the file it uploaded
+PASS: BETAB4E784: the object key does not contain the other company's ids
 PASS: alpha cannot fetch beta's file with alpha's signature (the signature belongs to one object)
 PASS: beta cannot fetch alpha's file with beta's signature
 PASS: a guessed signature is refused

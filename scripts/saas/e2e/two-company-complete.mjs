@@ -18,6 +18,16 @@ const json = async (r) => { try { return await r.json(); } catch { return {}; } 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FOUNDING_COUNTER = () => psql(`select coalesce((select last_value from document_counters where company_id='sunchaser' and kind='invoice' and period='${new Date().getFullYear()}'), -1)`);
 const FOUNDING_BEFORE = FOUNDING_COUNTER();
+// OPEN_POLICIES=1: the row-level policies of the core tables are opened (using true) for the whole run, so ONLY the application's own company
+// checks (server/saas/ownershipGuard.ts) stand between a company and another company's objects. Lists have no such check and are not swept.
+const OPEN = process.env.OPEN_POLICIES === "1";
+const OPEN_TABLES = ["leads", "customers", "customer_documents", "quotations", "invoices", "invoice_items", "invoice_payments"];
+const policySql = (open) => OPEN_TABLES.map((t) => `alter policy tenant_isolation on public.${t} using (${open ? "true" : "company_id = (select app.request_company_id())"}) with check (${open ? "true" : "company_id = (select app.request_company_id())"})`).join("; ");
+if (OPEN) {
+  psql(policySql(true));
+  process.on("exit", () => { try { psql(policySql(false)); } catch {} });
+  console.log("   MODE: row-level policies OPEN on " + OPEN_TABLES.join(", ") + " - only the application's ownership guard is active");
+}
 const RUN = randomBytes(3).toString("hex").toUpperCase();
 const YEAR = new Date().getFullYear();
 
@@ -182,6 +192,7 @@ check("a file link without a signature is refused", (await fetch(`${BASE}/api/st
 const swapKey = async (victim, attacker) => fetch(`${BASE}/api/storage/object/${attacker.link.ns}/${victim.link.key}?sig=${attacker.link.sig}`);
 check("alpha's signature cannot be re-used for beta's key (key swapped in the URL)", (await swapKey(CO.beta, CO.alpha)).status === 403);
 
+if (!OPEN) {
 // ---------------------------------------------------------------- 4. canary sweep: everything each company can read, for the other's canaries
 const LISTS = ["/api/state", "/api/admin/invoices", "/api/admin/invoices/contracted-ready", "/api/admin/finance/summary", "/api/admin/finance/projects", "/api/admin/finance/dashboard", "/api/leads/deleted", "/api/export/leads", "/api/export/invoices", "/api/export/customers", "/api/export/invoice_items", "/api/export/invoice_payments", "/api/export/customer_documents", "/api/export/quotations", "/api/export/activity_logs"];
 const swept = {};
@@ -202,6 +213,8 @@ check(`canary sweep: nothing of beta's (names, items, file text, ids, file links
 check(`canary sweep: nothing of alpha's appears in anything beta received (${received.beta.length} responses and documents)`, lB.length === 0, lB.join(", "));
 check("the sweep really covered list, export and state endpoints for both companies", swept[CO.alpha.tag].length >= 3 && swept[CO.beta.tag].length >= 3, JSON.stringify(swept));
 check("sanity: each company's own canary IS visible to itself (the sweep can detect canaries)", received.alpha.some((t) => String(t).includes(CO.alpha.extra)) && received.beta.some((t) => String(t).includes(CO.beta.extra)));
+
+}
 
 // ---------------------------------------------------------------- 5. database-level integrity
 check("no invoice line, payment or document belongs to a different company than its parent", [
