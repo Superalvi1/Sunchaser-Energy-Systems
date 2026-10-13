@@ -1,5 +1,7 @@
 # SaaS pilot foundation: what is built, what was proven, what is not
 
+> Round 2 (branding/prices/terms, PDFs, export/restore, limits, onboarding, UI, rehearsal) is in `PILOT_ROUND2_REPORT.md`; where the two differ, round 2 is newer.
+
 Branch `claude/saas-pilot-multi-company`, stacked on the repair release (PR #111, `81327ff`). **Nothing here has been applied to production or to any real data.** Pricing, hosting acceptance and legal terms are undecided. Not pilot-ready (section 5).
 
 Decisions taken as the working defaults: shared database with company isolation; company export/restore; core solar CRM; operator-led onboarding; manual subscriptions; one shared Android app. Deferred: WhatsApp, AI, learning, marketplace (they are invisible to other companies: routes refused, tables closed to the tenant role).
@@ -31,7 +33,7 @@ Decisions taken as the working defaults: shared database with company isolation;
 
 * Company id `sunchaser`, existing rows labelled by a constant column default (no row rewritten), `MULTI_COMPANY_ENABLED` off by default.
 * **Numbering never restarts at 0001.** `phase2c` refuses to run when the founding company has no invoice number this year and no floor was set by the owner: `insert into app.config (key, value) values ('document_floor.sunchaser.invoice.<year>', '<last number ever issued>')`. The migration never reads or touches the recovery schema. **The real floor is an owner decision** (the reported cleared invoices were INV-2026-0007 and 0008; the tests use a synthetic floor of 8). Counters survive rollback and re-apply (copy in `app_rollback_backup`).
-* With the tenant migrations applied and the flag off: flag-off smoke 13/13 (including "first invoice continues at 0009 after floor 8"), concurrent invoice edits 60 rounds x 2 instances 0 inconsistent, two-instance payments 30 rounds 0 overpaid.
+* With the tenant migrations applied and the flag off: flag-off smoke 12/12 (the "first invoice continues at 0009 after floor 8" check is in the numbering DB test), concurrent invoice edits 60 rounds x 2 instances 0 inconsistent, two-instance payments 30 rounds 0 overpaid.
 
 ## 3. Evidence (all executed here on a disposable PostgreSQL 17.11 + PostgREST 16.4 + local S3 stand-in, synthetic data; files in `docs/saas/evidence/`)
 
@@ -67,7 +69,7 @@ npm run test:saas                                                               
 | Production schema not read; `phase2-preflight.sql` not run; `bills` and `invoices.created_by_user_id` are production-only | the migrations are proven on a synthetic schema only | read-only preflight with owner access (gate G3) |
 | The Mac restore rehearsal of the real backup does not include the tenant migrations | tenant migrations never ran on a real backup copy | extend the rehearsal after the release rehearsal passes |
 | Settings, branding, bank accounts, terms, quote templates are one row per database | both companies' documents still show the Sunchaser brand, bank details and terms (shown by the journey) | commercial phase C4 |
-| Price catalogue is static code | every company quotes Sunchaser's prices | C4 |
+| AutoSizer default rates and `solarEquipmentCatalog.ts` are code constants (Sunchaser's); manual quotations use company rows | see PILOT_ROUND2_REPORT.md section 4.2 | C4 |
 | Other business unique keys (quote number, customer code, plan code) are still global; invoice numbers are fixed to `INV-<year>-nnnn` (prefix not yet a company setting) | possible collisions / probing outside invoices | C2/C4 |
 | Files: links are non-expiring bearer links (HMAC); storage keys not company-prefixed; no per-company export or restore yet | a leaked link stays valid; a company's files cannot be listed or exported by prefix | C3 |
 | Binary PDF rendering needs Chromium, not present on the test stack | the proof covers the server-rendered HTML documents (what the app prints), not the rendered PDF bytes | run once on a stack with the engine |
