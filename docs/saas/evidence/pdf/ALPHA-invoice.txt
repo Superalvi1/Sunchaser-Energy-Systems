@@ -1,64 +1,64 @@
-                                                                                                                                                 PREMIUM INVOICE V3
-                  Alpha Solar Works ADE761
-                  📞 021-1010101 · ✉ billing.ade761@alpha.test                                                                               INVOICE
-                  🌐 www.alpha-ade761.test
-                  📍 1 Alpha Road ADE761 Karachi
+                                                                                                                                                PREMIUM INVOICE V3
+                  Alpha Solar Works 4EC0D1
+                  📞 021-1010101 · ✉ billing.4ec0d1@alpha.test                                                                              INVOICE
+                  🌐 www.alpha-4ec0d1.test
+                  📍 1 Alpha Road 4EC0D1 Karachi
 
-  BILL TO                                                                                   INVOICE DETAILS
+  BILL TO                                                                                  INVOICE DETAILS
 
-  ALPHAADE761 PDF                                                                           Invoice No.                                                INV-2026-0001
-                                                                                            Date                                                          13/10/2026
-  Tel: 03159758962
-                                                                                            Time                                                           05:48 pm
-                                                                                            Due Date                                                                 —
-                                                                                            Status                                                         PARTIAL
+  ALPHA4EC0D1 PDF                                                                          Invoice No.                                                INV-2026-0001
+                                                                                           Date                                                          13/10/2026
+  Tel: 03152516490
+                                                                                           Time                                                            08:22 pm
+                                                                                           Due Date                                                                 —
+                                                                                           Status                                                         PARTIAL
 
 
 
   PROJECT INFORMATION
- Project Number                                                                      project-1791913737429
- System Size                                                                         5 kW
- System Type                                                                         Hybrid
- Panel Brand                                                                         Synthetic 500W
- Inverter Brand                                                                      Synthetic 5kW
- Battery Brand                                                                       None
- Structure Type                                                                      Standard
- Net Metering Status                                                                 Yes
+ Project Number                                                                     project-1791922918925
+ System Size                                                                        5 kW
+ System Type                                                                        Hybrid
+ Panel Brand                                                                        Synthetic 500W
+ Inverter Brand                                                                     Synthetic 5kW
+ Battery Brand                                                                      None
+ Structure Type                                                                     Standard
+ Net Metering Status                                                                Yes
 
 
   PAYMENT PROGRESS
-                 TOTAL AMOUNT                                RECEIVED                                  BALANCE DUE                            % PAID
-                 Rs 328,000                               Rs 82,000                                  Rs 246,000                               25%
+                 TOTAL AMOUNT                               RECEIVED                                  BALANCE DUE                            % PAID
+                 Rs 328,000                              Rs 82,000                                  Rs 246,000                               25%
 
-                                                                                                                                       25% of invoice amount received
+                                                                                                                                      25% of invoice amount received
 
 
 
          Payment QR
 
-                           Scan to Pay / Share Payment Details
-                           QR encodes invoice number, total, and balance. Use bank details on the last page for transfer.
+                          Scan to Pay / Share Payment Details
+                          QR encodes invoice number, total, and balance. Use bank details on the last page for transfer.
 
 
 
 
- #        Item                                                                                                               Qty             Rate             Amount
+ #        Item                                                                                                              Qty             Rate             Amount
 
-     1    ALPHAADE761-PANEL-PDF                                                                                                    8   Rs 41,000          Rs 328,000
-          ALPHAADE761 panel PDF
+     1    ALPHA4EC0D1-PANEL-PDF                                                                                                   8   Rs 41,000          Rs 328,000
+          ALPHA4EC0D1 panel PDF
 
-                                                                                                                             8                            Rs 328,000
+                                                                                                                            8                            Rs 328,000
 
-Amount in words: Three Lakh Twenty Eight Thousand Rupees only                                             Sub Total                                       Rs 328,000
+Amount in words: Three Lakh Twenty Eight Thousand Rupees only                                            Sub Total                                       Rs 328,000
 Terms & Conditions
-System booked in COD basis.                                                                               Total                                         Rs 328,000
-                                                                                                          Received                                         Rs 82,000
+System booked in COD basis.                                                                              Total                                         Rs 328,000
+                                                                                                         Received                                         Rs 82,000
 
-                                                                                                          Balance Due                                     Rs 246,000
+                                                                                                         Balance Due                                     Rs 246,000
 
-Authorized Signatory                                                                                      Previous Balance                                      Rs 0
-For Alpha Solar Works ADE761
-                                                                                                          Current Balance                                 Rs 246,000
+Authorized Signatory                                                                                     Previous Balance                                      Rs 0
+For Alpha Solar Works 4EC0D1
+                                                                                                         Current Balance                                 Rs 246,000
              Payment — Bank Accounts
              Transfer to an account below. Reference: INV-2026-0001
 
@@ -66,12 +66,12 @@ For Alpha Solar Works ADE761
 
 Company / Account Title                           Bank Name                                 Account Number           IBAN
 
-ALPHA SOLAR WORKS ADE761                          Alpha Bank ADE761                         AADE7610001              PK00ALPHADE761000001
+ALPHA SOLAR WORKS 4EC0D1                          Alpha Bank 4EC0D1                         A4EC0D10001              PK00ALPH4EC0D1000001
 
 
-ALPHA SOLAR WORKS ADE761                          Alpha Islamic ADE761                      AADE7610002              N/A
+ALPHA SOLAR WORKS 4EC0D1                          Alpha Islamic 4EC0D1                      A4EC0D10002              N/A
 
 
 
-                                                Alpha Solar Works ADE761 · 021-1010101 · billing.ade761@alpha.test
+                                                Alpha Solar Works 4EC0D1 · 021-1010101 · billing.4ec0d1@alpha.test
 

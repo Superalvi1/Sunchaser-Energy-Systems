@@ -8,6 +8,9 @@ import {
   ChevronRight, ChevronLeft, Battery, Zap,
 } from "lucide-react";
 import AuthHub from "./components/AuthHub";
+import CompanySelectScreen from "./components/CompanySelectScreen";
+import PlatformConsole from "./components/PlatformConsole";
+import { getStoredCompanies, getStoredCompanyId } from "./services/api";
 import { useToast } from "./lib/toast";
 import { AppState, UserRole, User } from "./types";
 import {
@@ -646,6 +649,11 @@ function AuthenticatedApp() {
     shellTabs.find((t) => t.id === activeTab)?.label ?? "Sunchaser CRM";
 
   if (!currentUser && sessionRestoreUnavailable) return <main className="min-h-screen grid place-items-center bg-slate-950 px-6 text-slate-100"><section className="max-w-md space-y-4 text-center"><h1 className="text-xl font-bold">Reconnect to your saved session</h1><p className="text-slate-400">Your login is still saved. The server could not be reached. Check your connection and retry.</p><button onClick={()=>window.location.reload()} className="min-h-12 w-full rounded-xl bg-amber-400 font-bold text-slate-950">Retry connection</button><button onClick={()=>{void logoutSession();setSessionRestoreUnavailable(false);setGuestView("login");}} className="min-h-11 text-slate-400">Use another account</button></section></main>;
+  // Multi-company: operator console, and "Switch company" for a user who works for several companies.
+  if (currentUser?.isPlatformAdmin && window.location.pathname === "/platform") return <PlatformConsole onExit={() => { window.location.assign("/"); }} />;
+  if (currentUser && window.location.pathname === "/select-company" && getStoredCompanies().length > 1) {
+    return <CompanySelectScreen companies={getStoredCompanies()} currentCompanyId={getStoredCompanyId()} onSelected={() => { window.location.assign("/"); }} onCancel={() => { window.location.assign("/"); }} />;
+  }
   if (currentUser && !showOnboarding && activeTab === "Accounts" && canCreateInvoice(currentUser.username,currentUser.role)) return <AccountsWorkspace staffUser={currentUser} leads={appState?.leads || []} products={appState?.products || []} initialView={accountsInitialView} onAddParty={handleAddLead} onExit={()=>{window.history.replaceState(null,"","/");setActiveTab("Admin Dashboard");}}/>;
   if (currentUser && showOnboarding) {
     const variant =
@@ -1308,6 +1316,16 @@ function AuthenticatedApp() {
           userRole={currentUser.role}
           onLogout={handleLogout}
         >
+          {getStoredCompanies().length > 1 || currentUser.isPlatformAdmin ? (
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+              {getStoredCompanies().length > 1 ? (
+                <a href="/select-company" data-testid="switch-company" className="flex min-h-[48px] w-full items-center gap-3 px-3 py-2.5 text-sm font-bold text-amber-300 hover:bg-slate-800/50">
+                  Switch company{getStoredCompanies().find((c) => c.id === getStoredCompanyId()) ? ` (now: ${getStoredCompanies().find((c) => c.id === getStoredCompanyId())!.name})` : ""}
+                </a>
+              ) : null}
+              {currentUser.isPlatformAdmin ? <a href="/platform" className="flex min-h-[48px] w-full items-center gap-3 border-t border-slate-800 px-3 py-2.5 text-sm font-bold text-amber-300 hover:bg-slate-800/50">Platform console</a> : null}
+            </div>
+          ) : null}
           <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
             <a
               href={STAFF_QUOTE_PATH}

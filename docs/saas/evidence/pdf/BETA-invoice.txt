@@ -1,74 +1,74 @@
-                                                                                                                                                 PREMIUM INVOICE V3
-                  Beta Energy House ADE761
-                  📞 042-2020202 · ✉ accounts.ade761@beta.test                                                                               INVOICE
-                  🌐 www.beta-ade761.test
-                  📍 2 Beta Street ADE761 Lahore
+                                                                                                                                                PREMIUM INVOICE V3
+                  Beta Energy House 4EC0D1
+                  📞 042-2020202 · ✉ accounts.4ec0d1@beta.test                                                                              INVOICE
+                  🌐 www.beta-4ec0d1.test
+                  📍 2 Beta Street 4EC0D1 Lahore
 
-  BILL TO                                                                                   INVOICE DETAILS
+  BILL TO                                                                                  INVOICE DETAILS
 
-  BETAADE761 PDF                                                                            Invoice No.                                                INV-2026-0001
-                                                                                            Date                                                          13/10/2026
-  Tel: 03153078220
-                                                                                            Time                                                           05:49 pm
-                                                                                            Due Date                                                                 —
-                                                                                            Status                                                         PARTIAL
+  BETA4EC0D1 PDF                                                                           Invoice No.                                                INV-2026-0001
+                                                                                           Date                                                          13/10/2026
+  Tel: 03152325039
+                                                                                           Time                                                            08:22 pm
+                                                                                           Due Date                                                                 —
+                                                                                           Status                                                         PARTIAL
 
 
 
   PROJECT INFORMATION
- Project Number                                                                      project-1791913741409
- System Size                                                                         5 kW
- System Type                                                                         Hybrid
- Panel Brand                                                                         Synthetic 500W
- Inverter Brand                                                                      Synthetic 5kW
- Battery Brand                                                                       None
- Structure Type                                                                      Standard
- Net Metering Status                                                                 Yes
+ Project Number                                                                     project-1791922923473
+ System Size                                                                        5 kW
+ System Type                                                                        Hybrid
+ Panel Brand                                                                        Synthetic 500W
+ Inverter Brand                                                                     Synthetic 5kW
+ Battery Brand                                                                      None
+ Structure Type                                                                     Standard
+ Net Metering Status                                                                Yes
 
 
   PAYMENT PROGRESS
-                 TOTAL AMOUNT                                RECEIVED                                  BALANCE DUE                            % PAID
-                 Rs 324,000                               Rs 81,000                                  Rs 243,000                               25%
+                 TOTAL AMOUNT                               RECEIVED                                  BALANCE DUE                            % PAID
+                 Rs 324,000                              Rs 81,000                                  Rs 243,000                               25%
 
-                                                                                                                                       25% of invoice amount received
+                                                                                                                                      25% of invoice amount received
 
 
 
          Payment QR
 
-                           Scan to Pay / Share Payment Details
-                           QR encodes invoice number, total, and balance. Use bank details on the last page for transfer.
+                          Scan to Pay / Share Payment Details
+                          QR encodes invoice number, total, and balance. Use bank details on the last page for transfer.
 
 
 
 
- #        Item                                                                                                               Qty             Rate             Amount
+ #        Item                                                                                                              Qty             Rate             Amount
 
-     1    BETAADE761-PANEL-PDF                                                                                                     9   Rs 36,000          Rs 324,000
-          BETAADE761 panel PDF
+     1    BETA4EC0D1-PANEL-PDF                                                                                                    9   Rs 36,000          Rs 324,000
+          BETA4EC0D1 panel PDF
 
-                                                                                                                             9                            Rs 324,000
+                                                                                                                            9                            Rs 324,000
 
-Amount in words: Three Lakh Twenty Four Thousand Rupees only                                              Sub Total                                       Rs 324,000
+Amount in words: Three Lakh Twenty Four Thousand Rupees only                                             Sub Total                                       Rs 324,000
 Terms & Conditions
-System booked in COD basis.                                                                               Total                                         Rs 324,000
-                                                                                                          Received                                          Rs 81,000
+System booked in COD basis.                                                                              Total                                         Rs 324,000
+                                                                                                         Received                                          Rs 81,000
 
-                                                                                                          Balance Due                                     Rs 243,000
+                                                                                                         Balance Due                                     Rs 243,000
 
-Authorized Signatory                                                                                      Previous Balance                                      Rs 0
-For Beta Energy House ADE761
-                                                                                                          Current Balance                                 Rs 243,000
+Authorized Signatory                                                                                     Previous Balance                                      Rs 0
+For Beta Energy House 4EC0D1
+                                                                                                         Current Balance                                 Rs 243,000
              Payment — Bank Accounts
              Transfer to an account below. Reference: INV-2026-0001
 
 
 
-Company / Account Title                            Bank Name                          Account Number               IBAN
+Company / Account Title                            Bank Name                         Account Number               IBAN
 
-BETA ENERGY HOUSE ADE761                           Beta Bank ADE761                   BADE7610003                  PK00BETAADE761000003
+BETA ENERGY HOUSE 4EC0D1                           Beta Bank 4EC0D1                  B4EC0D10003                  PK00BETA4EC0D1000003
 
 
 
-                                              Beta Energy House ADE761 · 042-2020202 · accounts.ade761@beta.test
+                                             Beta Energy House 4EC0D1 · 042-2020202 · accounts.4ec0d1@beta.test
 

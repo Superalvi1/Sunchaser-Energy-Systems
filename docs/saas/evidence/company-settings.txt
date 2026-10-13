@@ -1,43 +1,45 @@
 PASS: both company administrators sign in bound to their own company
-PASS: ALPHAFE648B: before any setting, its quotation document is produced (200) and carries no Sunchaser value
-PASS: ALPHAFE648B: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
-PASS: ALPHAFE648B: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
-PASS: ALPHAFE648B: its boot state has no Sunchaser text at all
-PASS: BETAFE648B: before any setting, its quotation document is produced (200) and carries no Sunchaser value
-PASS: BETAFE648B: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
-PASS: BETAFE648B: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
-PASS: BETAFE648B: its boot state has no Sunchaser text at all
+PASS: ALPHA9D633E: before any setting, its quotation document is produced (200) and carries no Sunchaser value
+PASS: ALPHA9D633E: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
+PASS: ALPHA9D633E: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
+PASS: ALPHA9D633E: its boot state has no Sunchaser text at all
+PASS: BETA9D633E: before any setting, its quotation document is produced (200) and carries no Sunchaser value
+PASS: BETA9D633E: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
+PASS: BETA9D633E: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
+PASS: BETA9D633E: its boot state has no Sunchaser text at all
 PASS: a non-administrator (Sales Executive) cannot change branding
 PASS: a non-administrator cannot change bank accounts
 PASS: a script link as logo is refused
 PASS: a bank account without an account number is refused
 PASS: a validity of 0 days is refused
-PASS: ALPHAFE648B: administrator saves branding, bank account, terms and price settings
-PASS: ALPHAFE648B: reads back exactly what it saved
-PASS: BETAFE648B: administrator saves branding, bank account, terms and price settings
-PASS: BETAFE648B: reads back exactly what it saved
+PASS: ALPHA9D633E: administrator saves branding, bank account, terms and price settings
+PASS: ALPHA9D633E: reads back exactly what it saved
+PASS: BETA9D633E: administrator saves branding, bank account, terms and price settings
+PASS: BETA9D633E: reads back exactly what it saved
 PASS: alpha's settings contain nothing of beta's, and beta's nothing of alpha's
 PASS: settings keys are stored per company (<company>:<key>); no plain key was written for a pilot company
 PASS: the founding company's settings rows are untouched by all of that
 PASS: the bank accounts and terms are stored under the saving company only
-PASS: ALPHAFE648B: quotation shows its own name, address, logo and terms
-PASS: ALPHAFE648B: quotation shows its amounts (rate 41000 x 8 = 328000)
-PASS: ALPHAFE648B: quotation carries nothing of BETAFE648B and nothing of Sunchaser
-PASS: ALPHAFE648B: quotation validity follows the company setting (14 days)
-PASS: ALPHAFE648B: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
-PASS: ALPHAFE648B: invoice shows its amounts (328000)
-PASS: ALPHAFE648B: invoice carries nothing of BETAFE648B (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
-PASS: BETAFE648B: quotation shows its own name, address, logo and terms
-PASS: BETAFE648B: quotation shows its amounts (rate 36000 x 9 = 324000)
-PASS: BETAFE648B: quotation carries nothing of ALPHAFE648B and nothing of Sunchaser
-PASS: BETAFE648B: quotation validity follows the company setting (5 days)
-PASS: BETAFE648B: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
-PASS: BETAFE648B: invoice shows its amounts (324000)
-PASS: BETAFE648B: invoice carries nothing of ALPHAFE648B (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
-PASS: ALPHAFE648B: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
-PASS: ALPHAFE648B: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
-PASS: BETAFE648B: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
-PASS: BETAFE648B: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
+PASS: ALPHA9D633E: quotation shows its own name, address, logo and terms
+PASS: ALPHA9D633E: quotation prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: ALPHA9D633E: quotation shows its amounts (rate 41000 x 8 = 328000)
+PASS: ALPHA9D633E: quotation carries nothing of BETA9D633E and nothing of Sunchaser
+PASS: ALPHA9D633E: quotation validity follows the company setting (14 days)
+PASS: ALPHA9D633E: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
+PASS: ALPHA9D633E: invoice shows its amounts (328000)
+PASS: ALPHA9D633E: invoice carries nothing of BETA9D633E (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
+PASS: BETA9D633E: quotation shows its own name, address, logo and terms
+PASS: BETA9D633E: quotation prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: BETA9D633E: quotation shows its amounts (rate 36000 x 9 = 324000)
+PASS: BETA9D633E: quotation carries nothing of ALPHA9D633E and nothing of Sunchaser
+PASS: BETA9D633E: quotation validity follows the company setting (5 days)
+PASS: BETA9D633E: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
+PASS: BETA9D633E: invoice shows its amounts (324000)
+PASS: BETA9D633E: invoice carries nothing of ALPHA9D633E (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
+PASS: ALPHA9D633E: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
+PASS: ALPHA9D633E: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
+PASS: BETA9D633E: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
+PASS: BETA9D633E: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
 PASS: alpha raises the price of its panel in its own price list
 PASS: alpha's historical quotation still shows its ORIGINAL name, address and terms after they were changed
 PASS: alpha's historical quotation still shows its ORIGINAL prices and total after the price list changed
@@ -48,10 +50,10 @@ PASS: alpha's NEW quotation uses the new name, address, terms and the new price
 PASS: beta's documents are unchanged by alpha's changes (own name, terms, bank; nothing of alpha's new values)
 PASS: beta's price list is unchanged by alpha's price change
 PASS: alpha's issued invoice keeps its amounts after the price list changed
-PASS: ALPHAFE648B: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
-PASS: BETAFE648B: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
+PASS: ALPHA9D633E: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
+PASS: BETA9D633E: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
 PASS: ...and no product row was copied into either company
 PASS: beta cannot change alpha's product
 PASS: the founding company's settings rows are still untouched at the end
 
-55 passed, 0 failed
+57 passed, 0 failed

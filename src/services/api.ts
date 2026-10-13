@@ -64,10 +64,30 @@ export function updateStoredUser(user: User): void {
   localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
 }
 
+const COMPANIES_KEY = "sunchaser_companies";
+const COMPANY_ID_KEY = "sunchaser_company_id";
+export type LoginCompany = { id: string; name: string; role: string };
+
+export function getStoredCompanies(): LoginCompany[] {
+  if (typeof localStorage === "undefined") return [];
+  try { const v = JSON.parse(localStorage.getItem(COMPANIES_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+export function getStoredCompanyId(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  return localStorage.getItem(COMPANY_ID_KEY);
+}
+function persistCompanies(companies: LoginCompany[] | undefined, companyId?: string | null): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(COMPANIES_KEY, JSON.stringify(companies || []));
+  if (companyId) localStorage.setItem(COMPANY_ID_KEY, companyId); else localStorage.removeItem(COMPANY_ID_KEY);
+}
+
 export function clearAuthSession(): void {
   if (typeof localStorage === "undefined") return;
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(COMPANIES_KEY);
+  localStorage.removeItem(COMPANY_ID_KEY);
 }
 
 export function withAuthHeaders(init?: RequestInit): RequestInit {
@@ -1440,7 +1460,7 @@ export async function signOutEverywhere(): Promise<void> {
 
 export async function loginUser(
   body: { username: string; password?: string }
-): Promise<{ success: boolean; user: User; token?: string }> {
+): Promise<{ success: boolean; user: User; token?: string; companies?: LoginCompany[]; companyId?: string }> {
   const url = `${API_BASE_URL}/api/auth/login`;
   const payload = { username: body.username, password: body.password };
   console.log("Login URL:", url);
@@ -1474,14 +1494,38 @@ export async function loginUser(
     console.log("Login success for user:", parsed.user?.username, parsed.user?.role);
     if (parsed.user && parsed.token) {
       persistAuthSession(parsed.user, parsed.token);
+      // Multi-company servers also say which companies the user can act for (and which one the session is bound to, if only one).
+      const multi = parsed as { companies?: LoginCompany[]; companyId?: string };
+      persistCompanies(multi.companies, multi.companyId);
     }
-    return parsed as { success: boolean; user: User; token?: string };
+    return parsed as { success: boolean; user: User; token?: string; companies?: LoginCompany[]; companyId?: string };
   } catch (err) {
     console.error("Login error:", err);
     throw toLoginError(err);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Several companies: the session acts for the one the user picks (the server re-checks membership on every request). */
+export async function selectCompany(companyId: string): Promise<{ user: User; companyId: string }> {
+  const res = await apiFetch("/api/auth/select-company", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companyId }) });
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok || !parsed.token) throw new Error(parsed.error || `Could not select the company (HTTP ${res.status}).`);
+  const stored = getStoredUser();
+  if (!stored) throw new Error("Your session has ended. Please sign in again.");
+  const user = { ...stored, role: (parsed.role || stored.role) as User["role"] };
+  persistAuthSession(user, parsed.token);
+  persistCompanies(parsed.companies, parsed.companyId);
+  return { user, companyId: parsed.companyId };
+}
+
+/** Operator (platform) API helper: returns parsed JSON or throws with the server's message. */
+export async function platformRequest<T = any>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const res = await apiFetch(`/api/platform${path}`, { method, headers: { "Content-Type": "application/json" }, body: body === undefined || method === "GET" ? undefined : JSON.stringify(body) });
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(parsed.error || `Request failed (HTTP ${res.status}).`);
+  return parsed as T;
 }
 
 export async function createLead(data: Partial<Lead>): Promise<Lead> {

@@ -11,6 +11,8 @@ import { LOGIN_UNABLE_CONNECT_MESSAGE } from "../lib/startupFetch";
 import { SELF_REGISTER_ROLES } from "../lib/roles";
 import type { User } from "../types";
 import AppLogo from "./AppLogo";
+import CompanySelectScreen from "./CompanySelectScreen";
+import type { LoginCompany } from "../services/api";
 
 type AuthMode = "login" | "register" | "forgot" | "reset" | "verify";
 
@@ -52,6 +54,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [picking, setPicking] = useState<{ user: User; companies: LoginCompany[] } | null>(null);
 
   useEffect(() => {
     if (urlHint?.mode === "verify" && urlHint.token) {
@@ -87,6 +90,20 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
       const res = await loginUser({ username, password });
       if (!res.success || !res.user) {
         setError("Login authorization rejected.");
+        return;
+      }
+      // Several companies: the user chooses which one this session acts for before the CRM loads.
+      if (res.companies && res.companies.length > 1 && !res.companyId) {
+        setPicking({ user: res.user, companies: res.companies });
+        return;
+      }
+      // An operator who belongs to no company goes to the platform console.
+      if (res.companies && res.companies.length === 0 && res.user.isPlatformAdmin) {
+        window.location.assign("/platform");
+        return;
+      }
+      if (res.companies && res.companies.length === 0 && res.user.role !== "Customer") {
+        setError("Your account is not active in any company. Contact your administrator.");
         return;
       }
       await onLoginSuccess(res.user);
@@ -182,6 +199,10 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
           : mode === "verify"
             ? "Email verification"
             : "Sign in";
+
+  if (picking) {
+    return <CompanySelectScreen companies={picking.companies} onSelected={async (user) => { setPicking(null); await onLoginSuccess(user); }} onCancel={() => setPicking(null)} />;
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-6 fade-in-entry">

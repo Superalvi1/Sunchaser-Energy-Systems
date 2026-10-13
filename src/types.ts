@@ -322,6 +322,8 @@ export interface User {
   approvedAt?: string;
   approvedBy?: string;
   rejectedReason?: string;
+  /** Operators of the platform (set by the server; never trusted by the client for access). */
+  isPlatformAdmin?: boolean;
 }
 
 export interface Project {

@@ -93,6 +93,8 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
 
     req.actor = hydrated.actor;
     req.authSession = hydrated.session;
+    // The company the token is bound to (multi-company mode). Identity routes (/api/auth/me, /refresh) are not company-scoped, so they read it from here.
+    (req as any).tokenCompanyId = hydrated.tokenCompanyId;
     if (req.actor.role === "Customer" && !isCustomerAllowedApiRoute(path)) {
       sendAuthFailure(res, 403, "Not authorized for staff routes.");
       return;

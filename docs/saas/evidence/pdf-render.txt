@@ -1,38 +1,38 @@
 PASS: both companies sign in bound to their own company
-PASS: ALPHAADE761: settings saved
-PASS: BETAADE761: settings saved
-PASS: ALPHAADE761: the quotation downloads as a real PDF (application/pdf, %PDF header, 280028 bytes)
-PASS: ALPHAADE761: the download file name carries no Sunchaser name
-PASS: ALPHAADE761: quotation PDF has the standard 3 pages (3)
-PASS: ALPHAADE761: quotation PDF shows its own name, address and terms
-PASS: ALPHAADE761: quotation PDF prints no equipment brand the company never entered (no default Jinko / Knox)
-PASS: ALPHAADE761: quotation PDF shows its amounts (rate 41000, quantity 8, total 328000)
-PASS: ALPHAADE761: quotation PDF embeds the company's own logo (colour 200,30,30) and not the other company's
-PASS: ALPHAADE761: quotation PDF carries nothing of BETAADE761 and nothing of Sunchaser
-PASS: ALPHAADE761: the invoice renders as a real PDF through the same engine (527547 bytes)
-PASS: ALPHAADE761: invoice PDF shows its identity (name, address, phone, e-mail, website)
-PASS: ALPHAADE761: invoice PDF shows ALL its bank accounts (bank, title, account number, IBAN)
-PASS: ALPHAADE761: invoice PDF shows its amounts (total 328000, paid 82000, balance 246000)
-PASS: ALPHAADE761: invoice PDF embeds its own logo and carries nothing of BETAADE761 (name, bank accounts) or Sunchaser (name, accounts, signature)
-PASS: BETAADE761: the quotation downloads as a real PDF (application/pdf, %PDF header, 281063 bytes)
-PASS: BETAADE761: the download file name carries no Sunchaser name
-PASS: BETAADE761: quotation PDF has the standard 3 pages (3)
-PASS: BETAADE761: quotation PDF shows its own name, address and terms
-PASS: BETAADE761: quotation PDF prints no equipment brand the company never entered (no default Jinko / Knox)
-PASS: BETAADE761: quotation PDF shows its amounts (rate 36000, quantity 9, total 324000)
-PASS: BETAADE761: quotation PDF embeds the company's own logo (colour 30,60,200) and not the other company's
-PASS: BETAADE761: quotation PDF carries nothing of ALPHAADE761 and nothing of Sunchaser
-PASS: BETAADE761: the invoice renders as a real PDF through the same engine (523360 bytes)
-PASS: BETAADE761: invoice PDF shows its identity (name, address, phone, e-mail, website)
-PASS: BETAADE761: invoice PDF shows ALL its bank accounts (bank, title, account number, IBAN)
-PASS: BETAADE761: invoice PDF shows its amounts (total 324000, paid 81000, balance 243000)
-PASS: BETAADE761: invoice PDF embeds its own logo and carries nothing of ALPHAADE761 (name, bank accounts) or Sunchaser (name, accounts, signature)
+PASS: ALPHA4EC0D1: settings saved
+PASS: BETA4EC0D1: settings saved
+PASS: ALPHA4EC0D1: the quotation downloads as a real PDF (application/pdf, %PDF header, 280886 bytes)
+PASS: ALPHA4EC0D1: the download file name carries no Sunchaser name
+PASS: ALPHA4EC0D1: quotation PDF has the standard 3 pages (3)
+PASS: ALPHA4EC0D1: quotation PDF shows its own name, address and terms
+PASS: ALPHA4EC0D1: quotation PDF prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: ALPHA4EC0D1: quotation PDF shows its amounts (rate 41000, quantity 8, total 328000)
+PASS: ALPHA4EC0D1: quotation PDF embeds the company's own logo (colour 200,30,30) and not the other company's
+PASS: ALPHA4EC0D1: quotation PDF carries nothing of BETA4EC0D1 and nothing of Sunchaser
+PASS: ALPHA4EC0D1: the invoice renders as a real PDF through the same engine (528182 bytes)
+PASS: ALPHA4EC0D1: invoice PDF shows its identity (name, address, phone, e-mail, website)
+PASS: ALPHA4EC0D1: invoice PDF shows ALL its bank accounts (bank, title, account number, IBAN)
+PASS: ALPHA4EC0D1: invoice PDF shows its amounts (total 328000, paid 82000, balance 246000)
+PASS: ALPHA4EC0D1: invoice PDF embeds its own logo and carries nothing of BETA4EC0D1 (name, bank accounts) or Sunchaser (name, accounts, signature)
+PASS: BETA4EC0D1: the quotation downloads as a real PDF (application/pdf, %PDF header, 281661 bytes)
+PASS: BETA4EC0D1: the download file name carries no Sunchaser name
+PASS: BETA4EC0D1: quotation PDF has the standard 3 pages (3)
+PASS: BETA4EC0D1: quotation PDF shows its own name, address and terms
+PASS: BETA4EC0D1: quotation PDF prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: BETA4EC0D1: quotation PDF shows its amounts (rate 36000, quantity 9, total 324000)
+PASS: BETA4EC0D1: quotation PDF embeds the company's own logo (colour 30,60,200) and not the other company's
+PASS: BETA4EC0D1: quotation PDF carries nothing of ALPHA4EC0D1 and nothing of Sunchaser
+PASS: BETA4EC0D1: the invoice renders as a real PDF through the same engine (522858 bytes)
+PASS: BETA4EC0D1: invoice PDF shows its identity (name, address, phone, e-mail, website)
+PASS: BETA4EC0D1: invoice PDF shows ALL its bank accounts (bank, title, account number, IBAN)
+PASS: BETA4EC0D1: invoice PDF shows its amounts (total 324000, paid 81000, balance 243000)
+PASS: BETA4EC0D1: invoice PDF embeds its own logo and carries nothing of ALPHA4EC0D1 (name, bank accounts) or Sunchaser (name, accounts, signature)
 PASS: sanity: the founding company's own quotation PDF DOES show its Sunchaser name and address (the detector can see them in a real PDF)
 PASS: sanity: the founding company's download file name is unchanged (Sunchaser-Quotation-...)
-PASS: ALPHAADE761 cannot download BETAADE761's quotation PDF (404)
-PASS: ALPHAADE761 cannot get BETAADE761's invoice document (404)
-PASS: BETAADE761 cannot download ALPHAADE761's quotation PDF (404)
-PASS: BETAADE761 cannot get ALPHAADE761's invoice document (404)
+PASS: ALPHA4EC0D1 cannot download BETA4EC0D1's quotation PDF (404)
+PASS: ALPHA4EC0D1 cannot get BETA4EC0D1's invoice document (404)
+PASS: BETA4EC0D1 cannot download ALPHA4EC0D1's quotation PDF (404)
+PASS: BETA4EC0D1 cannot get ALPHA4EC0D1's invoice document (404)
 PASS: alpha's earlier quotation PDF still shows the ORIGINAL name and address after they were changed
 PASS: alpha's NEW quotation PDF shows the new name and the new price
 

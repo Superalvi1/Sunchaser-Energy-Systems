@@ -1608,7 +1608,14 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
     if (!req.actor) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    return res.json({ success: true, user: actorToApiUser(req.actor) });
+    const user: any = actorToApiUser(req.actor);
+    // Multi-company: the role that counts is the one held in the company this token is bound to, not the global one.
+    const tokenCompany = (req as any).tokenCompanyId as string | undefined;
+    if (isMultiCompanyEnabled() && tokenCompany) {
+      const chosen = (await listLoginCompanies(req.actor, companyStore)).find((c) => c.id === tokenCompany);
+      if (chosen) { user.role = chosen.role; user.companyId = chosen.id; user.companyName = chosen.name; }
+    }
+    return res.json({ success: true, user });
   } catch (err: any) {
     console.error("[Auth Me Error]:", err);
     return res.status(500).json({ error: err.message || "Failed to load session." });
@@ -1624,15 +1631,24 @@ app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) =>
   if (!canRenewSession(session.startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
     return res.status(401).json({ error: "Your session has ended. Please sign in again.", code: "session_ended" });
   }
+  // Multi-company: the renewed token keeps the company claim (and the role held there) as long as the membership is still active.
+  let renewedCompany: string | undefined; let renewedRole = req.actor.role;
+  if (isMultiCompanyEnabled()) {
+    const wanted = ((req as any).tokenCompanyId as string | undefined) || req.actor.companyId;
+    if (wanted) {
+      const chosen = (await listLoginCompanies(req.actor, companyStore)).find((c) => c.id === wanted);
+      if (chosen) { renewedCompany = chosen.id; renewedRole = chosen.role; }
+    }
+  }
   const token = signAccessToken({
     userId: req.actor.id,
     username: req.actor.username,
-    role: req.actor.role,
+    role: renewedRole,
     sessionStartedAt: session.startedAt!,
     passwordVersion: session.passwordVersion,
     sessionEpoch: session.sessionEpoch,
     sessionId: session.sessionId || undefined,
-    companyId: isMultiCompanyEnabled() ? req.actor.companyId : undefined,
+    companyId: renewedCompany,
   });
   // Rotation: the presented token is retired after a short grace (so requests already in flight with it still
   // succeed) and remembers its successor. If it was ALREADY revoked (logout raced this refresh), no new token is
