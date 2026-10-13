@@ -25,7 +25,7 @@ if (process.argv.includes("--cleanup")) {
     if (has.rowCount) await db.query(`delete from public."${t}" where company_id in ('co_alpha','co_beta')`);
   }
   await db.query("delete from company_memberships where company_id in ('co_alpha','co_beta')");
-  await db.query("delete from users where id like 'u-alpha%' or id like 'u-beta%' or id in ('u-both','u-nobody')");
+  await db.query("delete from users where id like 'u-alpha%' or id like 'u-beta%' or id in ('u-both','u-nobody','u-platform')");
   await db.query("delete from companies where id in ('co_alpha','co_beta')");
   await db.query("set session_replication_role = origin");
   console.log("Removed the synthetic companies, their users and rows.");
@@ -44,6 +44,7 @@ const USERS = [
   ["u-beta-sales", "beta_sales", "Beta Sales", "Sales Executive", [["co_beta", "Sales Executive"]]],
   ["u-both", "both_user", "Works For Both", "Admin", [["co_alpha", "Sales Manager"], ["co_beta", "Sales Executive"]]],
   ["u-nobody", "nobody", "No Company", "Super Admin", []],
+  ["u-platform", "platform_op", "Platform Operator", "Admin", []],
 ];
 for (const [id, username, name, role, mem] of USERS) {
   await db.query(
@@ -53,6 +54,7 @@ for (const [id, username, name, role, mem] of USERS) {
   await db.query("delete from company_memberships where user_id=$1", [id]);
   for (const [company, mrole] of mem) await db.query("insert into company_memberships (id, company_id, user_id, role, status) values ($1,$2,$3,$4,'active')", [`mem-${company}-${id}`, company, id, mrole]);
 }
+await db.query("update users set is_platform_admin = true where id = 'u-platform'");
 // Portal customers: one per company, linked to a customer row owned by that company.
 for (const [company, tag] of [["co_alpha", "alpha"], ["co_beta", "beta"]]) {
   await db.query("insert into customers (id, name, email, company_id) values ($1,$2,$3,$4) on conflict (id) do nothing", [`cust-${tag}-portal`, `${tag} portal client`, `${tag}.portal@example.test`, company]);

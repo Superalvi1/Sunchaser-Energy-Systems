@@ -372,6 +372,8 @@ import { assertMultiCompanyConfig, FOUNDING_COMPANY_ID, isMultiCompanyEnabled } 
 import { getCompanyContext, runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
 import { usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
 import { registerCompanySettingsRoutes } from "./server/saas/companySettingsApi.ts";
+import { registerPlatformRoutes } from "./server/saas/platformApi.ts";
+import { planLimitMiddleware } from "./server/saas/subscriptionLimits.ts";
 import { listLoginCompanies } from "./server/saas/loginCompanies.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
@@ -743,6 +745,8 @@ app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, comp
  * Authorised file access: no link at all. The caller must hold a session of the company the object belongs to (the company is read from
  * the key itself: `c/<company>/...`, or the founding company for an unprefixed key). Anything else answers 404, like a missing object.
  */
+app.use(planLimitMiddleware());
+registerPlatformRoutes(app);
 registerCompanySettingsRoutes(app);
 
 app.get("/api/company/files/:namespace/:encodedKey", async (req, res) => {
