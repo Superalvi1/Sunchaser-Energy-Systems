@@ -2,13 +2,13 @@ NOTICE:  role "authenticator" has already been granted membership in role "anon"
 NOTICE:  role "authenticator" has already been granted membership in role "authenticated" by role "postgres"
 NOTICE:  role "authenticator" has already been granted membership in role "service_role" by role "postgres"
 Applying r1-smart-quote-versions  (scripts/smart-quote-versions-schema.sql)  gate G3
-  ok (63 ms)
+  ok (77 ms)
 Applying r2-session-revocation  (scripts/session-revocation-schema.sql)  gate G3
   ok (56 ms)
 Applying r3-invoice-payments-integrity  (scripts/invoice-payments-integrity.sql)  gate G3
-  ok (66 ms)
+  ok (53 ms)
 Applying r4-invoice-save-atomic  (scripts/invoice-save-atomic.sql)  gate G3
-  ok (54 ms)
+  ok (43 ms)
 built sc_base_template: 103 public tables, release migrations r1-r4 applied
 
 === test-phase2-migration.sh
@@ -131,6 +131,55 @@ PASS: constraints present again
 
 settings migration tests: 22 passed, 0 failed
 
+=== test-subscriptions.sh
+PASS: phase2e applies
+PASS: phase2e applies a second time (idempotent)
+PASS: the placeholder 'pilot' plan exists
+PASS: crm_tenant has no privilege on saas_plans
+PASS: crm_tenant has no privilege on saas_subscriptions
+PASS: crm_tenant has no privilege on saas_payments
+PASS: crm_tenant has no privilege on saas_audit
+PASS: crm_tenant cannot execute saas_usage or saas_create_company
+PASS: the tenant role gets 'permission denied' reading saas_subscriptions
+PASS: the 4th lead of a company with max_leads 3 is refused by the database
+PASS: the same limit applies to the tenant role (row security does not hide the count from the trigger)
+PASS: a deleted lead frees one place
+PASS: ...and the company is full again
+PASS: a per-company override raises the limit
+PASS: another company's leads do not count against this company (co_n has no subscription: unlimited)
+PASS: a plan without limits (open) is unlimited
+PASS: the founding company has no subscription and no limit
+PASS: the 3rd active staff member is refused (max_staff 2)
+PASS: an invited (not yet active) member is not counted
+PASS: activating that invited member would exceed the limit: refused
+PASS: a portal customer membership is not staff and is not counted
+PASS: changing the role of an already-counted member is allowed
+PASS: removing a member frees a seat
+PASS: the 3rd document is refused (max_documents 2)
+PASS: 8 simultaneous inserts with 6 places free: exactly 6 succeed, never more
+PASS: the service role has no UPDATE or DELETE privilege on payments (privilege level)
+PASS: even the table owner cannot edit a payment (trigger)
+PASS: even the table owner cannot delete a payment (trigger)
+PASS: a negative payment without reversal_of is refused
+PASS: a reversal row (negative, reversal_of) is accepted
+PASS: the audit trail cannot be deleted from (owner: trigger)
+PASS: saas_create_company ran for the new company
+PASS: it created the company (trial), subscription (trial, pilot), first admin, membership, neutral branding, PDF settings and one audit row
+PASS: a duplicate username fails the whole onboarding and leaves nothing behind
+PASS: ...nothing of it exists: no company, subscription, user, settings
+PASS: the founding company id cannot be used
+PASS: an unknown plan is refused
+PASS: the tenant role cannot call it
+PASS: saas_usage reports staff, leads and documents per company
+PASS: rollback applies
+PASS: rollback removed the tables, triggers and functions
+PASS: rollback kept a copy of the payments and the audit trail
+PASS: without the migration there is no limit any more
+PASS: re-apply after rollback
+PASS: re-apply restored the payments and the audit trail
+
+subscription/limits tests: 45 passed, 0 failed
+
 === test-company-restore.sh
 PASS: both companies are seeded
 PASS: export: every seeded table is in the archive in dependency order
@@ -189,8 +238,8 @@ PASS: t3 refuses to run without the owner's floor (founding company has no invoi
 PASS: t1 and t2 were applied and recorded before that
 PASS: the refused t3 is pending, not applied
 PASS: with the floor set t3 applies
-PASS: verify is clean with all eight applied
-PASS: rollback t4, t3, t2, t1 in reverse order
+PASS: verify is clean with all nine applied
+PASS: rollback t5, t4, t3, t2, t1 in reverse order
 PASS: the company foundation is gone and the release migrations remain
 PASS: everything applies again after the rollback (the floor is still set)
 PASS: final verify is clean

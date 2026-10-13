@@ -81,6 +81,16 @@
    "gate": "G3+G4",
    "probe": "select exists (select 1 from pg_constraint where conname = 'settings_company_key_scope')",
    "note": "Settings and website content keys of companies other than the founding one must be '<company>:<key>' (the database enforces what the application does)."
+  },
+  {
+   "id": "t5-subscriptions",
+   "series": "tenant",
+   "file": "scripts/saas/phase2e-subscriptions.sql",
+   "rollback": "scripts/saas/phase2e-subscriptions-rollback.sql",
+   "requires": ["t1-company-foundation"],
+   "gate": "G3+G4",
+   "probe": "select to_regclass('public.saas_subscriptions') is not null and to_regprocedure('public.saas_create_company(text,text,text,integer,jsonb,jsonb)') is not null",
+   "note": "Plans, manual subscriptions and payment ledger, audit trail, plan limits enforced by triggers, atomic company onboarding. The pilot plan is a placeholder (pricing is undecided)."
   }
  ]
 }

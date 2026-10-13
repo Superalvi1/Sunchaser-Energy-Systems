@@ -446,6 +446,22 @@
    "class": "role_template",
    "note": "company_id NULL = system template visible to all; company rows = custom roles owned by one company."
   },
+  "saas_audit": {
+   "class": "platform",
+   "note": "Append-only audit trail of operator actions (company created, plan changed, payment recorded, suspension). Platform table: no tenant privilege."
+  },
+  "saas_payments": {
+   "class": "platform",
+   "note": "Manual payment ledger of the operator's own revenue. Append-only (corrections are reversal rows). Platform table: no tenant privilege."
+  },
+  "saas_plans": {
+   "class": "platform",
+   "note": "Plans offered by the operator (limits, informational price). Platform table: no tenant privilege. Created by phase2e-subscriptions.sql."
+  },
+  "saas_subscriptions": {
+   "class": "platform",
+   "note": "One manual subscription per company (plan, status, period, per-company limit overrides). Platform table: no tenant privilege."
+  },
   "service_requests": {
    "class": "tenant",
    "note": "Projects, delivery and after-sales operations."
