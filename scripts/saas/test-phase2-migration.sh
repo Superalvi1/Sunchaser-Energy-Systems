@@ -35,6 +35,9 @@ $Q -c "select md5(string_agg(to_jsonb(t)::text,'|' order by id)) from (select * 
 $Q -c "select count(*) from pg_policies where schemaname='public' and roles='{public}' and qual='true'" > "$W/open.before"
 USERS=$($Q -c "select count(*) from users where role <> 'Customer'")
 
+# Functions service_role could NOT execute before the migration (the release's payment-guard helpers are deliberately closed to every API role).
+SR_CLOSED_SQL="select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f' and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and not has_function_privilege('service_role', p.oid, 'execute')"
+SR_CLOSED_BEFORE="$($Q -c "$SR_CLOSED_SQL")"
 $P -f "$REPO/scripts/saas/phase2-company-foundation.sql" > /dev/null 2>&1
 $P -f "$REPO/scripts/saas/phase2-company-foundation.sql" > /dev/null 2>&1
 check "up applied twice without error (idempotent)" "$?" "0"
@@ -46,7 +49,7 @@ check "existing rows kept company_id sunchaser" "$($Q -c "select count(*) from l
 check "tenant role holds no privilege on marketplace tables" "$($Q -c "select count(*) from information_schema.role_table_grants where grantee='crm_tenant' and table_name like 'mp\\_%' escape '\\'")" "0"
 check "tenant role holds no privilege on users" "$($Q -c "select count(*) from information_schema.role_table_grants where grantee='crm_tenant' and table_name='users'")" "0"
 check "tenant role cannot execute application functions" "$($Q -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f' and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and has_function_privilege('crm_tenant', p.oid, 'execute')")" "0"
-check "service role can still execute application functions" "$($Q -c "select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind='f' and not exists (select 1 from pg_depend d where d.objid=p.oid and d.deptype='e') and not has_function_privilege('service_role', p.oid, 'execute')")" "0"
+check "the migration leaves service_role's function privileges exactly as they were (functions the release closed to every API role stay closed: $SR_CLOSED_BEFORE)" "$($Q -c "$SR_CLOSED_SQL")" "$SR_CLOSED_BEFORE"
 check "service role can read and write the new identity tables" "$($Q -c "set role service_role; select count(*) from company_memberships; update companies set name = name where id='sunchaser'" 2>&1 | grep -E '^[0-9]+$|ERROR|denied' | head -1 | sed -E 's/^[0-9]+$/ok/')" "ok"
 # Legacy single-company writes (service role, no company context) must still work: the column default is evaluated by that role.
 SR_OUT=$($Q -c "set role service_role; insert into leads (id,name,phone,email,address,status) values ('mig-sr1','SR Lead','03009990000','sr@example.test','Road','New') returning company_id" 2>&1 | grep -E '^sunchaser$|ERROR|denied' | head -1)

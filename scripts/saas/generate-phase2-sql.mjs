@@ -351,7 +351,14 @@ revoke all on all sequences in schema public from crm_tenant;
 revoke usage on schema public from crm_tenant;
 drop schema if exists app cascade;
 do $$ begin
-  if exists (select 1 from pg_roles where rolname = 'crm_tenant') then drop role crm_tenant; end if;
+  if exists (select 1 from pg_roles where rolname = 'crm_tenant') then
+    begin
+      drop role crm_tenant;
+    exception when dependent_objects_still_exist then
+      -- Roles are shared by every database of the server; another database may still grant to this one. Harmless: it owns nothing here.
+      raise notice 'role crm_tenant kept: other databases of this server still depend on it';
+    end;
+  end if;
 end $$;
 notify pgrst, 'reload schema';
 commit;
