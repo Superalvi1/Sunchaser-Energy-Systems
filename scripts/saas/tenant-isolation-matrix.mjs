@@ -25,6 +25,9 @@ const RUN = randomUUID().slice(0, 6);
 
 const db = new pg.Client({ host, port, user, database });
 await db.connect();
+// Seed rows directly as the superuser: the release's payment guard (balance rules) would refuse arbitrary synthetic ledger rows. Only THIS connection
+// skips it (session_user is not an API role); every attack below goes through PostgREST and meets the guard.
+await db.query("set app.skip_payment_guard = 'on'");
 await db.query(`insert into public.companies (id, slug, name) values ('${A}','alpha','Alpha Solar'),('${B}','beta','Beta Energy') on conflict do nothing`);
 const q = (sql, params) => db.query(sql, params).then((r) => r.rows);
 
@@ -50,7 +53,7 @@ const enumFor = (t, col) => {
 
 async function cleanup() {
   await db.query("set session_replication_role = replica");
-  for (const t of [...tenantTables, "smart_quote_versions"]) {
+  for (const t of [...tenantTables, "smart_quote_versions", "document_counters"]) {
     if (!colsOf(t).length) continue;
     await db.query(`delete from public."${t}" where company_id in ($1,$2)`, [A, B]);
   }
@@ -91,7 +94,7 @@ async function build(t, company, tag, depth = 0) {
     if (c.column_name === "company_id") { row.company_id = company; continue; }
     if (c.is_generated === "ALWAYS" || c.is_identity === "YES") continue;
     const isPk = pkOf(t).includes(c.column_name);
-    if (c.column_default && !isPk) continue;
+    if (c.column_default && !isPk && !OVERRIDES[t]?.[c.column_name]) continue;
     if (c.is_nullable === "YES" && !isPk) continue;
     const fk = fkOf(t, c.column_name);
     if (fk && fk.parent.replace(/^public\./, "") !== t) { const parent = await seed(fk.parent.replace(/^public\./, ""), company, tag, depth + 1); row[c.column_name] = parent[fk.pcol]; continue; }
@@ -117,6 +120,8 @@ const payload = (t, row, extra = {}) => { const g = generated(t); return { ...Ob
 // Values for columns whose CHECK constraint is a pattern the generic generator cannot guess.
 const OVERRIDES = {
   interactive_proposals: { token_hash: (tag) => tag.padEnd(64, "0") },
+  // An invoice with a positive total, so the released payment guard accepts the matrix's one-unit payment (positive control).
+  invoices: { subtotal: () => 1000, grand_total: () => 1000, balance_due: () => 1000 },
   smart_quote_versions: { quote_number: () => `SES-20261009-${String(1000 + (++counter % 8000))}` },
 };
 await cleanup();
@@ -143,8 +148,8 @@ for (const t of tenantTables) {
   x = await filt(asA.from(t).delete(), rb).select(); rec("A cannot delete B's row", !x.error && (x.data?.length ?? 0) === 0, JSON.stringify(x.error || x.data));
   const still = await q(`select company_id from public."${t}" where ${pk.map((k, i) => `"${k}"=$${i + 1}`).join(" and ")}`, pk.map((k) => rb[k]));
   rec("B's row survives untouched in the database", still.length === 1 && still[0].company_id === B, JSON.stringify(still));
-  x = await asA.from(t).upsert(payload(t, rb, { company_id: A }), { onConflict: pk.join(",") }).select(); rec("A cannot take over B's row by upsert", !x.error ? (x.data?.length ?? 0) === 0 : x.error.code === "42501", JSON.stringify(x.error || x.data));
-  x = await asA.from(t).update({ company_id: B }).match(where(ra)).select(); rec("A cannot hand its row to B", !!x.error ? x.error.code === "42501" : (x.data?.length ?? 0) === 0, JSON.stringify(x.error || x.data));
+  x = await asA.from(t).upsert(payload(t, rb, { company_id: A }), { onConflict: pk.join(",") }).select(); rec("A cannot take over B's row by upsert", !x.error ? (x.data?.length ?? 0) === 0 : (x.error.code === "42501" || x.error.code === "23503"), JSON.stringify(x.error || x.data));
+  x = await asA.from(t).update({ company_id: B }).match(where(ra)).select(); rec("A cannot hand its row to B", !!x.error ? (x.error.code === "42501" || x.error.code === "23503") : (x.data?.length ?? 0) === 0, JSON.stringify(x.error || x.data));
   // Cross-company reference: A inserts a row of its own that points at B's parent. Positive control first.
   const fk = fks.find((f) => f.t.replace(/^public\./, "") === t && f.parent.replace(/^public\./, "") !== t && tenantTables.includes(f.parent.replace(/^public\./, "")) && !(fkOf(t, f.col)?.optionalRef));
   if (fk) {
@@ -159,7 +164,16 @@ for (const t of tenantTables) {
       else {
         draftForeign[fk.col] = foreignParent[fk.pcol];
         const bad = await asA.from(t).insert(payload(t, draftForeign)).select();
-        rec("A cannot reference B's parent row", !!bad.error && bad.error.code === "42501" && /cross-company/.test(bad.error.message || ""), JSON.stringify(bad.error || bad.data).slice(0, 200));
+        // The refusal must be indistinguishable from a reference to a parent that does not exist (no existence oracle for another company's ids).
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(foreignParent[fk.pcol]));
+        const missingValue = isUuid ? randomUUID() : "no-such-parent-" + RUN;
+        const draftMissing = { ...draftForeign, [fk.col]: missingValue };
+        const missing = await asA.from(t).insert(payload(t, draftMissing)).select();
+        const norm = (e) => e ? `${e.code}|${String(e.message)}|${String(e.details || "").replace(/\([^)]*\)=\([^)]*\)/g, "(K)=(V)")}` : "none";
+        const normForeign = (e) => e ? `${e.code}|${String(e.message)}|${String(e.details || "").replace(/\([^)]*\)=\([^)]*\)/g, "(K)=(V)")}` : "none";
+        rec("A cannot reference B's parent row, and the answer is the same as for a parent that does not exist",
+          !!bad.error && bad.error.code === "23503" && !!missing.error && normForeign(bad.error) === norm(missing.error),
+          JSON.stringify(bad.error || bad.data).slice(0, 160) + "  vs  " + JSON.stringify(missing.error || missing.data).slice(0, 160));
       }
     }
   } else r.checks["cross-company reference (no FK to another tenant table)"] = true;

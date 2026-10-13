@@ -1,0 +1,84 @@
+PASS: both companies sign in bound to their own company
+PASS: ALPHAAEF938: lead created
+PASS: ALPHAAEF938: quotation created
+PASS: ALPHAAEF938: contracting the lead created an invoice
+PASS: ALPHAAEF938: invoice is stored under co_alpha
+PASS: ALPHAAEF938: the atomic edit replaced the lines (2 lines, total 125000)
+PASS: ALPHAAEF938: every line belongs to co_alpha
+PASS: ALPHAAEF938: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: ALPHAAEF938: over-payment refused
+PASS: ALPHAAEF938: final payment accepted and the invoice is Paid with balance 0
+PASS: ALPHAAEF938: all payments carry co_alpha
+PASS: ALPHAAEF938: invoice document produced and contains its own lines and customer
+PASS: ALPHAAEF938: quotation document produced and contains its own customer
+PASS: ALPHAAEF938: document uploaded, stored under co_alpha
+PASS: BETAAEF938: lead created
+PASS: BETAAEF938: quotation created
+PASS: BETAAEF938: contracting the lead created an invoice
+PASS: BETAAEF938: invoice is stored under co_beta
+PASS: BETAAEF938: the atomic edit replaced the lines (2 lines, total 68000)
+PASS: BETAAEF938: every line belongs to co_beta
+PASS: BETAAEF938: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: BETAAEF938: over-payment refused
+PASS: BETAAEF938: final payment accepted and the invoice is Paid with balance 0
+PASS: BETAAEF938: all payments carry co_beta
+PASS: BETAAEF938: invoice document produced and contains its own lines and customer
+PASS: BETAAEF938: quotation document produced and contains its own customer
+PASS: BETAAEF938: document uploaded, stored under co_beta
+   invoice numbers: alpha INV-2026-0001, beta INV-2026-0001
+PASS: each company's first invoice is INV-<year>-0001: two independent sequences (run on a clean stack: seed --cleanup first)
+PASS: both companies hold the same invoice number without a conflict
+PASS: each company's counter stands at 1
+PASS: the founding company's invoice counter is untouched by the pilot companies' invoices (stays at 165)
+PASS: ALPHAAEF938->BETAAEF938: cannot read the invoice
+PASS: ALPHAAEF938->BETAAEF938: cannot get the invoice PDF
+FAIL: ALPHAAEF938->BETAAEF938: cannot get the quotation PDF - 200
+PASS: ALPHAAEF938->BETAAEF938: cannot edit the invoice
+PASS: ALPHAAEF938->BETAAEF938: cannot pay the invoice
+PASS: ALPHAAEF938->BETAAEF938: cannot delete the invoice
+PASS: ALPHAAEF938->BETAAEF938: cannot list the customer's documents
+FAIL: ALPHAAEF938->BETAAEF938: cannot upload onto the customer - 500
+FAIL: ALPHAAEF938->BETAAEF938: cannot change the lead - 200
+FAIL: ALPHAAEF938->BETAAEF938: cannot read the quotation versions - 200
+PASS: BETAAEF938->ALPHAAEF938: cannot read the invoice
+PASS: BETAAEF938->ALPHAAEF938: cannot get the invoice PDF
+FAIL: BETAAEF938->ALPHAAEF938: cannot get the quotation PDF - 200
+PASS: BETAAEF938->ALPHAAEF938: cannot edit the invoice
+PASS: BETAAEF938->ALPHAAEF938: cannot pay the invoice
+PASS: BETAAEF938->ALPHAAEF938: cannot delete the invoice
+PASS: BETAAEF938->ALPHAAEF938: cannot list the customer's documents
+FAIL: BETAAEF938->ALPHAAEF938: cannot upload onto the customer - 500
+FAIL: BETAAEF938->ALPHAAEF938: cannot change the lead - 200
+FAIL: BETAAEF938->ALPHAAEF938: cannot read the quotation versions - 200
+FAIL: the victims' invoices, lines, payments, documents and leads are byte-for-byte unchanged by all of those attacks
+PASS: ALPHAAEF938: its own stored file downloads through its signed link and is the file it uploaded
+PASS: ALPHAAEF938: the object key does not contain the other company's ids
+PASS: BETAAEF938: its own stored file downloads through its signed link and is the file it uploaded
+PASS: BETAAEF938: the object key does not contain the other company's ids
+PASS: alpha cannot fetch beta's file with alpha's signature (the signature belongs to one object)
+PASS: beta cannot fetch alpha's file with beta's signature
+PASS: a guessed signature is refused
+PASS: a file link without a signature is refused
+PASS: alpha's signature cannot be re-used for beta's key (key swapped in the URL)
+   swept (HTTP 200): alpha /api/state /api/admin/invoices /api/admin/invoices/contracted-ready /api/admin/finance/summary /api/admin/finance/projects /api/admin/finance/dashboard /api/export/leads | beta /api/state /api/admin/invoices /api/admin/invoices/contracted-ready /api/admin/finance/summary /api/admin/finance/projects /api/admin/finance/dashboard /api/export/leads
+FAIL: canary sweep: nothing of beta's (names, items, file text, ids, file links) appears in anything alpha received (18 responses and documents) - Beta Canary Customer AEF938, BETACANARYPANELAEF938, inv-1791907545390, lead-12e326de-21e9-4344-99c4-bb22959c24c0, cust-12e326de-21e9-4344-99c4-bb22959c24c0, doc-5389353a08d1607687fcea8a894220b7, Y3VzdC0xMmUzMjZkZS0yMWU5LTQzNDQtOTljNC1iYjIyOTU5YzI0YzAvNTM4OTM1M2EwOGQxNjA3Njg3ZmNlYThhODk0MjIwYjdfQkVUQUFFRjkzOC5wZGY, 0d7bed415706026ea5d8ed94576fce7d07b901bba58f36146c56954b5004f240
+FAIL: canary sweep: nothing of alpha's appears in anything beta received (18 responses and documents) - Alpha Canary Customer AEF938, ALPHACANARYPANELAEF938, inv-1791907545386, lead-f8d63368-aecd-4fab-85a6-e506d24a9b5a, cust-f8d63368-aecd-4fab-85a6-e506d24a9b5a, doc-9a7658f085739ec38e00217d2b7ae6c7, Y3VzdC1mOGQ2MzM2OC1hZWNkLTRmYWItODVhNi1lNTA2ZDI0YTliNWEvOWE3NjU4ZjA4NTczOWVjMzhlMDAyMTdkMmI3YWU2YzdfQUxQSEFBRUY5MzgucGRm, 027145eb1be58c9f8010eb385952bbbecc908009e0fa0e32600d2bed962ccd85
+PASS: the sweep really covered list, export and state endpoints for both companies
+PASS: sanity: each company's own canary IS visible to itself (the sweep can detect canaries)
+PASS: no invoice line, payment or document belongs to a different company than its parent
+PASS: each company's ledger equals its invoice header
+   KNOWN GAPS shown by this run (not hidden): both printable documents still carry the Sunchaser brand header, bank details and terms (settings are still one row per database); file links are non-expiring bearer links.
+
+56 passed, 11 failed
+Failed:
+ - ALPHAAEF938->BETAAEF938: cannot get the quotation PDF
+ - ALPHAAEF938->BETAAEF938: cannot upload onto the customer
+ - ALPHAAEF938->BETAAEF938: cannot change the lead
+ - ALPHAAEF938->BETAAEF938: cannot read the quotation versions
+ - BETAAEF938->ALPHAAEF938: cannot get the quotation PDF
+ - BETAAEF938->ALPHAAEF938: cannot upload onto the customer
+ - BETAAEF938->ALPHAAEF938: cannot change the lead
+ - BETAAEF938->ALPHAAEF938: cannot read the quotation versions
+ - the victims' invoices, lines, payments, documents and leads are byte-for-byte unchanged by all of those attacks
+ - canary sweep: nothing of beta's (names, items, file text, ids, file links) appears in anything alpha received (18 responses and documents)
+ - canary sweep: nothing of alpha's appears in anything beta received (18 responses and documents)

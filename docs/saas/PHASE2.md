@@ -1,5 +1,8 @@
 # Phase 2: company foundation
 
+> **Update 13 Oct 2026:** merged with the repair release, ownership checks inside the invoice definer paths, atomic per-company invoice numbers, the migration runner and the two-company proof are in `PILOT_FOUNDATION_REPORT.md`. Where this page and that report differ, the report is current.
+
+
 Status: **built and proven on a disposable database. Not run in production. Not pilot-ready** (see section 6).
 Branch `claude/saas-pilot-multi-company`, stacked on pull request #111.
 

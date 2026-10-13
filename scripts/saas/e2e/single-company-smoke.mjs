@@ -22,6 +22,10 @@ check("quotation creation works", qr.status < 300, String(qr.status));
 const contract = await j(await A(`/api/leads/${lead.id}`, { method: "PUT", body: JSON.stringify({ status: "Contracted" }) }));
 const inv = contract.contractProvision?.invoiceId;
 check("contracting creates the invoice", Boolean(inv));
+if (process.env.EXPECT_FIRST_FOUNDING_NUMBER) {
+  const num = psql(`select invoice_number from invoices where id='${inv}'`);
+  check(`the founding company's first invoice continues its history (${process.env.EXPECT_FIRST_FOUNDING_NUMBER}), it does not restart at 0001`, num === process.env.EXPECT_FIRST_FOUNDING_NUMBER, num);
+}
 const pay = await A(`/api/admin/invoices/${inv}/payments`, { method: "POST", body: JSON.stringify({ amount: 50000, paymentMethod: "Cash", paymentDate: "2026-10-09", clientRequestId: "flagoff-pay-0001" }) });
 check("payment recording works", pay.status < 300, String(pay.status));
 const pdf = await A(`/api/export/pdf/invoice/${inv}`);

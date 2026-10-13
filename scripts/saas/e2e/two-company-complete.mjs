@@ -16,6 +16,8 @@ let pass = 0, fail = 0; const failures = [];
 const check = (name, ok, detail = "") => { ok ? pass++ : (fail++, failures.push(name)); console.log(`${ok ? "PASS" : "FAIL"}: ${name}${detail && !ok ? " - " + detail : ""}`); };
 const json = async (r) => { try { return await r.json(); } catch { return {}; } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const FOUNDING_COUNTER = () => psql(`select coalesce((select last_value from document_counters where company_id='sunchaser' and kind='invoice' and period='${new Date().getFullYear()}'), -1)`);
+const FOUNDING_BEFORE = FOUNDING_COUNTER();
 const RUN = randomBytes(3).toString("hex").toUpperCase();
 const YEAR = new Date().getFullYear();
 
@@ -125,7 +127,7 @@ console.log(`   invoice numbers: alpha ${numA}, beta ${numB}`);
 check("each company's first invoice is INV-<year>-0001: two independent sequences (run on a clean stack: seed --cleanup first)", numA === `INV-${YEAR}-0001` && numB === `INV-${YEAR}-0001`, `${numA} / ${numB}`);
 check("both companies hold the same invoice number without a conflict", numA === numB && psql(`select count(*) from invoices where invoice_number='${numA}'`) === "2");
 check("each company's counter stands at 1", psql(`select string_agg(company_id||'='||last_value, ',' order by company_id) from document_counters where company_id in ('co_alpha','co_beta') and kind='invoice' and period='${YEAR}'`) === "co_alpha=1,co_beta=1");
-check("the founding company's counter is untouched by the pilot companies (still at its floor)", psql(`select last_value from document_counters where company_id='sunchaser' and kind='invoice' and period='${YEAR}'`) === "8");
+check(`the founding company's invoice counter is untouched by the pilot companies' invoices (stays at ${FOUNDING_BEFORE})`, FOUNDING_COUNTER() === FOUNDING_BEFORE && FOUNDING_BEFORE !== "-1");
 
 // ---------------------------------------------------------------- 2. cross-company attacks on records, PDFs, files
 const snap = (c) => psql(`select md5(coalesce((select string_agg(t::text,'|' order by id) from invoices t where id='${c.f.invoiceId}'),'') || coalesce((select string_agg(t::text,'|' order by id) from invoice_items t where invoice_id='${c.f.invoiceId}'),'') || coalesce((select string_agg(t::text,'|' order by id) from invoice_payments t where invoice_id='${c.f.invoiceId}'),'') || coalesce((select string_agg(t::text,'|' order by id) from customer_documents t where customer_id='${c.f.customerId}'),'') || coalesce((select string_agg(t::text,'|' order by id) from leads t where id='${c.f.lead.id}'),''))`);
