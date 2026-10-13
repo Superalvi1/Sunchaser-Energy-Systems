@@ -316,6 +316,11 @@ export async function restoreCompany(opts: RestoreOptions): Promise<RestoreRepor
         try { await db.query("set local session_replication_role = replica"); }
         catch (e) { if (cyclic.length) throw new BackupError("Tables in a foreign-key cycle need superuser access to restore."); }
       }
+      // Rows of every OTHER company, counted before and after (rows of this company are excluded): a restore that touches another company's
+      // rows cannot commit, whatever bug caused it.
+      const othersCount = async (n: string) => (await db.query(`select count(*)::int as n from public.${q(n)} where company_id is distinct from $1`, [m.company.id])).rows[0].n as number;
+      const othersBefore = new Map<string, number>();
+      for (const n of order) othersBefore.set(n, await othersCount(n));
       for (const n of [...order].reverse()) {
         await db.query(`delete from public.${q(n)} where company_id = $1`, [m.company.id]);
       }
@@ -360,6 +365,10 @@ export async function restoreCompany(opts: RestoreOptions): Promise<RestoreRepor
           const cross = await db.query(`select count(*)::int as n from public.${q(child)} c join public.${q(parent)} p on ${f.joincond} where c.company_id = $1 and p.company_id <> c.company_id`, [m.company.id]);
           if (cross.rows[0].n) throw new BackupError(`Verification failed: ${cross.rows[0].n} row(s) of ${child} reference a ${parent} of another company. Nothing was changed.`);
         }
+      }
+      for (const n of order) {
+        const after = await othersCount(n);
+        if (after !== othersBefore.get(n)) throw new BackupError(`Verification failed: the number of rows of other companies in ${n} changed (${othersBefore.get(n)} -> ${after}). Nothing was changed.`);
       }
       // memberships: restored where the user exists; never created for unknown users, never removed
       const members = JSON.parse(fs.readFileSync(path.join(opts.dir, "identity/memberships.json"), "utf8")) as Array<{ id: string; user_id: string; role: string; status: string; username?: string }>;

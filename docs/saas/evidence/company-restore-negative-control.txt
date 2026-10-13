@@ -1,0 +1,18 @@
+PASS: both companies are seeded
+PASS: export: every seeded table is in the archive in dependency order
+PASS: verify accepts the archive; it holds nothing of company B
+PASS: alpha is damaged and B and the founding company are not
+PASS: dry run changes nothing and plans the replacement
+PASS: the archive of A is refused for B
+PASS: a changed file is refused
+PASS: refusals changed nothing
+/home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/server/saas/companyBackup.ts:371
+        if (after !== othersBefore.get(n)) throw new BackupError(`Verification failed: the number of rows of other companies in ${n} changed (${othersBefore.get(n)} -> ${after}). Nothing was changed.`);
+                                                 ^
+
+BackupError: Verification failed: the number of rows of other companies in leads changed (1 -> 0). Nothing was changed.
+    at restoreCompany (/home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/server/saas/companyBackup.ts:371:50)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/scripts/saas/tests/company-restore-db.mjs:62:13
+
+Node.js v22.22.0
