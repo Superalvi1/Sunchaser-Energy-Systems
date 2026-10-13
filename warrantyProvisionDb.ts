@@ -1,3 +1,4 @@
+import { usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
 import { maybeSyncWarrantyCertificateDocument } from "./warrantyCertificateDb.js";
 import {
@@ -214,7 +215,8 @@ function buildComponentSpecs(
   }
 
   return {
-    brand: "Sunchaser Energy Systems",
+    // The installer is the company issuing the warranty: another company's installation is never recorded under Sunchaser's name.
+    brand: usesNeutralIdentity() ? "Installer" : "Sunchaser Energy Systems",
     model: "Installation & Workmanship",
   };
 }

@@ -371,6 +371,7 @@ import { createPostgrestCompanyStore, listCompanyMemberUserIds } from "./server/
 import { assertMultiCompanyConfig, FOUNDING_COMPANY_ID, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
 import { getCompanyContext, runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
 import { usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
+import { moduleFlags, AUTOSIZER_DISABLED_MESSAGE } from "./server/saas/moduleGate.ts";
 import { registerCompanySettingsRoutes } from "./server/saas/companySettingsApi.ts";
 import { registerPlatformRoutes } from "./server/saas/platformApi.ts";
 import { planLimitMiddleware } from "./server/saas/subscriptionLimits.ts";
@@ -5263,6 +5264,7 @@ app.get("/api/state", async (req, res) => {
       );
       return res.json({
         ...scopedState,
+        ...(isMultiCompanyEnabled() ? { documentIdentity: { neutral: usesNeutralIdentity() }, modules: moduleFlags() } : {}),
         stats: getDashboardStats(scopedState),
         currentUser: null
       });
@@ -6435,6 +6437,9 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
   const { lead, resolved, supabase } = ctx;
 
   const resolvedQuoteType = quote_type === "auto_sizer" ? "auto_sizer" : "manual_boq";
+  if (resolvedQuoteType === "auto_sizer" && !moduleFlags().autoSizer) {
+    return res.status(403).json({ error: AUTOSIZER_DISABLED_MESSAGE, code: "module_disabled" });
+  }
   if (resolvedQuoteType === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
     return res.status(403).json({ error: "Auto Sizer quote creation is temporarily disabled. Use Manual BOQ Builder." });
   }
@@ -6658,6 +6663,9 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
   const { lead, resolved, supabase } = ctx;
 
+  if (payload.quote_type === "auto_sizer" && !moduleFlags().autoSizer) {
+    return res.status(403).json({ error: AUTOSIZER_DISABLED_MESSAGE, code: "module_disabled" });
+  }
   if (payload.quote_type === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
     return res.status(403).json({ error: "Auto Sizer quote updates are temporarily disabled." });
   }

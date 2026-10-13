@@ -1,3 +1,4 @@
+import { autoSizerEnabled } from "../lib/workspaceModules";
 import React, { useEffect, useState } from "react";
 import {
   TrendingUp,
@@ -578,7 +579,7 @@ export default function AdminApp({
 
             {/* Inner Sub-Tab Selector Navigation */}
             <div className="flex gap-1.5 bg-neutral-950 p-1.5 rounded-2xl border border-neutral-850 flex-wrap">
-              {(['pages', 'banks', 'terms', 'ceo', 'structures', 'settings', 'autosizer'] as const).map((sub) => (
+              {(['pages', 'banks', 'terms', 'ceo', 'structures', 'settings', 'autosizer'] as const).filter((sub) => sub !== 'autosizer' || autoSizerEnabled()).map((sub) => (
                 <button
                   key={sub}
                   onClick={() => {

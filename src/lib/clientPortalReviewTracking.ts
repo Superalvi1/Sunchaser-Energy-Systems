@@ -1,3 +1,4 @@
+import { qrDataUri } from "./localQr.ts";
 const STORAGE_PREFIX = "sunchaser_google_review_done_";
 
 export function googleReviewStorageKey(customerId: string): string {
@@ -15,5 +16,5 @@ export function markGoogleReviewComplete(customerId: string): void {
 }
 
 export function googleReviewQrImageUrl(reviewUrl: string, size = 180): string {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(reviewUrl)}`;
+  return qrDataUri(reviewUrl, size); // generated locally; the link is not sent to any QR service
 }

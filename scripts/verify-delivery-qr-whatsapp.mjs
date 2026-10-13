@@ -158,7 +158,7 @@ async function main() {
 
   console.log("\n12) Challan PDF HTML includes QR");
   const challanHtml = await delivery.renderDeliveryChallanHtml(ch1.id, localDb);
-  check("challan PDF has QR", challanHtml.includes("qrserver.com"));
+  check("challan PDF has QR", challanHtml.includes("data:image/svg+xml") && !challanHtml.includes("qrserver.com"));
   check("challan PDF has verify text", challanHtml.includes("Scan this QR code"));
 
   console.log("\n13-16) Delivery #2 + public dispute");

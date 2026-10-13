@@ -1,3 +1,5 @@
+import { setWorkspaceModules } from "../lib/workspaceModules";
+import { setAuthoringIdentityNeutral } from "../lib/quoteAuthoring";
 import { Lead, Ticket, AppState, Quote, User, Product } from "../types";
 import {
   CONNECTION_ERROR_MESSAGE,
@@ -189,7 +191,10 @@ export async function fetchAppState(): Promise<AppState> {
       logApiFailure("fetchAppState", url, res.status, body);
       throw new Error(CONNECTION_ERROR_MESSAGE);
     }
-    return res.json();
+    const state = await res.json();
+    setWorkspaceModules(state?.modules);
+    setAuthoringIdentityNeutral(state?.documentIdentity?.neutral === true);
+    return state;
   } catch (err) {
     if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
     logApiFailure("fetchAppState", url, null, {}, err);

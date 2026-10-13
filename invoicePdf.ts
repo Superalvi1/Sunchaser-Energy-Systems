@@ -4,6 +4,7 @@ import type { InvoiceProjectInfo } from "./src/lib/invoicePdfMeta.ts";
 import type { InvoicePdfOptions } from "./invoicePdfResolve.ts";
 import { stripInvoiceMeta } from "./src/lib/invoicePdfMeta.ts";
 import { identityDefault, isNeutralBranding } from "./src/lib/documentIdentity.ts";
+import { qrDataUri } from "./src/lib/localQr.ts";
 
 export type BrandingConfig = {
   companyName?: string;
@@ -138,7 +139,7 @@ function paymentQrUrl(invoice: InvoiceRecord, branding: BrandingConfig): string 
     `Balance: ${fmt(invoice.balanceDue)}`,
     `Due: ${formatDate(invoice.dueDate)}`,
   ].join("\n");
-  return `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(text)}`;
+  return qrDataUri(text, 140); // generated locally; the invoice details are not sent to any QR service
 }
 
 function statusBadgeClass(status: string): string {

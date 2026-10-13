@@ -1,3 +1,4 @@
+import { identityDefault, isNeutralBranding } from "./src/lib/documentIdentity.ts";
 import type { CompanyBranding } from "./src/lib/branding.ts";
 import { WARRANTY_COMPONENT_TYPES } from "./src/lib/clientPortalPhase2.ts";
 
@@ -33,7 +34,8 @@ export function compileWarrantyCertificatePDFHtml(
   branding: CompanyBranding
 ) {
   const company = branding.companyName;
-  const logo = branding.logoUrl || "/assets/sunchaser-logo.png";
+  const neutral = isNeutralBranding(branding);
+  const logo = branding.logoUrl || identityDefault(neutral, "/assets/sunchaser-logo.png", "");
   const primary = branding.primaryColor || "#f59e0b";
 
   const componentRows = data.components
@@ -82,7 +84,7 @@ export function compileWarrantyCertificatePDFHtml(
   <div class="wrap">
     <div class="head">
       <div>
-        <img class="logo" src="${esc(logo)}" alt="${esc(company)}"/>
+        ${logo ? `<img class="logo" src="${esc(logo)}" alt="${esc(company)}"/>` : ""}
         <h1>${esc(company)}</h1>
         <div style="font-size:10px;color:#64748b">${esc(branding.officeAddress)}</div>
         <div style="font-size:10px;color:#64748b">${esc(branding.phoneNumbers)}</div>

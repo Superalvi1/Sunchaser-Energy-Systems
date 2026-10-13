@@ -42,6 +42,9 @@ const RULES: Rule[] = [
   { prefix: "/api/admin/customer-linking", scope: "founding_only" },
   { prefix: "/api/admin/backfill-client-profiles", scope: "founding_only" },
   { prefix: "/api/admin/website-catalog-sync", scope: "founding_only" },
+  // AutoSizer prices from Sunchaser's own price list: no per-company price book yet (server/saas/moduleGate.ts).
+  { prefix: "/api/admin/autosizer-presets", scope: "founding_only" },
+  { prefix: "/api/export/pdf/auto-sizer/", scope: "founding_only" },
   { prefix: "/api/admin/whatsapp", scope: "founding_only" },
   { prefix: "/api/admin/", scope: "company" },
   { prefix: "/api/customer-portal/", scope: "company" },

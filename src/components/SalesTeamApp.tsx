@@ -1,3 +1,4 @@
+import { autoSizerEnabled } from "../lib/workspaceModules";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, Link2, 
@@ -2281,7 +2282,7 @@ export default function SalesTeamApp({
         : resolveQuoteValidityDays(quote, { companyTerms, settings }).days
     );
     if (quote.termsAndConditions) setTermsAndConditions(quote.termsAndConditions);
-    setActiveModule(quote.quote_type === "auto_sizer" ? "sizer" : "boq_builder");
+    setActiveModule(quote.quote_type === "auto_sizer" && autoSizerEnabled() ? "sizer" : "boq_builder");
   };
 
   const resolvePageLayoutMode = (page: any) =>
@@ -3384,7 +3385,7 @@ export default function SalesTeamApp({
               >
                 {[
                   { id: 'smart_quote_leads', label: `Smart Quote Leads (${smartQuoteLeads.length})`, icon: Inbox },
-                  { id: 'sizer', label: 'Auto Sizer', icon: Sparkles },
+                  ...(autoSizerEnabled() ? [{ id: 'sizer' as const, label: 'Auto Sizer', icon: Sparkles }] : []),
                   ...(PROPOSAL_STUDIO_ENABLED
                     ? [{ id: 'proposal_studio' as const, label: 'Proposal Studio', icon: LayoutGrid }]
                     : []),
