@@ -26,7 +26,7 @@ REPORT_DIR="${REPORT_DIR:-$REPO/ci-report-stack}"
 WORK="$(mktemp -d)"
 POSTGREST_MODE="${POSTGREST_MODE:-docker}"
 POSTGREST_IMAGE="${POSTGREST_IMAGE:-postgrest/postgrest:v16.4@sha256:d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df}"  # docs/ops/POSTGREST_PIN.md
-export TEST_PW="${TEST_PW:-CiSynthetic-Pass-9x!}"
+export TEST_PW="${TEST_PW:-$(openssl rand -hex 12)Aa1!}"  # throw-away password of the synthetic users
 mkdir -p "$REPORT_DIR"; : > "$REPORT_DIR/summary.md"
 PIDS=(); PGRST_CONTAINER=""
 cleanup() {
