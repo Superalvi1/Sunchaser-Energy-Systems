@@ -196,7 +196,8 @@ check("alpha's link without the expiry does not become a permanent link", (await
 check("a file link without a signature is refused", (await fetch(`${BASE}/api/storage/object/${CO.alpha.link.ns}/${CO.alpha.link.key}`)).status === 403);
 check("alpha's signature cannot be re-used for beta's key (key swapped in the URL)", (await fetch(`${BASE}/api/storage/object/${CO.alpha.link.ns}/${CO.beta.link.key}?exp=${expOf(CO.alpha)}&sig=${CO.alpha.link.sig}`)).status === 403);
 // An old permanent (v1) link is never honoured for a company's prefixed key. The harness knows the stack's synthetic signing secret.
-const SECRET = (fs.readFileSync(process.env.E2E_ENV_FILE || "/srv/saas-c1/env.sh", "utf8").match(/RAILWAY_OBJECT_PROXY_SECRET=([0-9a-f]+)/) || [])[1];
+// The stack's object-link secret: from the environment (CI), else from the stack's env file (the local scratch stack).
+const SECRET = process.env.RAILWAY_OBJECT_PROXY_SECRET || (fs.readFileSync(process.env.E2E_ENV_FILE || "/srv/saas-c1/env.sh", "utf8").match(/RAILWAY_OBJECT_PROXY_SECRET=([0-9a-f]+)/) || [])[1];
 const v1 = (ns, key) => createHmac("sha256", SECRET).update(`${ns}\n${key}`).digest("hex");
 const keyOf = (c) => Buffer.from(c.link.key, "base64url").toString();
 check("a permanent (v1) link for alpha's key, signed with the real secret, is refused", (await fetch(`${BASE}/api/storage/object/${CO.alpha.link.ns}/${CO.alpha.link.key}?sig=${v1(CO.alpha.link.ns, keyOf(CO.alpha))}`)).status === 403);
@@ -212,7 +213,8 @@ check("authorised access: a path-traversal key is refused", (await CO.beta.api(`
 const founding = Buffer.from("smart-quotes/some-lead/q.pdf").toString("base64url");
 check("authorised access: a company cannot ask for a founding-company (unprefixed) key", (await CO.alpha.api(`/api/company/files/customer-documents/${founding}`)).status === 404);
 // A founding-company link in the old permanent form keeps working (Sunchaser's stored links are not broken).
-check("a founding-company permanent link (existing stored links) still works while STORAGE_LEGACY_LINKS is not off", (await fetch(`${BASE}/api/storage/object/customer-documents/${founding}?sig=${v1("customer-documents", "smart-quotes/some-lead/q.pdf")}`)).status === 404, "404 = signature accepted, object does not exist");
+const legacyLink = await fetch(`${BASE}/api/storage/object/customer-documents/${founding}?sig=${v1("customer-documents", "smart-quotes/some-lead/q.pdf")}`);
+check("a founding-company permanent link (existing stored links) still works while STORAGE_LEGACY_LINKS is not off", legacyLink.status === 404, `404 = signature accepted, object does not exist; got ${legacyLink.status} ${(await legacyLink.text()).slice(0, 120)}`);
 // Expiry: wait out the (short) lifetime of the link minted at upload, then it must be dead while a freshly issued one works.
 const ttl = Number(process.env.STORAGE_LINK_TTL_SECONDS || 0);
 if (ttl) {

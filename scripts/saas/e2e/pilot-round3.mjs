@@ -223,7 +223,9 @@ const newLead = (c, tag) => c.api("/api/leads", { method: "POST", body: JSON.str
   check(`with a limit of 0 MB every new upload is refused (${u4.status}) but existing files and reading are untouched`, u4.status === 402 && (await a.api("/api/state")).status === 200 && psql(`select count(*) from customer_documents where company_id='co_alpha' and title in ('co_alpha first ${RUN}','co_alpha third ${RUN}')`) === "2");
   await opSend("/api/platform/companies/co_alpha", { limitOverrides: {} });
 }
-// leave the subscriptions in a clean, valid state for the other journeys
+// leave the subscriptions in a clean, valid state for the other journeys. The application caches a company's limits for 15 seconds, so wait that
+// out: the next journey must not meet this journey's "0 MB" limit.
+await sleep(16000);
 psql(`update saas_subscriptions set current_period_end='${dayStr(30)}', limit_overrides='{}'::jsonb where company_id in ('co_alpha','co_beta')`);
 
 // ------------------------------------------------------------------ F. company settings: permissions and audit history

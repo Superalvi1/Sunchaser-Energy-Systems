@@ -65,14 +65,16 @@ async function fill(c) {
   c.docs = [];
   for (const i of [1, 2]) {
     const bytes = miniPdf(`${c.t}CANARYFILE${i}`);
-    const r = await json(await c.api("/api/admin/customer-documents/upload", { method: "POST", body: JSON.stringify({ customerId: c.customerId, documentType: "other", title: `${c.t} document ${i}`, fileName: `${c.t}-${i}.pdf`, mimeType: "application/pdf", base64Data: bytes.toString("base64"), clientUploadId: `${c.t.toLowerCase()}-up-${i}` }) }));
+    const ur = await c.api("/api/admin/customer-documents/upload", { method: "POST", body: JSON.stringify({ customerId: c.customerId, documentType: "other", title: `${c.t} document ${i}`, fileName: `${c.t}-${i}.pdf`, mimeType: "application/pdf", base64Data: bytes.toString("base64"), clientUploadId: `${c.t.toLowerCase()}-up-${i}` }) });
+    const r = await json(ur);
+    if (!r.id) c.uploadProblem = `${c.id} upload ${i}: HTTP ${ur.status} ${JSON.stringify(r).slice(0, 160)}`;
     c.docs.push({ id: r.id, bytes, hash: sha(bytes) });
   }
   c.number = psql(`select invoice_number from invoices where id='${c.invoiceId}'`);
 }
 await Promise.all([fill(CO.alpha), fill(CO.beta)]);
 const A = CO.alpha, B = CO.beta;
-check("both companies are filled: invoice, payment, quotation, two documents, settings", [A, B].every((c) => c.invoiceId && c.docs.every((d) => d.id) && psql(`select count(*) from invoice_payments where invoice_id='${c.invoiceId}'`) === "1"));
+check("both companies are filled: invoice, payment, quotation, two documents, settings", [A, B].every((c) => c.invoiceId && c.docs.every((d) => d.id) && psql(`select count(*) from invoice_payments where invoice_id='${c.invoiceId}'`) === "1"), [A, B].map((c) => c.uploadProblem).filter(Boolean).join("; "));
 const keysOf = async (c) => (await Promise.all(["customer-documents", "quote-assets"].map((ns) => listRailwayObjects(ns, `c/${c.id}/`)))).flat().length;
 check("each company has stored documents under its own prefix", (await keysOf(A)) >= 2 && (await keysOf(B)) >= 2);
 

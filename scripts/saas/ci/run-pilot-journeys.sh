@@ -100,7 +100,7 @@ mkdir -p "$WORK/s3/objects"
 SUDO=""; [ "$(id -u)" != 0 ] && SUDO="sudo"
 grep -q "testbucket.s3.local" /etc/hosts || echo "127.0.0.1 s3.local testbucket.s3.local" | $SUDO tee -a /etc/hosts > /dev/null || die "could not add s3.local to /etc/hosts"
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/s3/key.pem" -out "$WORK/s3/cert.pem" -days 2 -subj "/CN=s3.local" -addext "subjectAltName=DNS:s3.local,DNS:testbucket.s3.local" 2>/dev/null || die "certificate"
-( cd "$WORK/s3" && S3_PORT="$S3_PORT" node "$REPO/scripts/e2e-crm-repair/s3-mock.mjs" "$WORK/s3/objects" > "$REPORT_DIR/s3.log" 2>&1 ) & PIDS+=($!)
+( cd "$WORK/s3" && exec env S3_PORT="$S3_PORT" node "$REPO/scripts/e2e-crm-repair/s3-mock.mjs" "$WORK/s3/objects" ) > "$REPORT_DIR/s3.log" 2>&1 & PIDS+=($!)  # exec: the recorded pid IS the node process
 sleep 2
 
 # -------------------------------------------------------------------------------------------------------------------------------- application

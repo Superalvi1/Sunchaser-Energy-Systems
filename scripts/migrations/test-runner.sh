@@ -130,10 +130,10 @@ psql $E2E_ADMIN -d t_run2 -qc "insert into app.config (key, value) values ('docu
 OUT="$($R apply --yes 2>&1)"; rc=$?; check "with the floor set t3 applies" "$rc" "0"
 OUT="$($R verify 2>&1)"; check "verify is clean with all nine applied" "$(has '^OK' "$OUT")" "yes"
 OUT="$($R rollback --to t1-company-foundation --yes 2>&1)"; rc=$?
-check "rollback t5, t4, t3, t2, t1 in reverse order" "$(echo "$OUT" | grep -oE 'Rolling back t[0-9]-[a-z-]+' | tr '\n' ' ')" "Rolling back t5-subscriptions Rolling back t4-company-settings Rolling back t3-document-numbering Rolling back t2-ownership Rolling back t1-company-foundation "
+check "rollback t7, t6, t5, t4, t3, t2, t1 in reverse order" "$(echo "$OUT" | grep -oE 'Rolling back t[0-9]-[a-z-]+' | tr '\n' ' ')" "Rolling back t7-company-admin Rolling back t6-invoice-issuance-snapshot Rolling back t5-subscriptions Rolling back t4-company-settings Rolling back t3-document-numbering Rolling back t2-ownership Rolling back t1-company-foundation "
 check "the company foundation is gone and the release migrations remain" "$(L t_run2 "select to_regclass('public.companies') is null and to_regprocedure('public.invoice_save_atomic(text,timestamptz,jsonb,jsonb)') is not null")" "t"
-OUT="$($R apply --yes 2>&1)"; check "everything applies again after the rollback (the floor is still set)" "$(L t_run2 "select count(*) from ops.migration_ledger where status='ok' and action='apply' and migration_id like 't%'")" "10"
+OUT="$($R apply --yes 2>&1)"; check "everything applies again after the rollback (the floor is still set)" "$(L t_run2 "select count(*) from ops.migration_ledger where status='ok' and action='apply' and migration_id like 't%'")" "14"
 OUT="$($R verify 2>&1)"; check "final verify is clean" "$(has '^OK' "$OUT")" "yes"
-OUT="$($R rollback --to r1-smart-quote-versions 2>&1)"; check "rollback of an early migration lists the dependents first (dry run)" "$(echo "$OUT" | grep -oE 'roll back [a-z0-9-]+' | head -1)" "roll back t5-subscriptions"
+OUT="$($R rollback --to r1-smart-quote-versions 2>&1)"; check "rollback of an early migration lists the dependents first (dry run)" "$(echo "$OUT" | grep -oE 'roll back [a-z0-9-]+' | head -1)" "roll back t7-company-admin"
 
 echo; echo "$ok passed, $bad failed"; [ "$bad" = 0 ]
