@@ -2,9 +2,9 @@
 # Tests the migration runner on a DISPOSABLE server. Part 1: runner mechanics with tiny synthetic migrations (apply order, checksums, drift,
 # failure, dependencies, rollback order, dry run, concurrency lock, ledger tamper, remote refusal). Part 2: the REAL manifest on a database
 # that already has the release migrations: baseline r1-r4, apply t1-t3, verify, roll back t3-t1, apply again.
-#   E2E_ADMIN="-h /srv/s -p 55432 -U postgres" E2E_BASE_DUMP=/srv/s/release.dump bash scripts/migrations/test-runner.sh
+#   E2E_ADMIN="-h /srv/s -p 55432 -U postgres" bash scripts/migrations/test-runner.sh
 set -uo pipefail
-: "${E2E_ADMIN:?}" "${E2E_BASE_DUMP:?}"
+: "${E2E_ADMIN:?}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; REPO="$HERE/../.."
 RUN="node $HERE/run.mjs"
 HOSTARG="$(echo "$E2E_ADMIN" | sed -nE 's/.*-h ([^ ]+).*/\1/p')"; PORTARG="$(echo "$E2E_ADMIN" | sed -nE 's/.*-p ([^ ]+).*/\1/p')"; USERARG="$(echo "$E2E_ADMIN" | sed -nE 's/.*-U ([^ ]+).*/\1/p')"
@@ -114,8 +114,9 @@ check "--allow-remote alone is not enough" "$([ $rc -eq 2 ] && echo refused)" "r
 
 # ---------------------------------------------------------------- part 2: the real manifest on a database with the release migrations
 export PGDATABASE=t_run2
-psql $E2E_ADMIN -d postgres -qc "drop database if exists t_run2 with (force)" -c "create database t_run2" >/dev/null 2>&1
-pg_restore $E2E_ADMIN -d t_run2 --no-owner "$E2E_BASE_DUMP" >/dev/null 2>&1 || true
+E2E_ADMIN="$E2E_ADMIN" bash "$REPO/scripts/saas/tests/mkdb.sh" t_run2 >/dev/null 2>&1
+# mkdb clones the template, which already has r1-r4 in ITS ledger; start this database with no ledger, like a database that was migrated by hand
+psql $E2E_ADMIN -d t_run2 -qc "drop schema if exists ops cascade" >/dev/null 2>&1
 R="$RUN --root $REPO"
 OUT="$($R verify 2>&1)"; rc=$?; check "release migrations applied by hand are noticed (probe present, not in ledger)" "$([ $rc -ne 0 ] && echo noticed)$(has 'applied by hand' "$OUT")" "noticedyes"
 OUT="$($R baseline --through t1-company-foundation --yes 2>&1)"; rc=$?; check "baseline refuses a migration whose effect is absent (t1 not applied)" "$([ $rc -ne 0 ] && echo refused)$(has 'Cannot baseline t1' "$OUT")" "refusedyes"

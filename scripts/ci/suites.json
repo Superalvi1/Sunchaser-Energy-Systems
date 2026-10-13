@@ -64,6 +64,10 @@
     {
       "script": "test:whatsapp-sales-agent",
       "area": "WhatsApp AI agent approval rules"
+    },
+    {
+      "script": "test:saas",
+      "area": "company foundation: scope policy, resolver, classification of every table, generated SQL up to date, migration manifest"
     }
   ],
   "tracked": [
@@ -136,6 +140,10 @@
     {
       "script": "test:marketplace-ws6b",
       "area": "marketplace / database suite that starts its own Postgres container"
+    },
+    {
+      "script": "test:saas-db",
+      "area": "SaaS database tests against real PostgreSQL (16 and 17): foundation migration, company ownership in invoice definer paths, atomic per-company invoice numbers incl. concurrency, migration runner with ledger"
     }
   ]
 }

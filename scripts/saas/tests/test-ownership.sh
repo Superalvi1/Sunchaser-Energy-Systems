@@ -2,9 +2,9 @@
 # Proves the company-ownership migration (phase2b) on a DISPOSABLE database built from a release-schema dump:
 #   foundation -> tests FAIL (the released functions have the defects) -> phase2b twice (idempotent) -> tests PASS
 #   -> rollback restores the released function definitions exactly and the tests fail again -> phase2b again -> PASS
-#   E2E_ADMIN="-h /srv/s -p 55432 -U postgres" E2E_BASE_DUMP=/srv/s/release.dump bash scripts/saas/tests/test-ownership.sh
+#   E2E_ADMIN="-h /srv/s -p 55432 -U postgres" bash scripts/saas/tests/test-ownership.sh
 set -euo pipefail
-: "${E2E_ADMIN:?}" "${E2E_BASE_DUMP:?}"
+: "${E2E_ADMIN:?}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; SAAS="$HERE/.."
 DB="${OWN_DB:-t_own_$$}"
 bash "$HERE/mkdb.sh" "$DB" > /dev/null

@@ -2,9 +2,9 @@
 # Proves atomic per-company document numbering (phase2c) on a DISPOSABLE database built from a release-schema dump:
 #   refusal without a floor -> history preserved (never restarts at 0001) -> per-company independence -> concurrency (pgbench)
 #   -> privileges -> rollback/re-apply.
-#   E2E_ADMIN="-h /srv/s -p 55432 -U postgres" E2E_BASE_DUMP=/srv/s/release.dump bash scripts/saas/tests/test-numbering.sh
+#   E2E_ADMIN="-h /srv/s -p 55432 -U postgres" bash scripts/saas/tests/test-numbering.sh
 set -euo pipefail
-: "${E2E_ADMIN:?}" "${E2E_BASE_DUMP:?}"
+: "${E2E_ADMIN:?}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; SAAS="$HERE/.."
 DB="${NUM_DB:-t_num_$$}"; YEAR="$(date -u +%Y)"
 bash "$HERE/mkdb.sh" "$DB" > /dev/null
@@ -51,24 +51,25 @@ check "the prefix is formatting only: a company that changes it continues its se
 
 # 4. concurrency: 16 clients x 40 calls for each of two companies at the same time -> every number distinct, none skipped
 $P -c "create schema if not exists zz; drop table if exists zz.nums; create table zz.nums (company text, n text); grant all on schema zz to public; grant all on zz.nums to public"
-for c in co_a co_b; do
-  cat > "/tmp/num-$c-$$.sql" <<SQL
-begin;
-select set_config('request.headers', '{"x-company-id":"$c"}', true);
-insert into zz.nums select '$c', public.next_document_number('invoice','INV','$YEAR');
-commit;
-SQL
-done
 START_A="$($Q -c "select last_value from document_counters where company_id='co_a' and kind='invoice' and period='$YEAR'")"
 START_B="$($Q -c "select last_value from document_counters where company_id='co_b' and kind='invoice' and period='$YEAR'")"
-(pgbench $E2E_ADMIN -n -c 16 -j 4 -t 40 -f "/tmp/num-co_a-$$.sql" "$DB" > /tmp/pgb-a-$$.log 2>&1 &) ; pgbench $E2E_ADMIN -n -c 16 -j 4 -t 40 -f "/tmp/num-co_b-$$.sql" "$DB" > /tmp/pgb-b-$$.log 2>&1; sleep 2
+# 16 workers per company, 40 numbers each, all at once: every worker is its own psql process and its own transaction per number.
+worker() { # company
+  local f; f="$(mktemp)"
+  for _ in $(seq 1 40); do
+    printf "begin; select set_config('request.headers', '{\"x-company-id\":\"%s\"}', true); insert into zz.nums select '%s', public.next_document_number('invoice','INV','%s'); commit;\n" "$1" "$1" "$YEAR" >> "$f"
+  done
+  psql $E2E_ADMIN -d "$DB" -q -v ON_ERROR_STOP=1 -f "$f" > /dev/null 2>&1; rm -f "$f"
+}
+PIDS=""
+for i in $(seq 1 16); do worker co_a & PIDS="$PIDS $!"; worker co_b & PIDS="$PIDS $!"; done
+wait $PIDS
 check "concurrent callers: 640 numbers handed out for company A" "$($Q -c "select count(*) from zz.nums where company='co_a'")" "640"
 check "concurrent callers: 640 numbers handed out for company B" "$($Q -c "select count(*) from zz.nums where company='co_b'")" "640"
 check "concurrent callers: no number given out twice (A)" "$($Q -c "select count(*)-count(distinct n) from zz.nums where company='co_a'")" "0"
 check "concurrent callers: no number given out twice (B)" "$($Q -c "select count(*)-count(distinct n) from zz.nums where company='co_b'")" "0"
 check "concurrent callers: A's numbers are exactly the next 640 in a row" "$($Q -c "select min(substring(n from '[0-9]+\$')::int) || '-' || max(substring(n from '[0-9]+\$')::int) from zz.nums where company='co_a'")" "$((START_A+1))-$((START_A+640))"
 check "concurrent callers: B's numbers are exactly the next 640 in a row" "$($Q -c "select min(substring(n from '[0-9]+\$')::int) || '-' || max(substring(n from '[0-9]+\$')::int) from zz.nums where company='co_b'")" "$((START_B+1))-$((START_B+640))"
-rm -f /tmp/num-co_*-$$.sql /tmp/pgb-*-$$.log
 
 # 5. privileges and misuse
 check "the tenant role cannot read the counters directly" "$(as crm_tenant co_a "select * from public.document_counters" | grep -c 'permission denied')" "1"
