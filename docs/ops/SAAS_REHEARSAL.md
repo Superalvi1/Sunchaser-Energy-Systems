@@ -1,6 +1,6 @@
 # SaaS tenant-migration rehearsal on a restored production copy
 
-Separate from the release rehearsal (`MAC_RESTORE_REHEARSAL.md`). **Nothing here touches production.** It runs on the scratch server only and refuses a remote host or a database whose name looks like production. Status: the script is proven on a synthetic copy (`docs/saas/evidence/saas-rehearsal-synthetic.txt`, 0 failures); it has **not** been run on a real production backup (the owner has not returned the Mac rehearsal result, and no production access was used).
+Separate from the release rehearsal (`MAC_RESTORE_REHEARSAL.md`). **Nothing here touches production.** It runs on the scratch server only and refuses a remote host or a database whose name looks like production. Status: the script covers all seven tenant migrations (t1 to t7) and is proven on a synthetic copy (`docs/saas/evidence/round3/saas-rehearsal-synthetic-t1-t7.txt`, 0 failures; the earlier t1-t5 run is `docs/saas/evidence/saas-rehearsal-synthetic.txt`); it has **not** been run on a real production backup (the owner has not returned the Mac rehearsal result, and no production access was used).
 
 ## When
 After the release rehearsal has restored the backup into the scratch server (database `restore_rehearsal`) and the release migrations r1-r4 are applied there. Keep the release rehearsal's pinned commit rule: check out the same pinned commit, then the SaaS branch commit under test.

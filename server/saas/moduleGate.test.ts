@@ -20,6 +20,10 @@ test("AutoSizer API paths are founding-only, so another company gets 'not found'
   assert.equal(resolveCompanyScope("GET", "/api/export/pdf/quotation/lead-1"), "company"); // other PDFs are unaffected
 });
 
+test("the WhatsApp inbox API is founding-only (it needs a WhatsApp connection, which only the founding company has)", () => {
+  for (const p of ["/api/inbox/threads", "/api/inbox", "/api/conversations", "/api/conversations/c1/messages"]) assert.equal(resolveCompanyScope("GET", p), "founding_only", p);
+});
+
 test("after-sales (delivery, warranty, handover) is off for another company and on for the founding company", () => {
   runWithCompany({ companyId: "acme" }, () => assert.equal(moduleFlags(ON).afterSales, false));
   runWithCompany({ companyId: "sunchaser" }, () => assert.equal(moduleFlags(ON).afterSales, true));

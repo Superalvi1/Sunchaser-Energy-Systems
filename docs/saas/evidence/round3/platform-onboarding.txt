@@ -1,0 +1,44 @@
+PASS: a platform administrator can open the overview
+PASS: a company administrator is refused on GET /api/platform/overview
+PASS: a company administrator is refused on GET /api/platform/plans
+PASS: a company administrator is refused on POST /api/platform/companies
+PASS: a company administrator is refused on PATCH /api/platform/companies/co_beta
+PASS: a company administrator is refused on POST /api/platform/companies/co_beta/payments
+PASS: a company administrator is refused on POST /api/platform/companies/co_beta/members
+PASS: a company administrator is refused on GET /api/platform/audit
+PASS: a company administrator is refused on PUT /api/platform/plans/x
+PASS: no token, no platform API
+PASS: the operator defines a plan with limits
+PASS: onboarding creates the company and returns the administrator's temporary password once
+PASS: company, trial subscription, administrator, membership, neutral branding and PDF settings all exist (one transaction)
+PASS: the stored password is a hash, and the plain temporary password appears in no row of the audit trail
+PASS: a duplicate administrator username is refused and leaves no company behind
+PASS: an invalid company id and the founding id are refused
+PASS: the new administrator signs in with the temporary password, bound to the new company
+PASS: the new company starts empty and sees nothing of any other company
+PASS: it can save its own branding
+PASS: it cannot reach the platform API
+PASS: the plan limit of 3 leads: three are created, the fourth is refused with a clear 402
+PASS: the refusal names the limit and tells the user whom to contact
+PASS: the database holds exactly 3 leads for the company
+ERROR:  limit_exceeded:max_leads:3
+HINT:  The plan limit of this company is reached.
+CONTEXT:  PL/pgSQL function enforce_company_limit() line 20 at RAISE
+PASS: the database itself refuses a 4th lead inserted behind the application's back
+PASS: another company is not affected by this company's limit (alpha still creates leads)
+PASS: the operator raises the company's lead limit by an override
+PASS: the overview shows usage against limits for the company (leads 4 of 4, staff 1 of 2)
+PASS: a second staff seat is granted, a third is refused (max_staff 2)
+PASS: the refused staff login did not stay behind
+PASS: the added staff member signs in to the same company
+PASS: a manual payment is recorded and moves the subscription to active for the paid period
+PASS: a mistaken payment is corrected by a reversal row, never by editing or deleting
+PASS: a payment cannot be reversed for another company
+PASS: a suspended company's administrator is refused at once (company_inactive)
+PASS: ...and cannot sign in to it any more (no company offered)
+PASS: other companies keep working while it is suspended
+PASS: reactivation restores access
+PASS: every operator action is in the audit trail with the operator's name
+PASS: no response of the platform API contained a password hash
+
+39 passed, 0 failed

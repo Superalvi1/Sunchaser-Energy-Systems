@@ -1,0 +1,22 @@
+=== run 38441834508 (PR #113 CI run 17, head 3cc65f8), job docker-suites (PostgreSQL 16) - suite failures
+2026-10-13T17:51:24.6179957Z ▶ test:marketplace-catalogue-manager-pg (required) … FAIL (1s)
+2026-10-13T17:51:24.6181660Z     Error: Command failed: docker run -d --rm --name mp-cm-core-a4ff3d49 -e POSTGRES_PASSWORD=postgres -p 55896:5432 postgres:16-alpine
+2026-10-13T17:51:24.6183778Z     docker: Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint mp-cm-core-a4ff3d49 (661259157ef84bb7424b4c7f81ca5e8ec07699705740
+2026-10-13T17:51:31.4817124Z ▶ test:marketplace-ceo-auto-import-privileges (required) … FAIL (1s)
+2026-10-13T17:51:31.4819840Z     docker: Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint mp-ceo-ai-priv-df31fef3 (70e1f8bb57c373e5ccce1ea10d7a685cea53f0e0
+2026-10-13T17:51:31.4822384Z     Error: Command failed: docker run -d --rm --name mp-ceo-ai-priv-df31fef3 -e POSTGRES_PASSWORD=postgres -p 56000:5432 postgres:16-alpine
+2026-10-13T17:52:28.9171071Z **Failing required suites:** test:marketplace-catalogue-manager-pg, test:marketplace-ceo-auto-import-privileges
+
+=== run 38443438177 (PR #113 CI run 19, head 2fa8866), job docker-suites (PostgreSQL 16) - suite failures
+2026-10-13T18:04:20.1335316Z ▶ test:marketplace-ws3 (required) … FAIL (2s)
+2026-10-13T18:04:20.1357184Z     docker: Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint mp-ws3-test-c0b45240 (2c7ca8268d9ca58b0826c2f3c1aa31aafb82ad175f4
+2026-10-13T18:04:20.1360254Z     Error: Command failed: docker run -d --rm --name mp-ws3-test-c0b45240 -e POSTGRES_PASSWORD=postgres -p 55796:5432 postgres:16-alpine
+2026-10-13T18:05:55.7534240Z **Failing required suites:** test:marketplace-ws3
+
+=== run 38474466787 (CI run 25, head a7a5aee), job docker-suites (PostgreSQL 17) - suite failures (the runner-test expectations for t6/t7; fixed in b185075)
+2026-10-13T22:01:03.4422228Z ▶ test:saas-db (required) … FAIL (59s)
+2026-10-13T22:01:03.4442648Z     FAIL: rollback t5, t4, t3, t2, t1 in reverse order (expected 'Rolling back t5-subscriptions Rolling back t4-company-settings Rolling back t3-document-numbering Rolling back t2-ownership Rolling back t
+2026-10-13T22:01:03.4444235Z     FAIL: everything applies again after the rollback (the floor is still set) (expected '10', got '14')
+2026-10-13T22:01:03.4445821Z     FAIL: rollback of an early migration lists the dependents first (dry run) (expected 'roll back t5-subscriptions', got 'roll back t7-company-admin')
+2026-10-13T22:01:03.4481360Z **Failing required suites:** test:saas-db
+

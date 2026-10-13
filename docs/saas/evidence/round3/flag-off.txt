@@ -1,0 +1,28 @@
+PASS: login works and the response has no company fields (unchanged shape)
+PASS: lead creation works
+PASS: the lead is stored under the founding company (migrated default)
+PASS: quotation creation works
+PASS: contracting creates the invoice
+PASS: payment recording works
+PASS: invoice PDF export works
+PASS: boot state contains the lead
+PASS: user administration works for the founding admin
+PASS: a Sales Executive still has their normal access
+PASS: unauthenticated requests are still refused
+PASS: the select-company endpoint does not exist when the flag is off
+
+12 passed, 0 failed
+PASS: the sign-in screens are told this is NOT a multi-company platform (they keep the Sunchaser screens)
+PASS: the boot state carries no module flags and no identity mark (nothing changes in the interface)
+PASS: AutoSizer presets are available as before (200)
+PASS: saving an AutoSizer quote is not refused by the module gate (200; the existing "temporarily disabled" rule, if any, is unchanged)
+PASS: GET /api/admin/deliveries/dashboard/summary is not refused by the company gate (200)
+PASS: GET /api/admin/project-deliveries is not refused by the company gate (200)
+PASS: GET /api/admin/warranty-claims is not refused by the company gate (200)
+PASS: GET /api/inbox/threads is not refused by the company gate (404)
+PASS: an invoice is created
+   (snapshot stored in single-company mode when t6 is applied: yes; {"version": 1, "capturedAt": "2026-10-13T22:20:22.610Z", "bankAccounts": [{"iban": "PK81ABPA0010112276940012", "bankName": "Allied Bank", "s)
+PASS: the invoice prints (200) with the founding company's own name and no neutral-company wording
+PASS: a Sales Executive still cannot reach the company settings screen API for writing
+
+11 passed, 0 failed

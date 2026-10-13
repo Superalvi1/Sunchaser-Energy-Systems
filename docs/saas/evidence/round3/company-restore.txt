@@ -1,0 +1,67 @@
+PASS: both companies are filled: invoice, payment, quotation, two documents, settings
+PASS: each company has stored documents under its own prefix
+PASS: fingerprints taken (alpha 26 rows / 6 objects, beta 26 / 5, founding 60 rows)
+PASS: export of alpha succeeds
+PASS: manifest: leads, customers, quotations, invoices, lines, payments, documents, settings, bank accounts, terms and the numbering counter are in
+PASS: manifest: both documents are in the archive with their sha256
+PASS: manifest: the archive is in dependency order (parents before children)
+PASS: verify accepts the untouched archive
+PASS: the archive holds nothing of beta (its name, canaries, ids) and no password hash
+PASS: the archive's membership file lists only alpha's members
+PASS: encrypted archive is written
+PASS: the encrypted archive contains none of alpha's names or canaries in the clear
+PASS: a wrong passphrase is refused
+PASS: the right passphrase gives a dry run that changes nothing
+PASS: alpha is damaged: invoice and payments gone, lead renamed, bank accounts gone, a document row and an object gone, counter reset, junk added
+PASS: beta and the founding company are unchanged by the damage (digests of every table and object)
+PASS: negative control: a single changed row of beta IS detected by the fingerprint
+PASS: ...and reverting it restores the identical fingerprint
+PASS: dry run (no --yes) reports the plan and changes nothing
+PASS: alpha's archive is refused for company beta
+PASS: a changed data file is refused (checksum)
+PASS: an extra file in the archive is refused
+PASS: an archive without manifest is refused
+PASS: a schema that differs from the target is refused
+PASS: a row of another company inside the archive is refused
+PASS: none of those refusals changed anything: alpha is still in its damaged state, beta and founding identical
+PASS: restore of alpha applies (971 ms)
+   uploaded 6 document(s)
+   RESTORED company co_alpha.
+     activity_logs: 5 row(s) replaced by 5
+     bank_accounts: 0 row(s) replaced by 1
+     company_terms: 3 row(s) replaced by 2
+     customers: 3 row(s) replaced by 3
+     document_counters: 1 row(s) replaced by 1
+     quote_pdf_settings: 1 row(s) replaced by 1
+     settings: 2 row(s) replaced by 2
+     invoices: 0 row(s) replaced by 1
+     leads: 1 row(s) replaced by 1
+     invoice_items: 0 row(s) replaced by 1
+     invoice_payments: 0 row(s) replaced by 1
+     quotations: 1 row(s) replaced by 1
+     projects: 1 row(s) replaced by 1
+     customer_documents: 3 row(s) replaced by 4
+     payments: 1 row(s) replaced by 1
+     documents: 6 uploaded, 0 pruned, 1 in storage that the archive does not contain (kept; --prune-objects removes them)
+     memberships: 3 restored
+   
+PASS: alpha's tables are identical to the export (every table's digest)
+PASS: alpha's stored documents are identical to the export (the deleted one is back; the stray one made after the export is kept)
+PASS: BETA is byte-identical before and after (every table and every stored object)
+PASS: the FOUNDING company's tables are identical before and after
+PASS: alpha's invoice is back with its number, total and its payment, and the lead name is back
+PASS: alpha's numbering counter is back at 1 (it was reset to 0 by the damage), so the next invoice number cannot repeat the restored one
+PASS: alpha signs in and reads the restored invoice through the application
+PASS: alpha downloads BOTH restored documents through fresh links and they are byte-identical to what was uploaded
+PASS: beta still reads its own invoice and cannot read alpha's restored one
+PASS: alpha keeps working after the restore: a new lead is created
+PASS: --prune-objects removes the object the export does not contain and nothing else
+PASS: ...and beta's objects and tables are still identical (against beta's baseline taken just before)
+PASS: restoring twice gives the same result (idempotent)
+PASS: an empty target database gets the tenant migrations through the runner
+PASS: alpha restores into an EMPTY database (company row created by the operator first)
+PASS: the empty target now holds exactly alpha's data (every table's digest equals the export's)
+PASS: ...and holds nothing of beta (no beta row in any table of the target)
+PASS: members whose users do not exist in the target are reported, not created
+
+45 passed, 0 failed
