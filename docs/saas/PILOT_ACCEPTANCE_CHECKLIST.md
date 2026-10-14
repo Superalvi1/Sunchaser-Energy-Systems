@@ -1,20 +1,21 @@
 # Pilot acceptance checklist (frozen)
 
-**Version 1.0, FROZEN.** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). A later change to code or to this file creates version 1.1 with a dated change list; the frozen version is never edited in place.
+**Version 1.1, DRAFT: NOT YET FROZEN (final PostgreSQL 16/17 runs, repeats and CI at the exact head are still running; numbers marked «…» are filled in then).** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). Version 1.0 is kept unchanged in `PILOT_ACCEPTANCE_CHECKLIST_v1.0.md`; a later change to code or to this file creates version 1.2 with a dated change list. The change list from 1.0 is at the end of this file.
 
 | | |
 |---|---|
 | Branch / PR | `claude/saas-pilot-multi-company`, draft PR #113 (stacked on #111) |
-| Frozen at | `the commit that contains this file (its SHA is in the PR description; a file cannot name its own commit)` |
-| Frozen on | 2026-10-14 |
-| Scope | the existing limited pilot only; no new module was added this round |
+| Code tested | `«CODE_SHA»` (every journey, repeat and unit result below is at this commit; later commits change documents and evidence only, checked with `git diff --name-only`) |
+| Frozen at | the commit that contains this file (its SHA is in the PR description) |
+| Frozen on | 2026-10-15 (v1.0: 2026-10-14) |
+| Scope | the existing limited pilot only; no new module was added. Round 5 closed five reliability gaps (see the change list) |
 | Production | **unchanged**: no deployment, migration, merge, credential change, app release, and no read of production data or schema |
 
 ## How to read it
 
 | Status | Meaning |
 |---|---|
-| **PASSED** | executed on a disposable stack (or in CI) and the result is in `docs/saas/evidence/round4/` |
+| **PASSED** | executed on a disposable stack (or in CI) and the result is in `docs/saas/evidence/round4/` or `round5/` |
 | **FAILED** | executed and did not meet the requirement |
 | **UNTESTED** | not executed (inspected, or not reachable from here); never counted as tested |
 | **NOT BUILT** | a stated decision to leave it out |
@@ -45,11 +46,12 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | 1.2 | The same upload succeeds when the store is back, with no restart | PASSED | `storage-quota` B |
 | 1.3 | Existing files stay and authorised downloads still work (byte-identical) at the limit, at 0 MB, and while usage cannot be measured; the application still reads normally | PASSED | `storage-quota` A, B, D |
 | 1.4 | No limit set (plan without one, or no subscription row) is refused with 403 `storage_limit_not_set`; the operator's fix works at once | PASSED | `storage-quota` C |
-| 1.5 | **Concurrent uploads at the boundary**: 14 simultaneous uploads when exactly 5 fit: 5 accepted, 9 refused with 402, bucket within the limit, rows and objects match | PASSED | `storage-quota` A. Unit: 25 concurrent 1 MB writes with room for 7 accept exactly 7 at three timings; mixed sizes never exceed the limit; a failed write gives its room back. The unit test **fails when the serialisation is removed** (checked) |
+| 1.5 | **Concurrent uploads at the boundary, one process**: 14 simultaneous uploads when exactly 5 fit: 5 accepted, 9 refused with 402, bucket within the limit, rows and objects match | PASSED | `storage-quota` A; unit tests (25 concurrent writes with room for 7 accept exactly 7 at three timings; mixed sizes never exceed the limit; a failed write gives its room back) |
+| 1.5a | **Atomic across server processes** (round 5): the decision is made by the database (`saas_storage_reserve`, migration **t8**) under a per-company advisory lock. **Two real server processes**: 24 mixed-route uploads race over both at the boundary, exactly as many are accepted as fit; a deleted file frees exactly its room (not counted twice); failed writes through both processes leave no reservation and use no room; a database that refuses the function makes both fail closed (503, retryable) and recover without a restart; a process **killed with SIGKILL mid-upload** leaves a pending reservation that blocks while it lives and stops blocking after it expires | PASSED | journey `storage-two-instances` (32 checks). **Against the previous per-process design the same journey fails: 10 of 24 uploads accepted for a limit that fits 5, 1.9 MB stored against 1 MB** (`round5/storage/BEFORE-...`). SQL: `test-storage-reservations.sh` 42 checks (40 simultaneous sessions for 10 units, 5 rounds: exactly 10 each; **without its lock the same function admits more**; privileges: service role only). Unit: `storageReservations.test.ts` (several simulated processes, randomised, negative control) |
 | 1.6 | **Every enabled upload route** is metered and refused over the limit and accepted with room: customer documents, payment receipts, watermark/logo images, `/api/upload` | PASSED | `storage-quota` A (each route both ways; a refused receipt records no payment) |
 | 1.7 | `/api/upload` no longer writes a pilot company's file to the shared public folder: images only, in the company's key space, metered; the founding company's behaviour is unchanged | PASSED | `storage-quota` A; flag-off journey |
 | 1.8 | A write the store rejects after it was accepted does not use up the quota | PASSED | `storage-quota` B |
-| 1.9 | The browser shows the server's refusal message on an upload | **UNTESTED** | the API answers are tested; no browser journey uploads a file at the limit |
+| 1.9 | The browser shows the server's refusal on an upload: at the limit (plain refusal, nothing stored, the earlier file still listed and downloadable) and with the store unreachable (retryable message, **Retry upload** saves the file exactly once after recovery) | PASSED (round 5) | journey `browser-pilot-round5` A (real uploader in Chromium; screenshots `round5/screens/r5-01..03`). Note: the 402 message also shows a Retry button, which cannot succeed until space is freed (cosmetic) |
 | 1.10 | Usage shown to the operator | NOT BUILT | the console shows limits, not bytes used |
 
 ### 2. Interactive proposals, Proposal Studio, Roof Studio: off in UI and API
@@ -58,7 +60,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 |---|---|---|---|
 | 2.1 | Their API paths (`/api/interactive-proposals*`, `/api/leads/:id/design-session`, `/api/export/pdf/design-studio-proposal*`) answer 404 `not_available` to real pilot users before any handler; the founding company still reaches them | PASSED | `disabled-modules`; unit test that fails if a route with these words is added ungated |
 | 2.2 | The module flag reaches the interface; the staff workspace shows no Proposal Studio, Roof Studio or interactive-link entry on its first screens | PASSED | `browser-pilot-round4` part 4 |
-| 2.3 | The same controls inside a lead (Sales module bar, quote list "interactive link", client workspace) | **UNTESTED** in a browser | gated in code at every use (`designToolsEnabled()`); the per-lead screens were not opened by a journey |
+| 2.3 | The same controls inside a lead, for one lead and quotation: a pilot administrator's and a pilot sales user's client workspace and Proposals tab, and the sales quotation workspace: no interactive-link button, no Roof Studio / Proposal Studio, and the page **never calls** a design-tool endpoint; the founding sales user on the **same build** does have the interactive-link button, Roof Studio and Auto Sizer (so absence is the module switch); the API answers 404 `not_available` to pilot administrator and sales user for that lead and quotation (a portal customer is refused 403) | PASSED (round 5) | journey `browser-pilot-round5` B. **Found by it and fixed:** the pilot sales quotation workspace still showed "Download Auto Sizer PDF" and "Copy Auto Sizer" although the module is off |
 | 2.4 | The AI assistant (tab and floating widget) and the portal "solar sizing wizard", which speak as Sunchaser, use Sunchaser's catalogue and submit leads to the founding company's intake, are off for pilot companies (API `/api/ai`, `/api/gemini`; interface) | PASSED | `disabled-modules`, `browser-pilot-round4`, `browser-pilot-round3` |
 | 2.5 | A company price book / company-specific proposal pricing | NOT BUILT | these tools stay off until pricing and isolation are proven |
 
@@ -113,12 +115,15 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 |---|---|---|---|
 | 7.1 | The journey recorded the HTTP response of every failing step, and was repeated 15 times on one stack before any fix | PASSED (done) | 2 of 15 runs failed (7 and 9); in three runs beta ended with fewer rows than alpha |
 | 7.2 | **Cause of the failures seen in runs 7 and 9** | **ESTABLISHED** | the contract step builds the invoice id as `inv-<ms>` and line-item ids as `item-<ms>-<n>`; two contracts built in the same millisecond collide and the second request answers **HTTP 500 `duplicate key value violates unique constraint "invoices_pkey"` / `"invoice_items_pkey"`**. The stack's log holds exactly those two errors. Reproduced on demand: 14 of 72 simultaneous contracts failed with that body (`concurrent-contracts-BEFORE-fix.txt`) |
-| 7.3 | Fix: the invoice id, the line-item ids and the invoice-created customer id carry a random suffix | PASSED | `concurrent-contracts`: 72 of 72 simultaneous contracts succeed, every invoice exists once with its items, none crosses a company; now a CI journey. **This is a defect in code that production also runs** (the same ids); the owner may want it backported on its own |
+| 7.3 | Fix: the invoice id, the line-item ids and the invoice-created customer id carry a random 48-bit suffix | PASSED | `concurrent-contracts` (now 10 checks: also one activity-log row, one project row and one vault document per contract): 72 of 72 simultaneous contracts succeed, every invoice exists once with its items, none crosses a company. **A defect in code that production also runs: backport PR #114 (draft, not merged)** |
 | 7.4 | The restore journey repeated after the fix, at the final commit | PASSED | 15 of 15 (`restore-repeat-final/`), plus 15 of 15 of `concurrent-contracts`; before the fix 2 of 15 restore runs failed. 15 clean runs do not prove the absence of other collisions (7.6, 7.7) |
-| 7.5 | That the single failure of the **previous** round ("a document upload did not return an id") was this same collision | **UNRESOLVED** | its HTTP response was not recorded; plausible (a contract that fails midway can leave the customer link empty and the next upload then names no customer), not shown |
-| 7.6 | One row missing in run 8 without any failed check, and no matching error line | **UNRESOLVED** | other row ids are also built from the clock alone (activity-log `log-<ms>`, notifications, projects, orders) and were not changed (Part B, CG15); a silent collision there is a candidate, untested |
-| 7.7 | **Second collision, found by repeating the new regression journey** (not by retrying it): one contract failed with HTTP 500 `duplicate key ... "customers_customer_code_idx"`. Customer codes are random; the uniqueness check ran through the company-restricted client, which cannot see other companies' customers, while the unique index spans all companies | FIXED, reproduced by demonstration | the tenant role sees 0 of another company's code, the superuser sees 1 (`customer-code-collision.txt`); the check now uses the unrestricted client (unit test `customerCodeUniqueness.test.ts`). Chance per new customer was (customers of other companies) / 900 000, so it grows with the platform. 15 of 15 `concurrent-contracts` repeats pass after the fix; a random collision remains possible in theory (the insert itself is not retried) |
+| 7.5 | That the single failure of the **previous** round ("a document upload did not return an id") was this same collision | **UNRESOLVED** | its HTTP response was not recorded; plausible, not shown; none of the 100+ concurrent fills run this round reproduced it |
+| 7.6 | One row missing in run 8 without any failed check, and no matching error line | **EXPLAINED BY A REPRODUCED MECHANISM; run 8 itself not proven** | `round5/row-loss/README.md`. The verification compared digests before/after a restore, which were sound; **nothing checked the fill**. The activity-log (`log-<ms>`), project (`project-<ms>`) and invoice-vault document (`doc-<ms>`) inserts used clock-only ids and **ignored the database's answer**, so a same-millisecond clash dropped the row with HTTP 200 and no log line (a lost project also loses its `payments` row). Hunt: 30 simultaneous-fill rounds on the previous build: **10 table mismatches** (payments 3, projects 3, activity_logs 2, customer_documents 2); 72 simultaneous contracts x3 lost 5, 8 and 7 rows silently. After the fix: 40 rounds **0 mismatches**, 5 x 72 contracts nothing lost. Which table run 8 lacked was not recorded, so that run stays unproven |
+| 7.6a | **Restore verification at row level** (round 5): primary keys and a content hash of every row of every table, and every object, before the damage / after the damage / after the restore, for alpha, beta and the founding company; a missing, added or changed row fails and is named; the two identically filled companies must hold equal row counts in every table; content checks of what the fill wrote; negative controls (one changed, one deleted, one added row of beta are each named) | PASSED | `company-restore` (61 checks incl. `ROW-COMPARE` lines), `companyRowSnapshot.test.ts`. Original failing evidence kept in `round4/restore-repeat/` |
+| 7.7 | **Customer-code collision** (HTTP 500 `duplicate key ... "customers_customer_code_idx"`): codes are random; the check ran through the company-restricted client, which cannot see other companies' customers, while the unique index spans all companies | FIXED | existence check uses the unrestricted client (round 4, `customer-code-collision.txt`) **and, since round 5, the insert itself is collision-safe**: on exactly that unique violation a new code is drawn and the insert retried, at most 5 attempts (`insertWithUniqueCustomerCode`, every customer insert; registration no longer inserts a customer without a code on a duplicate message). **Proof with forced real collisions** (a trigger in the scratch database rewrites the code to one another company owns): journey `customer-code-collisions` 19/19 - 1, 2 and 4 forced collisions succeed with a new code and exactly n+1 attempts; more than the bound fails in a controlled way (HTTP 409) after exactly 5 attempts with no orphan row; **30 simultaneous requests of two companies** each forced 1-3 times all succeed with 30 distinct codes; the invoice route too. **Against the previous bundle: 6 of 19 pass** (`round5/customer-code/`). Unit: 6 tests incl. 40 simultaneous callers |
 | 7.8 | **CI failure, not a flake**: `browser-pilot-round4` failed the same check on PostgreSQL 16 and 17 at `2cc47bf` ("warning gone" after saving a bank account) while two local runs passed | FIXED, reproduced | the settings screen said "saved" before it re-read the list, so the "unsaved changes" warning showed beside it; reproduced by making the re-read slow (the check failed), fixed by re-reading first (passes); the journey now asserts it at the moment the notice appears |
+
+| 7.9 | Other silent row losses of the same class | FIXED for the three found; others REMAIN | see CG15 for the full list of clock-only ids still in the code |
 
 ### 8. Carried over from round 3 (statuses re-checked on this head)
 
@@ -137,13 +142,13 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 
 ## Part B. Code gaps (could still be done in this repository)
 
+Closed in v1.1: **CG1** (the storage decision is now atomic across processes), **CG3** (browser steps for the limit and the per-lead design tools exist), **CG16** (the customer-code insert is retried). Their rows are removed; see the change list.
+
 | # | Gap | Why it matters |
 |---|---|---|
-| CG1 | The storage queue is per server process | several processes serving one company at the same moment can overshoot by the size of the uploads in flight; one process is the assumed shape |
 | CG2 | Images embedded as text in database records (quotation page images, installation-photo rows) are not counted | each request is bounded by the 15 MB body limit, the total is not |
-| CG3 | No browser step uploads a file at the limit (1.9) and none opens the per-lead design-tool screens (2.3) | UI wording of refusals and hidden controls inside a lead are inspected, not run |
 | CG4 | A company restore bypasses the storage guard (it restores what the company had) | intended, but means usage can exceed a lowered limit afterwards |
-| CG5 | Sunchaser wording in the Accounts workspace and the Sales Advisor deck, and on any staff screen the journeys do not open | the portal and the welcome guide are done; the crawl is shallow (8 screens) |
+| CG5 | Sunchaser wording on pilot staff screens. **Found so far (exact strings):** the Accounts workspace ("Sunchaser Accounts", "Sunchaser Energy Systems"; for a Sales Manager also "Sunchaser Central Accounting: Excel Integration Enabled"); the quotation workspace heading "SUNCHASER CRM & GENERATIVE PROPOSAL DECK" and the template name "Sunchaser Official Proposal Template"; the default quotation line label "Drafted Sunchaser Quote" shown on a lead | the portal and the welcome guide are done; the crawl is shallow, so this is a floor, not a full list |
 | CG6 | Invoice company name, address, logo and signature follow current settings; only bank accounts and terms are frozen | as requested, a known limit |
 | CG7 | No company price book; AutoSizer and the design tools are off instead | pilot companies cannot quote with the AutoSizer |
 | CG8 | The legacy-invoice label is not visible on the page or in the staff screen | by design, for tooling only |
@@ -153,8 +158,9 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | CG12 | Guest landing and public pages remain Sunchaser's (public intake is the founding company by design) | a visitor of the platform's address sees Sunchaser's public site and "Solar Consultant Wizard" |
 | CG13 | `CustomerPortal.tsx` (not imported anywhere) still has Sunchaser text; the customer "View welcome guide" button does nothing (existing behaviour) | dead or inert code, left alone |
 | CG14 | A company with no contact details prints bare icons in the invoice header | cosmetic |
-| CG16 | A new customer's code is random and the insert is not retried on a collision | a rare 500 remains possible (probability grows with customers); a retry loop around the insert would remove it |
-| CG15 | Many other row ids are built from the clock alone (`log-<ms>`, `wa-<ms>`, `project-<ms>`, `PO-`/`ORD-`/`NT-`/`WAR-`/`CLM-` with the last 4 or 6 digits of the clock) | the same collision is possible wherever two are built in one millisecond; the short ones repeat every 10 seconds (4 digits) or about 17 minutes (6 digits), so they can collide far more easily; only the invoice path (proven) was fixed |
+| CG15 | **Other row ids are built from the clock alone and were not changed** (the three that were proven to lose rows, and the invoice/line/customer ids, are fixed). Remaining, by file: `server.ts` `wa-<ms>`, `PO-<last 4 digits>`, `project-<ms>` (accept-quote path), `ORD-`/`NT-`/`WAR-` (last 6 digits), `CLM-` (last 4), `lead-manual-<ms>`; `inventoryFoundationDb.ts` `inv-<ms>`, `SKU-<ms>`; `projectFinanceDb.ts` `fin-`, `wa-`; `projectDeliveryDb.ts` `pd-`, `inst-pd-`, `cw-pd-`, `pie-`, `pip-`, `pdu-`; `deliveryManagementDb.ts` `dch-`, `dcp-`; `projectCompletionDb.ts` `pcm-`; `roleManagementDb.ts` `role-`; `dbManager.ts` 25 more (`wc-`, `ticket-`, `svc-req-`, `care-`, `visit-`, `eq-`, `asl-`, `tju-`, ...); `internalCostingDb.ts` `cost-`, `invr-`, `pur-`; `userAuthDb.ts` `u-<ms>`; payments `pay-<ms>` / `pay-init-<ms>` in `invoiceDb.ts` | the same collision, and for inserts that ignore the database's answer the same **silent loss**, is possible wherever two are built in one millisecond; the 4- and 6-digit ones repeat every 10 seconds / 17 minutes. Most are staff-run one at a time or in modules that are off for pilots, so none was exercised. Whether any of them also ignores the insert's answer was not checked |
+| CG17 | The 402 "over the limit" message in the uploader also offers **Retry upload**, which cannot succeed until space is freed | cosmetic |
+| CG18 | The pilot quotation workspace, pilot logins and other screens were opened for the checks above only; no full crawl of every screen of every role | what is listed as PASSED is what the journeys opened |
 
 ## Part C. Production-access gaps and owner decisions (cannot be closed from here)
 
@@ -162,7 +168,9 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 |---|---|---|
 | PA1 | **Rehearsal on a restored production backup** (item 10): the real `bills` definition and the owner's invoice-number floor were not assumed | the owner returns a restored backup (`~/sunchaser-rehearsal-RETURN.txt`) and states the floor |
 | PA2 | Whether production has `delivery_challans.created_by_user_id` and the other columns the delivery code writes | read-only query by the owner or a production-schema dump |
-| PA3 | Behaviour against the **production object store** (signature checking, listing page size, latency, the real timeout of the 8-second listing guard) and the real number of server processes (CG1) | a staging run with production-like credentials and topology |
+| PA3 | Behaviour against the **production object store**: signature checking, listing page size, latency, the real timeout of the 8-second listing guard, and **whether its listing includes every object whose write has completed** (the cross-process storage accounting assumes read-after-write listing; a lagging listing could let a burst overshoot by the lag window); and the real number of server processes (the accounting is now correct for any number, but only two were tested) | a staging run with production-like credentials and topology |
+| PA3a | **Migration t8 must be applied before the backend that needs it** (otherwise pilot-company uploads are refused as retryable "could not verify"); the migration sends `NOTIFY pgrst, 'reload schema'`, and a PostgREST that does not listen for it needs a restart (found when a stale schema cache made the function "missing") | the deployment, in order: t8, then the backend |
+| PA3b | **Backports to production**: PR #114 (invoice, line and invoice-customer ids) and PR #115 (customer-code insert retry), both draft and **not merged**; production has both defects in its code today. Whether either has ever happened in production is unknown (no production data read). A third candidate is described in 7.6 / CG15 (silent loss of activity-log, project and vault-document rows) | the owner's decision to review and merge |
 | PA4 | PostgREST / tenant-key / environment rollout on the real platform, and the PostgreSQL version actually in production (CI covers 16 and 17) | the deployment, which is not part of this work |
 | PA5 | Real devices: a phone scanning the printed QR; the Android/iOS app with a multi-company sign-in | a device test |
 | PA6 | Real WhatsApp (Meta), Google review, e-mail delivery | accounts that were not used |
@@ -172,8 +180,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 
 ## Evidence
 
-`docs/saas/evidence/round4/`: `final-pg17/` (16 journeys, PostgreSQL 17, with `summary.md` and every log), `postgres16/` (the same on PostgreSQL 16), `restore-repeat/` (15 runs BEFORE the fix and the reproduction), `restore-repeat-final/` (15 restore and 15 concurrent-contracts runs at `18ec172`), `customer-code-collision.txt`, `sunchaser-wording-audit.md`, `unit-tests-saas.txt`, `typecheck-tsc.txt`, `typecheck-server.txt`, the screenshots `r4-*.png`, and the PDFs `*-nologo-*.pdf`, `*-bare-*.pdf`, `*-portal-invoice.pdf`.
-
+`docs/saas/evidence/round5/` (this version): `customer-code/` (the forced-collision journey before and after), `storage/` (the two-process journey after, and before = the per-process design), `row-loss/` (README, before/after logs of the silent row loss, the 30-round and 40-round parity hunts), `screens/` (browser journey screenshots), and the final runs `final-pg17/`, `final-pg16/`, `repeats/` (15 restore, 15 concurrent-contracts, 15 customer-code, 5 two-process storage). `docs/saas/evidence/round4/` is unchanged (including the original failing restore runs `restore-repeat/`).
 
 ## Shortest path to a paid pilot
 
@@ -181,12 +188,26 @@ Nothing below is a new feature. Order matters; the first three are the only ones
 
 | Step | Who | What | Closes |
 |---|---|---|---|
-| 1 | Owner | Return a restored production backup and state the invoice-number floor; the rehearsal (t1 to t7 apply, roll back, re-apply, journeys on the restored copy) is then one command | PA1, 8.8 |
+| 1 | Owner | Return a restored production backup and state the invoice-number floor; the rehearsal (t1 to t8 apply, roll back, re-apply, journeys on the restored copy) is then one command | PA1, 8.8 |
 | 2 | Owner | Answer whether production has `delivery_challans.created_by_user_id`; if not, the delivery group simply stays off for the pilot | PA2 |
 | 3 | Owner | Decide the pilot terms the code now needs: storage limit per company, grace days, read-only versus blocked, whose privacy policy applies, who the pilot companies are | PA7, PA8 |
-| 4 | Engineering (small) | Backport the invoice-id and customer-code fixes to the production line on their own, because production has both defects today | 7.2, 7.7 |
-| 5 | Engineering (small) | Retry the customer-code insert on a duplicate; replace "Sunchaser" in the Accounts workspace and the Sales Advisor deck | CG16, CG5 |
-| 6 | Owner + engineering | A staging run with production-like credentials and the real number of server processes, then the same 16 journeys against it | PA3, PA4, CG1 |
-| 7 | Owner | Take payment manually (the platform records manual payments and enforces expiry; no payment gateway is built or needed for a first pilot) and onboard the first company through the operator console, which now requires a storage limit | |
+| 4 | Owner | Review and merge the two backport PRs (#114, #115) on their own, and decide about the third class (silent row loss, CG15) | PA3b |
+| 5 | Engineering (small) | Replace "Sunchaser" in the places listed in CG5 | CG5 |
+| 6 | Owner + engineering | A staging run with production-like credentials, apply t8 before the backend, check the production object store's listing behaviour, then the same journeys against it | PA3, PA3a, PA4 |
+| 7 | Owner | Take payment manually (the platform records manual payments and enforces expiry; no payment gateway is built or needed for a first pilot) and onboard the first company through the operator console, which requires a storage limit | |
 
-Not on the path, deliberately: a company price book, the delivery flows, the design tools and the AI assistant (all stay off for pilots), per-process quota coordination, a usage display for the operator.
+Not on the path, deliberately: a company price book, the delivery flows, the design tools and the AI assistant (all stay off for pilots), a usage display for the operator.
+
+## Change list: v1.0 (2026-10-14) to v1.1 (2026-10-15)
+
+| Item | Change |
+|---|---|
+| 1.5a (new), CG1 closed | storage decision atomic across server processes (migration t8); two real processes tested; the previous design fails the same journey |
+| 1.9, 2.3, CG3 closed | browser + API journey for the storage limit and the per-lead design tools; two Auto Sizer controls found and gated |
+| 7.6 | from UNRESOLVED to "explained by a reproduced mechanism" (silent row loss: log, project, vault document, payments); run 8 itself still not proven |
+| 7.6a (new) | restore verification at row level, with negative controls |
+| 7.7, CG16 closed | customer-code insert is collision-safe, proven with forced real collisions and 30 simultaneous requests |
+| 7.9, CG15 | list of the clock-only ids that remain, by file |
+| PA3, PA3a, PA3b (new) | listing consistency assumption; t8 before backend and PostgREST reload; backport PRs #114 and #115 |
+| CG5, CG17, CG18 (new/extended) | wording found, retry button on a refusal, crawl depth |
+| Version 1.0 | kept unchanged as `PILOT_ACCEPTANCE_CHECKLIST_v1.0.md` |
