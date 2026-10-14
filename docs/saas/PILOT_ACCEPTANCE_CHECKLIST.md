@@ -1,6 +1,6 @@
 # Pilot acceptance checklist (frozen)
 
-**Version 1.0, frozen at the commit named in the "Frozen at" line.** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). A later change to code or to this file creates version 1.1 with a dated change list; the frozen version is never edited in place.
+**Version 1.0, FROZEN.** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). A later change to code or to this file creates version 1.1 with a dated change list; the frozen version is never edited in place.
 
 | | |
 |---|---|
@@ -105,7 +105,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | # | Check | Status | Evidence |
 |---|---|---|---|
 | 6.1 | With `MULTI_COMPANY_ENABLED` unset, on a database that has the migrations applied, the application behaves as before: login, lead, quotation, contract, invoice, payment, PDF; no company fields; no module flags; AutoSizer, after-sales, inbox, design tools and AI reachable; the image upload still writes to the public folder; no storage refusal | PASSED | `single-company-smoke` (12/12), `flag-off-round3` (18/18); run by the CI job `pilot-journeys` on a second instance of the same build |
-| 6.2 | The same in GitHub's CI | see the CI result recorded in the PR after this commit (not claimed here) | |
+| 6.2 | The same in GitHub's CI | PASSED | job `pilot-journeys` at `6a71cb9`, on PostgreSQL 16 and 17: `single-company-smoke` and `flag-off-round3` pass |
 
 ### 7. Intermittent restore-journey failure (`docs/saas/evidence/round4/restore-repeat/SUMMARY.md`)
 
@@ -114,9 +114,11 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | 7.1 | The journey recorded the HTTP response of every failing step, and was repeated 15 times on one stack before any fix | PASSED (done) | 2 of 15 runs failed (7 and 9); in three runs beta ended with fewer rows than alpha |
 | 7.2 | **Cause of the failures seen in runs 7 and 9** | **ESTABLISHED** | the contract step builds the invoice id as `inv-<ms>` and line-item ids as `item-<ms>-<n>`; two contracts built in the same millisecond collide and the second request answers **HTTP 500 `duplicate key value violates unique constraint "invoices_pkey"` / `"invoice_items_pkey"`**. The stack's log holds exactly those two errors. Reproduced on demand: 14 of 72 simultaneous contracts failed with that body (`concurrent-contracts-BEFORE-fix.txt`) |
 | 7.3 | Fix: the invoice id, the line-item ids and the invoice-created customer id carry a random suffix | PASSED | `concurrent-contracts`: 72 of 72 simultaneous contracts succeed, every invoice exists once with its items, none crosses a company; now a CI journey. **This is a defect in code that production also runs** (the same ids); the owner may want it backported on its own |
-| 7.4 | The restore journey repeated again after the fix | PASSED: 15 of 15 runs pass (`restore-repeat-after-fix/`); before the fix 2 of 15 failed. 15 clean runs do not prove the absence of other collisions (7.6) | |
+| 7.4 | The restore journey repeated after the fix, at the final commit | PASSED | 15 of 15 (`restore-repeat-final/`), plus 15 of 15 of `concurrent-contracts`; before the fix 2 of 15 restore runs failed. 15 clean runs do not prove the absence of other collisions (7.6, 7.7) |
 | 7.5 | That the single failure of the **previous** round ("a document upload did not return an id") was this same collision | **UNRESOLVED** | its HTTP response was not recorded; plausible (a contract that fails midway can leave the customer link empty and the next upload then names no customer), not shown |
 | 7.6 | One row missing in run 8 without any failed check, and no matching error line | **UNRESOLVED** | other row ids are also built from the clock alone (activity-log `log-<ms>`, notifications, projects, orders) and were not changed (Part B, CG15); a silent collision there is a candidate, untested |
+| 7.7 | **Second collision, found by repeating the new regression journey** (not by retrying it): one contract failed with HTTP 500 `duplicate key ... "customers_customer_code_idx"`. Customer codes are random; the uniqueness check ran through the company-restricted client, which cannot see other companies' customers, while the unique index spans all companies | FIXED, reproduced by demonstration | the tenant role sees 0 of another company's code, the superuser sees 1 (`customer-code-collision.txt`); the check now uses the unrestricted client (unit test `customerCodeUniqueness.test.ts`). Chance per new customer was (customers of other companies) / 900 000, so it grows with the platform. 15 of 15 `concurrent-contracts` repeats pass after the fix; a random collision remains possible in theory (the insert itself is not retried) |
+| 7.8 | **CI failure, not a flake**: `browser-pilot-round4` failed the same check on PostgreSQL 16 and 17 at `2cc47bf` ("warning gone" after saving a bank account) while two local runs passed | FIXED, reproduced | the settings screen said "saved" before it re-read the list, so the "unsaved changes" warning showed beside it; reproduced by making the re-read slow (the check failed), fixed by re-reading first (passes); the journey now asserts it at the moment the notice appears |
 
 ### 8. Carried over from round 3 (statuses re-checked on this head)
 
@@ -124,7 +126,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 |---|---|---|---|
 | 8.1 | Invoice issuance snapshot (bank accounts and terms frozen at issue; reprints preserve them; legacy invoices labelled, not back-filled; backend works before `t6`/`t7`) | PASSED | `pilot-round3` A, `compat-before-t6-t7`, DB test 15/15 |
 | 8.2 | Local QR codes (no third-party service), decode-tested | PASSED | `localQr.test.ts`; phone scan and QR inside a Chromium PDF remain UNTESTED |
-| 8.3 | The two-company journeys on **PostgreSQL 16** | PASSED: all 16 journeys on PostgreSQL 16.15 locally (`postgres16/`); the CI job now runs a 16/17 matrix, its first result is recorded in the PR, not claimed here | |
+| 8.3 | The two-company journeys on **PostgreSQL 16** | PASSED | all 16 journeys locally on 16.15 (`postgres16/`) and in CI on 16 and 17 at `6a71cb9` |
 | 8.4 | Subscription expiry enforced on every request (not by a job); renewal effective within seconds | PASSED | `pilot-round3` E |
 | 8.5 | Delivery, warranty and handover documents carry no Sunchaser identity; quote-editor defaults neutral | PASSED | `documentLeak.test.ts` |
 | 8.6 | Delivery / warranty / handover **flows** with two companies | FAILED (not possible) | the code writes `delivery_challans.created_by_user_id`, which no SQL in the repository creates; group disabled for pilots (Part C, PA2) |
@@ -151,6 +153,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | CG12 | Guest landing and public pages remain Sunchaser's (public intake is the founding company by design) | a visitor of the platform's address sees Sunchaser's public site and "Solar Consultant Wizard" |
 | CG13 | `CustomerPortal.tsx` (not imported anywhere) still has Sunchaser text; the customer "View welcome guide" button does nothing (existing behaviour) | dead or inert code, left alone |
 | CG14 | A company with no contact details prints bare icons in the invoice header | cosmetic |
+| CG16 | A new customer's code is random and the insert is not retried on a collision | a rare 500 remains possible (probability grows with customers); a retry loop around the insert would remove it |
 | CG15 | Many other row ids are built from the clock alone (`log-<ms>`, `wa-<ms>`, `project-<ms>`, `PO-`/`ORD-`/`NT-`/`WAR-`/`CLM-` with the last 4 or 6 digits of the clock) | the same collision is possible wherever two are built in one millisecond; the short ones repeat every 10 seconds (4 digits) or about 17 minutes (6 digits), so they can collide far more easily; only the invoice path (proven) was fixed |
 
 ## Part C. Production-access gaps and owner decisions (cannot be closed from here)
@@ -170,3 +173,20 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 ## Evidence
 
 `docs/saas/evidence/round4/`: `journeys-summary.md`, one log per journey, `restore-repeat/` (every run of the restore journey), `sunchaser-wording-audit.md`, `unit-tests-saas.txt`, `typecheck-tsc.txt`, `typecheck-server.txt`, `postgres16/` (the same journeys on PostgreSQL 16), the screenshots `r4-*.png`, and the PDFs `*-nologo-*.pdf`, `*-bare-*.pdf`, `*-portal-invoice.pdf`.
+
+
+## Shortest path to a paid pilot
+
+Nothing below is a new feature. Order matters; the first three are the only ones that can stop a launch.
+
+| Step | Who | What | Closes |
+|---|---|---|---|
+| 1 | Owner | Return a restored production backup and state the invoice-number floor; the rehearsal (t1 to t7 apply, roll back, re-apply, journeys on the restored copy) is then one command | PA1, 8.8 |
+| 2 | Owner | Answer whether production has `delivery_challans.created_by_user_id`; if not, the delivery group simply stays off for the pilot | PA2 |
+| 3 | Owner | Decide the pilot terms the code now needs: storage limit per company, grace days, read-only versus blocked, whose privacy policy applies, who the pilot companies are | PA7, PA8 |
+| 4 | Engineering (small) | Backport the invoice-id and customer-code fixes to the production line on their own, because production has both defects today | 7.2, 7.7 |
+| 5 | Engineering (small) | Retry the customer-code insert on a duplicate; replace "Sunchaser" in the Accounts workspace and the Sales Advisor deck | CG16, CG5 |
+| 6 | Owner + engineering | A staging run with production-like credentials and the real number of server processes, then the same 16 journeys against it | PA3, PA4, CG1 |
+| 7 | Owner | Take payment manually (the platform records manual payments and enforces expiry; no payment gateway is built or needed for a first pilot) and onboard the first company through the operator console, which now requires a storage limit | |
+
+Not on the path, deliberately: a company price book, the delivery flows, the design tools and the AI assistant (all stay off for pilots), per-process quota coordination, a usage display for the operator.
