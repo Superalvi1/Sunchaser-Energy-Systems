@@ -1,0 +1,15 @@
+Second concurrency defect, found when the concurrent-contracts journey was run again at f781f24 (PostgreSQL 17):
+
+  CONTRACT-FAILURE-RECORD {"company":"co_alpha","status":500,"body":"{\"error\":\"duplicate key value violates unique constraint \\\"customers_customer_code_idx\\\"\"}"}
+  FAIL: all 72 simultaneous contracts succeed ... (1 failed)
+
+Cause: customer codes (SES-xxxxxx) are random, and generateCustomerCode() checks that a code is free through the company-restricted client, while the
+unique index customers_customer_code_idx covers ALL companies. A code that belongs to another company's customer looks free to the check and the
+insert then fails with HTTP 500. Demonstration on the scratch database (superuser vs the tenant role acting for co_alpha):
+
+  insert into customers (...company_id 'co_beta', customer_code 'SES-424242')
+  superuser sees: 1
+  alpha tenant sees: 0
+
+Chance per new customer = (customers of other companies) / 900 000: about 0.1% with 1 000 customers elsewhere, 0.55% with 5 000, and it grows as the platform does.
+Fix: the existence check uses the unrestricted (service) client. Unit test: server/saas/customerCodeUniqueness.test.ts (the check goes through the replaceable client).

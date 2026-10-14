@@ -1,5 +1,5 @@
 import { randomInt } from "crypto";
-import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
+import { getSupabase, getSystemSupabase, isSupabaseActive, type Database } from "./dbManager.js";
 
 const CODE_PREFIX = "SES";
 const MAX_RETRIES = 40;
@@ -17,9 +17,19 @@ function randomSixDigit(): string {
   return String(randomInt(100000, 1000000));
 }
 
+/**
+ * The unique index on customer_code spans ALL companies, but the company-restricted client only sees its own company's customers. A code that
+ * exists in another company therefore looked free and the insert then failed (HTTP 500, duplicate key). The existence check uses the
+ * unrestricted (service) client. Replaceable in tests.
+ */
+let existenceClient: () => ReturnType<typeof getSupabase> = () => getSystemSupabase() ?? getSupabase();
+export function setCustomerCodeExistenceClientForTests(fn: (() => ReturnType<typeof getSupabase>) | null): void {
+  existenceClient = fn ?? (() => getSystemSupabase() ?? getSupabase());
+}
+
 async function customerCodeExists(code: string, localDb?: Database): Promise<boolean> {
   if (isSupabaseActive()) {
-    const { data, error } = await getSupabase()!
+    const { data, error } = await existenceClient()!
       .from("customers")
       .select("id")
       .eq("customer_code", code)
