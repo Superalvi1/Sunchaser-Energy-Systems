@@ -103,6 +103,7 @@ check "rollback kept a copy of the payments and the audit trail" "$($Q -c "selec
 check "without the migration there is no limit any more" "$(as service_role '' "$(lead Z1 co_t)")" ""
 RE="$($P -f "$SAAS/phase2e-subscriptions.sql" 2>&1 || true)"; echo "$RE" | grep -i " error" | head -3 || true; check "re-apply after rollback" "$(echo "$RE" | grep -ci " error" || true)" "0"
 check "re-apply restored the payments and the audit trail" "$($Q -c "select (select count(*) from saas_payments)||':'||(select count(*) from saas_audit)")" "2:$A0"
+check "after the re-apply a NEW audit row can still be written (the id sequence is past the restored rows; an onboarding writes one)" "$($P -c "insert into saas_audit (actor_username, action, company_id, detail) values ('t','after-reapply',null,'{}')" > /dev/null 2>&1; echo $?)" "0"
 
 echo; echo "subscription/limits tests: $ok passed, $bad failed"
 [ "$bad" = 0 ]

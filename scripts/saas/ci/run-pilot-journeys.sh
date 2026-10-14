@@ -153,6 +153,8 @@ journey() { # name, command..., (the description is in $DESC)
   local n total="${JOURNEY_REPEAT:-1}" suffix=""
   for n in $(seq 1 "$total"); do
     [ "$total" -gt 1 ] && suffix=".$n"
+    # a journey may kill the second process on purpose (storage-two-instances); bring it back so the next repeat starts from two processes
+    if ! kill -0 "$APP2_PID" 2>/dev/null; then start_app "$APP2_PORT" true "$REPORT_DIR/app2.log" "STORAGE_RESERVATION_TTL_SECONDS=12"; APP2_PID="$LAST_APP_PID"; export E2E_APP2_PID="$APP2_PID"; fi
     reseed
     local t0=$SECONDS
     echo "-- $name$suffix"
@@ -201,6 +203,9 @@ off_journey() { # same reporting as journey(), against the flag-off instance
   echo "$name: $r ${tail_line:+($tail_line)}"
   echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
 }
+export E2E_BASE_URL_ON="http://127.0.0.1:$APP_PORT"
+[ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -q ",feature-disable-reenable," && reseed   # clean pilot companies for the next journey
+DESC="the switch OFF while pilot companies exist (a flag-off process of the same build): the founding company operates; the pilot company's files, rows and quota are untouched and served again when it is switched on; what the flag-off process can see of pilot data is RECORDED (the flag is not a full rollback)" off_journey feature-disable-reenable node scripts/saas/e2e/feature-disable-reenable.mjs
 DESC="flag off (single-company mode) on the migrated database: login, lead, quotation, contract, invoice, payment, PDF as before; no company fields in any response" off_journey single-company-smoke node scripts/saas/e2e/single-company-smoke.mjs
 DESC="flag off: no module flags, no identity mark, AutoSizer, after-sales, WhatsApp inbox and design tools all available as before, Sunchaser sign-in kept, uploads unmetered" off_journey flag-off-round3 node scripts/saas/e2e/flag-off-round3.mjs
 

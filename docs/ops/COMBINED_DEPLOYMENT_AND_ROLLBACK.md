@@ -50,23 +50,32 @@ Each cell is: login, lead, quotation, contract to invoice, payment, invoice PDF,
 
 Not covered by any state: **the old production build (before PR #111) on a schema that has M3 or M4** breaks payments (existing rule, `DEPLOYMENT_PLAN.md`); this is why rolling a backend back never goes past the repair build once M3/M4 are applied.
 
-## 4. Rollback (newest change first)
+## 4. Rollback, and where it stops
 
-| What went wrong | Undo | Proven | What it keeps or loses |
+### The boundary, in one paragraph
+**The feature flag is a switch for the application, not a rollback.** Turning `MULTI_COMPANY_ENABLED` off changes which code path runs; it does not touch the database, the object store or any pilot company's rows and files, and **the single-company code path has no company filter**. Measured (`feature-disable-reenable`, run against a flag-off process of the same build while pilot data existed): the founding company operates normally and its writes stay the founding company's; the pilot company's files, rows and quota are untouched and are served again, byte-identical and with the same quota boundary, when the switch is turned back on; **but while the switch is off the founding administrator can see and read the pilot companies' leads, invoices and documents, and a pilot administrator can still sign in and then sees the founding company's data.** Suspending the pilot companies' users first stops them signing in (proven), it does **not** hide the pilot's data from founding staff. **So once any pilot company holds data, "switch off" is a stop-the-pilot measure, not a way back to the single-company product.** The only way back is to remove the pilot data first (export each company with `scripts/saas/company-backup.mjs`, then delete it), after which t1 can roll back.
+
+### What each step proves
+| Level | Action | What is proven (journey) | What it keeps, loses or exposes |
 |---|---|---|---|
-| A pilot company misbehaves, or anything about the multi-company code | **Switch off**: suspend the company in the console, or unset `MULTI_COMPANY_ENABLED` and the tenant key and restart | `single-company-smoke`, `flag-off-round3`, matrix NEW column | nothing is lost; no schema change |
-| The new backend must go | Redeploy the repair build (PR #111) | matrix REPAIR column at every t-state | nothing lost. **Pre-check:** the invoice numbering has no gap (`select count(*), max(substring(invoice_number from '[0-9]+$')::int) from invoices where company_id='sunchaser' and invoice_number like 'INV-<year>-%'`; equal means no gap). With a gap the repair build cannot create invoices (shown in the matrix's last row, it is how the old build always counted): switch off instead |
-| t8 must go | `run.mjs rollback --to t8-storage-reservations` | `rollback-files-quota` part 1 | **Every stored file, every document row, and every download are untouched. The quota still counts the files** (usage is measured from the object store, not from t8). Reservations (transient) are dropped. Until t8 is applied again, pilot uploads are refused (503, retryable); founding unaffected. After re-applying, the boundary is exactly where it was |
-| t7 down to t2 must go | `run.mjs rollback --to t2-ownership` | `rollback-files-quota` part 2 | files, document rows and invoices intact; issuance snapshots kept and restored on re-apply; the storage limit survives |
-| t1 must go | **Refused while any company other than the founding one exists** ("Rollback refused ... export or remove their data first"). That is a data-safety guard, not a bug: after the pilot starts, schema rollback stops at t2 and the switch (first row) is the rollback | `rollback-files-quota` part 2 | export a company with `scripts/saas/company-backup.mjs` first; restore is tested (`company-restore`) |
-| Release A | unchanged, `DEPLOYMENT_PLAN.md` section 7 (M4, M3, M2, M1 in reverse; the backend last) | earlier rounds | |
+| 0 | **Stop the pilot without leaving the multi-company build**: suspend the pilot companies in the console (and their users) | existing console and subscription journeys | nothing lost; the data is still there; no cross-company exposure |
+| 1 | **Switch off** (`MULTI_COMPANY_ENABLED` unset, tenant key removed, restart) | `feature-disable-reenable` (12 checks), `single-company-smoke`, `flag-off-round3`, matrix NEW column | founding company operates; pilot files, rows, quota untouched and served again on switch-on. **Exposes pilot data to founding staff and founding data to pilot administrators (above).** Suspend the pilot users first |
+| 2 | Roll the backend back to the repair build (PR #111) | matrix REPAIR column at every t-state | no loss. Same exposure as level 1 (that build has no company concept). **Pre-check:** invoice numbering has no gap (`select count(*), max(substring(invoice_number from '[0-9]+$')::int) from invoices where company_id='sunchaser' and invoice_number like 'INV-<year>-%'`; equal = no gap). With a gap the repair build cannot create invoices (shown in the matrix's last row; that is how the old build always counted) |
+| 3 | Roll **t8** back (`run.mjs rollback --to t8-storage-reservations`) | `rollback-files-quota` part 1 | **Every stored file, document row and download untouched; the quota still counts the files** (usage is measured from the object store, not from t8). Reservations (transient) are dropped. Until t8 is applied again, pilot uploads are refused (503, retryable); founding unaffected; after re-applying the boundary is exactly where it was |
+| 4 | Roll **t7 .. t2** back (`--to t2-ownership`) | `rollback-files-quota` part 2 | files, document rows and invoices intact; invoice issuance snapshots kept and restored on re-apply; the storage limit survives; the operator can onboard a company again afterwards |
+| 5 | Roll **t1** back | `rollback-files-quota` part 2 | **Refused while any company other than the founding one exists** ("Rollback refused ... export or remove their data first"). A designed data-safety guard: after the pilot starts, schema rollback stops at t2 |
+| - | Release A | unchanged: `DEPLOYMENT_PLAN.md` section 7 (M4, M3, M2, M1 in reverse; the backend last) | |
 
-Order of any rollback: the switch, then the backend, then the t-series newest first, then (if ever) the M-series newest first. The backend is rolled back **after** the migrations that it needs gone, never before, except for the repair-build rollback in the second row (proven).
+Order of any rollback: suspend, switch, backend, then the t-series newest first, then (if ever) the M-series newest first. The backend goes back to the repair build, never to the build before PR #111, once M3 or M4 is applied.
+
+### Two further defects the rollback journey found, both fixed with regression tests
+* Re-applying t5 restored the operator audit rows but left their id sequence at 1, so the next audit insert collided and **the operator could not onboard a company** (HTTP 409 `duplicate`; first seen as the browser journey failing after the rollback journey). The migration now sets the sequence past the restored rows (`test-subscriptions.sh` 46/46; fails with the old migration).
+* Re-applying t6 lost the issuance snapshots (see 2).
 
 ## 5. Stop conditions
 * A migration fails or times out: stop, read the error, roll back that migration only.
-* After B3 the error rate rises or logins fail: redeploy the previous backend (second row).
-* After B4 anything about a pilot company is wrong: switch off (first row) before investigating.
+* After B3 the error rate rises or logins fail: redeploy the previous backend (level 2).
+* After B4 anything about a pilot company is wrong: **suspend the company and its users (level 0)** before investigating. Do not switch the flag off while pilot data exists unless you accept the exposure described in section 4.
 * Two backends running while the numbering has a gap (the numbering pre-check above).
 * PostgREST was not reloaded after B1 (pilot uploads answer 503 `storage_unverified`; the backend log names `saas_storage_reserve ... missing`).
 

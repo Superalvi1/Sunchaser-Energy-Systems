@@ -215,6 +215,9 @@ do $$ begin
     insert into public.saas_audit (id, at, actor_user_id, actor_username, action, company_id, detail)
       select b.id, b.at, b.actor_user_id, b.actor_username, b.action, b.company_id, b.detail from app_rollback_backup.saas_audit b on conflict (id) do nothing;
   end if;
+  -- The restored rows carry their old ids; the table's id sequence is new and starts at 1. Without this the next audit row (every onboarding writes one) collides with a restored
+  -- row and the operator cannot create a company ("duplicate"). Found by the rollback journey.
+  perform setval(pg_get_serial_sequence('public.saas_audit', 'id'), coalesce((select max(id) from public.saas_audit), 0) + 1, false);
 end $$;
 
 commit;

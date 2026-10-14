@@ -44,6 +44,7 @@ const fingerprint = () => ({
 // ---- a customer, a limit that fits exactly N files, and N files stored through the application
 const inv = await json(await A("/api/admin/invoices", { method: "POST", body: JSON.stringify({ customerName: `rollback customer ${RUN}`, customerPhone: "03000000000", items: [{ itemName: "item", description: "item", qty: 1, unit: "pcs", rate: 100000, taxPercent: 0, discountAmount: 0 }] }) }));
 const customerId = inv.invoice?.customerId;
+const preKeys = new Set(Object.keys(objectMap("co_alpha")));   // objects of earlier runs/journeys are not this run's
 const before = usedBytes("co_alpha"), L = Math.ceil(before / MB) + 1, free = L * MB - before, S = Math.floor(free / 5.5), N = Math.floor(free / S);
 check(`setup: alpha has a customer and the operator sets a ${L} MB limit (${N} files of ${(S / 1024).toFixed(0)} KB fit)`, Boolean(customerId) && (await setLimit(L)).status === 200);
 await sleep(CACHE_WAIT);
@@ -54,7 +55,7 @@ const full = await upload(A, "over");
 check("the next one is refused at the limit (402)", full.status === 402, String(full.status));
 const OBJ0 = objectMap("co_alpha"), FP0 = fingerprint();
 const downloadAll = async (label) => {
-  const expected = Object.keys(objectMap("co_alpha")).filter((k) => /file\d/.test(k)).length;   // a file the journey deleted on purpose is not expected
+  const expected = Object.keys(objectMap("co_alpha")).filter((k) => !preKeys.has(k) && /file\d/.test(k)).length;   // a file the journey deleted on purpose is not expected
   const list = await json(await A(`/api/admin/customer-documents/${customerId}`));
   let ok = 0, total = 0;
   for (const d of (list.documents || []).filter((x) => new RegExp(`^file\\d ${RUN}$`).test(x.title || ""))) {
@@ -120,6 +121,12 @@ try {
   await s3Delete(bigKey()); await sleep(CACHE_WAIT);
   const one = await upload(A, "after-full-rollback-delete");
   check(`a deleted file frees exactly its room here too (accepted ${one.status}), then 402 again`, one.status === 201 && (await upload(A, "again2")).status === 402);
+  // the operator can still onboard a company after the whole cycle (the onboarding function, its plan and its grants survived)
+  const op2 = api((await login("platform_op")).token);
+  const lc = RUN.toLowerCase();
+  const onb = await op2("/api/platform/companies", { method: "POST", body: JSON.stringify({ name: `Rollback Co ${RUN}`, id: `rb_${lc}`, ownerName: "RB Owner", ownerUsername: `rb_owner_${lc}`, ownerEmail: `rb${lc}@example.test`, planId: "pilot", trialDays: 5, storageLimitMb: 10 }) });
+  const onbb = await json(onb);
+  check(`after the cycle the operator can still onboard a company (${onb.status})`, onb.status === 201, JSON.stringify(onbb).slice(0, 300));
 } finally {
   try { runner("apply"); await reload(); } catch (e) { console.log("could not re-apply in cleanup: " + String(e).slice(0, 200)); }
 }
