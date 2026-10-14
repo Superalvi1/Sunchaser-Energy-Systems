@@ -1,5 +1,7 @@
 # SaaS pilot, round 3: pilot scope completed or honestly reported, and the acceptance checklist
 
+> **Superseded for statuses by `PILOT_ACCEPTANCE_CHECKLIST.md`.** Kept as history.
+
 Branch `claude/saas-pilot-multi-company` (PR #113, draft, stacked on #111). **Production is unchanged.** Nothing here was applied to production or to real data; no merge, tenant migration, deployment, credential change or app release was done; production schema and data were not read. Everything below ran on disposable local stacks (PostgreSQL 17.11, PostgREST 16.4, an S3 stand-in, Chromium) with synthetic data, and once more on GitHub's runners (PostgreSQL 17 service container, the pinned PostgREST image).
 
 How to read this: **PASSED** = executed here and the result is in `docs/saas/evidence/round3/`. **FAILED** = executed and did not meet the requirement. **UNTESTED** = not executed (inspected, or not reachable). **NOT BUILT** = a decision to leave it out, stated. Nothing is called tested that was only inspected.

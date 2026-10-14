@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | Branch / PR | `claude/saas-pilot-multi-company`, draft PR #113 (stacked on #111) |
-| Frozen at | `{{COMMIT}}` |
-| Frozen on | {{DATE}} |
+| Frozen at | `the commit that contains this file (its SHA is in the PR description; a file cannot name its own commit)` |
+| Frozen on | 2026-10-14 |
 | Scope | the existing limited pilot only; no new module was added this round |
 | Production | **unchanged**: no deployment, migration, merge, credential change, app release, and no read of production data or schema |
 
@@ -32,7 +32,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 |---|---|---|---|
 | Three-day grace after the subscription end date | `SAAS_EXPIRY_GRACE_DAYS` (default 3) | PASSED | unit tests; journey `pilot-round3` (grace, past grace, renewal) |
 | Read-only after expiry (reads and prints work, every write is refused with 402 `subscription_expired`) | request-time check, `server/saas/subscriptionAccess.ts` | PASSED | same |
-| AutoSizer and the delivery group (after-sales) disabled for pilot companies | `server/saas/moduleGate.ts` | PASSED | journey `disabled-modules` ({{DISABLED}}), unit tests |
+| AutoSizer and the delivery group (after-sales) disabled for pilot companies | `server/saas/moduleGate.ts` | PASSED | journey `disabled-modules` (17 checks, 200+ calls), unit tests |
 | An explicit storage limit is required when a company is onboarded; there is no unlimited default | `cleanCompanyInput`, console form, upload guard | PASSED | journeys `platform-onboarding`, `browser-company-ui`, `storage-quota`; unit tests |
 
 ## Part A. The checklist
@@ -69,14 +69,14 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | 3.1 | A customer can fetch their own company's public details (name, address, phones, e-mail, website, logo, review link) and nothing else (no terms, signature, bank-accounts picture); another company's customer cannot get them; staff and anonymous callers are refused. **Found this round:** a customer could not call `/api/branding` at all, so a pilot portal could never show its company | PASSED | `disabled-modules` (new endpoint) |
 | 3.2 | Company **with** name, logo, phone, review link: header shows the name and the company's own logo; WhatsApp and Call go to the company's number and greet it by name; nothing says Sunchaser (text, links, images) | PASSED | `browser-pilot-round4` part 3 |
 | 3.3 | Company with **nothing set**: no name, no image, **no WhatsApp or Call button** (Sunchaser's number is never substituted), no review prompt | PASSED | same |
-| 3.4 | Every portal screen reachable by tab or service tile (dashboard, proposals, payments, support, account, service requests, service history, energy monitor, savings, care plans, my solar system) says nothing of Sunchaser for both companies | PASSED | same ({{PORTALSCREENS}} screens read per company) |
+| 3.4 | Every portal screen reachable by tab or service tile (dashboard, proposals, payments, support, account, service requests, service history, energy monitor, savings, care plans, my solar system) says nothing of Sunchaser for both companies | PASSED | same (9 screens read per company) |
 | 3.5 | Nothing is drawn before the company's branding is known and a failed load falls back to nothing, not to Sunchaser; single-company mode keeps its existing look | PASSED | `browser-pilot-round4`; `portalBranding.test.ts`; flag-off journey |
 | 3.6 | Welcome guide (staff, first sign-in) names the company, or a neutral phrase, never Sunchaser | PASSED | `browser-pilot-round4` |
 | 3.7 | **Actual PDFs, company with and without a logo**: quotation and invoice for a company with a logo (own logo embedded, none of the other's), a company with a name but no logo, and a company with nothing set: real Chromium PDFs read back as bytes; no Sunchaser logo/signature/bank picture (by image size), no Sunchaser text, no other company's text or logo; amounts present | PASSED | `pdf-render` |
 | 3.8 | The customer downloads their own invoice through the portal handler: real PDF, company identity, bank accounts, amount, own logo, nothing of the other company or Sunchaser; cannot download the other company's invoice | PASSED | `pdf-render` |
 | 3.9 | The privacy-policy and account-deletion links in the portal and in every workspace footer point to Sunchaser-hosted pages | **OPEN, owner decision** | left as they are on purpose: which policy applies to a pilot company's customers is not a code question (Part C, D4) |
 | 3.10 | A company with no contact details prints bare icons in the invoice header | KNOWN, cosmetic | seen in `beta-bare-invoice.pdf` |
-| 3.11 | Sunchaser wording on staff screens beyond header, footer, navigation and the screens above | see `docs/saas/evidence/round4/sunchaser-wording-audit.md` | a report-only crawl, not a proof (Part B, CG5) |
+| 3.11 | Sunchaser wording on staff screens beyond header, footer, navigation and the screens above | **FAILED (known)** | the crawl reached only 8 screens and found 3 places: the Accounts workspace ("Sunchaser Accounts", "Sunchaser Energy Systems") and the Sales Advisor deck heading ("SUNCHASER CRM & GENERATIVE PROPOSAL DECK"); `sunchaser-wording-audit.md`. Not a proof about unopened screens (CG5) |
 
 ### 4. Settings screen: bank accounts, non-administrators, history values
 
@@ -94,7 +94,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 
 | # | Check | Status | Evidence |
 |---|---|---|---|
-| 5.1 | AutoSizer, after-sales, WhatsApp inbox and connection, design tools, AI: every path, for a company administrator, a sales user and a portal customer of two companies: {{DISABLEDCALLS}} calls, all refused before any handler (404 `not_available`; a portal customer on a staff-only path gets the earlier 403) with the gate's exact body | PASSED | `disabled-modules` |
+| 5.1 | AutoSizer, after-sales, WhatsApp inbox and connection, design tools, AI: every path, for a company administrator, a sales user and a portal customer of two companies: 200 calls, all refused before any handler (404 `not_available`; a portal customer on a staff-only path gets the earlier 403) with the gate's exact body | PASSED | `disabled-modules` |
 | 5.2 | WhatsApp inbox in particular (`/api/inbox*`, `/api/conversations*`, `/api/admin/whatsapp*`, `/api/whatsapp-agent*`) | PASSED | same |
 | 5.3 | An AutoSizer quote cannot be saved by a pilot administrator (403 `module_disabled`), no row written, a manual BOQ quote on the same lead works | PASSED | same |
 | 5.4 | The boot payload (staff) and the portal payload (customer) switch every module off for a pilot company and on for the founding company | PASSED | same |
@@ -104,8 +104,8 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 
 | # | Check | Status | Evidence |
 |---|---|---|---|
-| 6.1 | With `MULTI_COMPANY_ENABLED` unset, on a database that has the migrations applied, the application behaves as before: login, lead, quotation, contract, invoice, payment, PDF; no company fields; no module flags; AutoSizer, after-sales, inbox, design tools and AI reachable; the image upload still writes to the public folder; no storage refusal | PASSED | `single-company-smoke` ({{SMOKE}}), `flag-off-round3` ({{FLAGOFF}}); run by the CI job `pilot-journeys` on a second instance of the same build |
-| 6.2 | The same in GitHub's CI | {{CI61}} | |
+| 6.1 | With `MULTI_COMPANY_ENABLED` unset, on a database that has the migrations applied, the application behaves as before: login, lead, quotation, contract, invoice, payment, PDF; no company fields; no module flags; AutoSizer, after-sales, inbox, design tools and AI reachable; the image upload still writes to the public folder; no storage refusal | PASSED | `single-company-smoke` (12/12), `flag-off-round3` (18/18); run by the CI job `pilot-journeys` on a second instance of the same build |
+| 6.2 | The same in GitHub's CI | see the CI result recorded in the PR after this commit (not claimed here) | |
 
 ### 7. Intermittent restore-journey failure (`docs/saas/evidence/round4/restore-repeat/SUMMARY.md`)
 
@@ -114,7 +114,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | 7.1 | The journey recorded the HTTP response of every failing step, and was repeated 15 times on one stack before any fix | PASSED (done) | 2 of 15 runs failed (7 and 9); in three runs beta ended with fewer rows than alpha |
 | 7.2 | **Cause of the failures seen in runs 7 and 9** | **ESTABLISHED** | the contract step builds the invoice id as `inv-<ms>` and line-item ids as `item-<ms>-<n>`; two contracts built in the same millisecond collide and the second request answers **HTTP 500 `duplicate key value violates unique constraint "invoices_pkey"` / `"invoice_items_pkey"`**. The stack's log holds exactly those two errors. Reproduced on demand: 14 of 72 simultaneous contracts failed with that body (`concurrent-contracts-BEFORE-fix.txt`) |
 | 7.3 | Fix: the invoice id, the line-item ids and the invoice-created customer id carry a random suffix | PASSED | `concurrent-contracts`: 72 of 72 simultaneous contracts succeed, every invoice exists once with its items, none crosses a company; now a CI journey. **This is a defect in code that production also runs** (the same ids); the owner may want it backported on its own |
-| 7.4 | The restore journey repeated again after the fix | {{RESTOREAFTER}} | |
+| 7.4 | The restore journey repeated again after the fix | PASSED: 15 of 15 runs pass (`restore-repeat-after-fix/`); before the fix 2 of 15 failed. 15 clean runs do not prove the absence of other collisions (7.6) | |
 | 7.5 | That the single failure of the **previous** round ("a document upload did not return an id") was this same collision | **UNRESOLVED** | its HTTP response was not recorded; plausible (a contract that fails midway can leave the customer link empty and the next upload then names no customer), not shown |
 | 7.6 | One row missing in run 8 without any failed check, and no matching error line | **UNRESOLVED** | other row ids are also built from the clock alone (activity-log `log-<ms>`, notifications, projects, orders) and were not changed (Part B, CG15); a silent collision there is a candidate, untested |
 
@@ -124,7 +124,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 |---|---|---|---|
 | 8.1 | Invoice issuance snapshot (bank accounts and terms frozen at issue; reprints preserve them; legacy invoices labelled, not back-filled; backend works before `t6`/`t7`) | PASSED | `pilot-round3` A, `compat-before-t6-t7`, DB test 15/15 |
 | 8.2 | Local QR codes (no third-party service), decode-tested | PASSED | `localQr.test.ts`; phone scan and QR inside a Chromium PDF remain UNTESTED |
-| 8.3 | The two-company journeys on **PostgreSQL 16** | {{PG16}} | |
+| 8.3 | The two-company journeys on **PostgreSQL 16** | PASSED: all 16 journeys on PostgreSQL 16.15 locally (`postgres16/`); the CI job now runs a 16/17 matrix, its first result is recorded in the PR, not claimed here | |
 | 8.4 | Subscription expiry enforced on every request (not by a job); renewal effective within seconds | PASSED | `pilot-round3` E |
 | 8.5 | Delivery, warranty and handover documents carry no Sunchaser identity; quote-editor defaults neutral | PASSED | `documentLeak.test.ts` |
 | 8.6 | Delivery / warranty / handover **flows** with two companies | FAILED (not possible) | the code writes `delivery_challans.created_by_user_id`, which no SQL in the repository creates; group disabled for pilots (Part C, PA2) |
@@ -141,7 +141,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | CG2 | Images embedded as text in database records (quotation page images, installation-photo rows) are not counted | each request is bounded by the 15 MB body limit, the total is not |
 | CG3 | No browser step uploads a file at the limit (1.9) and none opens the per-lead design-tool screens (2.3) | UI wording of refusals and hidden controls inside a lead are inspected, not run |
 | CG4 | A company restore bypasses the storage guard (it restores what the company had) | intended, but means usage can exceed a lowered limit afterwards |
-| CG5 | Sunchaser wording on staff screens that the journeys do not open | see the crawl report; the portal and the welcome guide are done |
+| CG5 | Sunchaser wording in the Accounts workspace and the Sales Advisor deck, and on any staff screen the journeys do not open | the portal and the welcome guide are done; the crawl is shallow (8 screens) |
 | CG6 | Invoice company name, address, logo and signature follow current settings; only bank accounts and terms are frozen | as requested, a known limit |
 | CG7 | No company price book; AutoSizer and the design tools are off instead | pilot companies cannot quote with the AutoSizer |
 | CG8 | The legacy-invoice label is not visible on the page or in the staff screen | by design, for tooling only |
