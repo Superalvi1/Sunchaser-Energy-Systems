@@ -40,6 +40,7 @@ try {
   const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(500)]);
   const fu = await fetch(BASE + "/api/upload", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + fa }, body: JSON.stringify({ base64Data: `data:image/png;base64,${png.toString("base64")}`, filename: "compat-founding.png" }) });
   check(`the founding company's upload is unaffected (${fu.status})`, fu.status === 200);
+  try { (await import("node:fs")).rmSync("public/uploads/compat-founding.png", { force: true }); (await import("node:fs")).rmSync("dist/public/uploads/compat-founding.png", { force: true }); } catch { /* tidy */ }
   const lead = await api("/api/leads", { method: "POST", body: JSON.stringify({ name: "Compat lead", email: "compat@example.test", phone: "03002222222", leadSource: "Direct/Referral" }) });
   check(`other writes are unaffected (${lead.status})`, lead.status === 201);
 } finally {

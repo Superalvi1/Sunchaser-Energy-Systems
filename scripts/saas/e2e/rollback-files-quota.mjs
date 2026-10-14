@@ -84,6 +84,7 @@ try {
   check("reading still works", (await A("/api/state")).status === 200 && (await A(`/api/admin/customer-documents/${customerId}`)).status === 200);
   const fu = await FA("/api/upload", { method: "POST", body: JSON.stringify({ base64Data: `data:image/png;base64,${png(500).toString("base64")}`, filename: `rollback-founding-${RUN}.png` }) });
   check(`the founding company's upload is unaffected (${fu.status})`, fu.status === 200);
+  for (const d of ["public/uploads", "dist/public/uploads"]) fs.rmSync(`${d}/rollback-founding-${RUN}.png`, { force: true });   // tidy the synthetic file
   runner("apply", "--to", "t8-storage-reservations");
   await reload(); await sleep(CACHE_WAIT);
   check("t8 is applied again: the table is empty (the in-flight reservation did not come back)", psql(`select count(*) from saas_storage_reservations`) === "0");
