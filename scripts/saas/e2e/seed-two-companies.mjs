@@ -24,6 +24,7 @@ if (process.argv.includes("--cleanup")) {
     const has = await db.query("select 1 from information_schema.columns where table_schema='public' and table_name=$1 and column_name='company_id'", [t]);
     if (has.rowCount) await db.query(`delete from public."${t}" where company_id in ('co_alpha','co_beta')`);
   }
+  await db.query("delete from saas_subscriptions where company_id in ('co_alpha','co_beta')");
   await db.query("delete from company_memberships where company_id in ('co_alpha','co_beta')");
   await db.query("delete from users where id like 'u-alpha%' or id like 'u-beta%' or id in ('u-both','u-nobody','u-platform')");
   await db.query("delete from companies where id in ('co_alpha','co_beta')");
@@ -36,10 +37,19 @@ const pw = () => hashPassword(process.env.TEST_PW);
 const COMPANIES = [["co_alpha", "alpha", "Alpha Solar"], ["co_beta", "beta", "Beta Energy"]];
 for (const [id, slug, name] of COMPANIES) await db.query("insert into companies (id, slug, name, status) values ($1,$2,$3,'active') on conflict (id) do update set status='active'", [id, slug, name]);
 
+// A subscription with an EXPLICIT storage limit, as operator onboarding creates one (a company with no limit cannot upload: there is no unlimited default).
+for (const [id] of COMPANIES) {
+  await db.query(
+    `insert into saas_subscriptions (id, company_id, plan_id, status, current_period_start, current_period_end, limit_overrides)
+     values ($1,$2,'pilot','active', current_date - 5, current_date + 30, '{"max_storage_mb": 512}'::jsonb)
+     on conflict (company_id) do update set plan_id='pilot', status='active', current_period_end=current_date + 30, limit_overrides='{"max_storage_mb": 512}'::jsonb`, [`sub-${id}`, id]);
+}
+
 // users: [id, username, name, role, companyMemberships[[company, role]], customerId]
 const USERS = [
   ["u-alpha-admin", "alpha_admin", "Alpha Admin", "Admin", [["co_alpha", "Admin"]]],
   ["u-alpha-sales", "alpha_sales", "Alpha Sales", "Sales Executive", [["co_alpha", "Sales Executive"]]],
+  ["u-alpha-manager", "alpha_manager", "Alpha Manager", "Sales Manager", [["co_alpha", "Sales Manager"]]],
   ["u-beta-admin", "beta_admin", "Beta Admin", "Admin", [["co_beta", "Admin"]]],
   ["u-beta-sales", "beta_sales", "Beta Sales", "Sales Executive", [["co_beta", "Sales Executive"]]],
   ["u-both", "both_user", "Works For Both", "Admin", [["co_alpha", "Sales Manager"], ["co_beta", "Sales Executive"]]],

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runWithCompany } from "./companyContext.ts";
-import { moduleFlags } from "./moduleGate.ts";
+import { moduleFlags, DESIGN_TOOLS_DISABLED_MESSAGE } from "./moduleGate.ts";
 import { resolveCompanyScope } from "./companyScopePolicy.ts";
 
 const ON = { MULTI_COMPANY_ENABLED: "true" } as NodeJS.ProcessEnv;
@@ -58,4 +58,42 @@ test("no after-sales route registered in server.ts escapes the gate (a new route
   const allowed = (p: string) => p.startsWith("/api/public/delivery/") || p === "/api/onboarding/complete";
   const open = related.filter((r) => !allowed(r.path) && resolveCompanyScope(r.method, r.path) !== "founding_only").map((r) => `${r.method} ${r.path}`);
   assert.deepEqual(open, []);
+});
+
+test("design tools (interactive proposals, Proposal Studio, Roof Studio): off for another company, on for the founding company and in single-company mode", () => {
+  runWithCompany({ companyId: "acme" }, () => assert.equal(moduleFlags(ON).designTools, false));
+  runWithCompany({ companyId: "sunchaser" }, () => assert.equal(moduleFlags(ON).designTools, true));
+  assert.equal(moduleFlags({}).designTools, true);
+  assert.match(DESIGN_TOOLS_DISABLED_MESSAGE, /company-specific pricing/);
+});
+
+test("every design-tool API path is founding-only, so another company gets 'not found' before any handler runs", () => {
+  const paths: Array<[string, string]> = [
+    ["GET", "/api/interactive-proposals"], ["POST", "/api/interactive-proposals"], ["POST", "/api/interactive-proposals/ip1/revoke"],
+    ["GET", "/api/leads/lead-1/design-session"], ["PUT", "/api/leads/lead-1/design-session"],
+    ["POST", "/api/export/pdf/design-studio-proposal/download"], ["POST", "/api/export/pdf/design-studio-proposal"],
+  ];
+  for (const [m, p] of paths) assert.equal(resolveCompanyScope(m, p), "founding_only", `${m} ${p}`);
+  // neighbours stay company-scoped
+  for (const [m, p] of [["GET", "/api/leads"], ["GET", "/api/leads/lead-1"], ["PUT", "/api/leads/lead-1/quote"], ["GET", "/api/export/pdf/quotation/lead-1"]] as const) {
+    assert.notEqual(resolveCompanyScope(m, p), "founding_only", `${m} ${p}`);
+  }
+});
+
+test("no staff route registered in server.ts or the interactive-proposal router that mentions design, roof, proposal studio or interactive proposals escapes the gate", async () => {
+  const fs = await import("node:fs");
+  const files = ["../../server.ts", "../interactiveProposals/interactiveProposalRoutes.ts"].map((f) => fs.readFileSync(new URL(f, import.meta.url), "utf8"));
+  const routes = files.flatMap((src) => [...src.matchAll(/^\s*app\.(get|post|put|patch|delete)\(\s*"(\/api[^"]*)"/gm)].map((m) => ({ method: m[1].toUpperCase(), path: m[2].replace(/:[A-Za-z]+/g, "x1") })));
+  const related = routes.filter((r) => /design-session|design-studio|interactive-proposals|roof/i.test(r.path));
+  assert.ok(related.length >= 6, `found ${related.length}`);
+  // The public client page resolves by an unguessable token as the founding company (no pilot company can create such a token).
+  const open = related.filter((r) => !r.path.startsWith("/api/public/interactive-proposals/") && resolveCompanyScope(r.method, r.path) !== "founding_only").map((r) => `${r.method} ${r.path}`);
+  assert.deepEqual(open, []);
+});
+
+test("assistants (AI widget, portal sizing wizard): off for another company, on for the founding company and in single-company mode", () => {
+  runWithCompany({ companyId: "acme" }, () => assert.equal(moduleFlags(ON).assistants, false));
+  runWithCompany({ companyId: "sunchaser" }, () => assert.equal(moduleFlags(ON).assistants, true));
+  assert.equal(moduleFlags({}).assistants, true);
+  for (const p of ["/api/ai/chat", "/api/gemini/chat", "/api/gemini/sizing-recommendations", "/api/gemini/generate-proposal"]) assert.equal(resolveCompanyScope("POST", p), "founding_only", p);
 });

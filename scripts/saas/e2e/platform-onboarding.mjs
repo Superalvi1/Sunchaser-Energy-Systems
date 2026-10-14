@@ -26,12 +26,19 @@ check("the operator defines a plan with limits", planSave.status === 200);
 
 // onboarding
 const co = `acme_${RUN}`, ownerUser = `owner_${RUN}`;
-const created = await send(op, "POST", "/api/platform/companies", { name: `Acme Solar ${RUN}`, id: co, ownerName: "Acme Owner", ownerUsername: ownerUser, ownerEmail: `${ownerUser}@acme.test`, planId: "tiny", trialDays: 10 });
+const created = await send(op, "POST", "/api/platform/companies", { name: `Acme Solar ${RUN}`, id: co, ownerName: "Acme Owner", ownerUsername: ownerUser, ownerEmail: `${ownerUser}@acme.test`, planId: "tiny", trialDays: 10, storageLimitMb: 25 });
 const cj = await json(created);
 check("onboarding creates the company and returns the administrator's temporary password once", created.status === 201 && cj.owner?.temporaryPassword?.length >= 14, JSON.stringify(cj).slice(0, 200));
 check("company, trial subscription, administrator, membership, neutral branding and PDF settings all exist (one transaction)", psql(`select (select status from companies where id='${co}')||'/'||(select status||':'||plan_id from saas_subscriptions where company_id='${co}')||'/'||(select count(*) from company_memberships where company_id='${co}' and role='Admin' and status='active')||'/'||(select count(*) from settings where key='${co}:company_branding')||'/'||(select count(*) from quote_pdf_settings where company_id='${co}')`) === "trial/trial:tiny/1/1/1");
 check("the stored password is a hash, and the plain temporary password appears in no row of the audit trail", psql(`select password like 's1:%' from users where username='${ownerUser}'`) === "t" && !psql(`select coalesce(string_agg(detail::text,''),'') from saas_audit`).includes(cj.owner.temporaryPassword));
-const dup = await send(op, "POST", "/api/platform/companies", { name: "Dup", id: `dup_${RUN}`, ownerName: "D", ownerUsername: ownerUser, ownerEmail: `d${RUN}@acme.test`, planId: "tiny" });
+const dup = await send(op, "POST", "/api/platform/companies", { name: "Dup", id: `dup_${RUN}`, ownerName: "D", ownerUsername: ownerUser, ownerEmail: `d${RUN}@acme.test`, planId: "tiny", storageLimitMb: 5 });
+check("onboarding without a storage limit is refused (no unlimited default), with a clear message, and creates nothing", await (async () => {
+  const noLimit = await send(op, "POST", "/api/platform/companies", { name: "No limit", id: `nolimit_${RUN}`, ownerName: "N", ownerUsername: `nl_${RUN}`, ownerEmail: `nl${RUN}@acme.test`, planId: "tiny" });
+  const zero = await send(op, "POST", "/api/platform/companies", { name: "Zero", id: `zero_${RUN}`, ownerName: "N", ownerUsername: `z_${RUN}`, ownerEmail: `z${RUN}@acme.test`, planId: "tiny", storageLimitMb: 0 });
+  const bj = await json(noLimit);
+  return noLimit.status === 400 && /storage limit/i.test(bj.error || "") && zero.status === 400 && psql(`select count(*) from companies where id in ('nolimit_${RUN}','zero_${RUN}')`) === "0";
+})());
+check("the explicit storage limit is stored on the new company's subscription", psql(`select limit_overrides->>'max_storage_mb' from saas_subscriptions where company_id='${co}'`) === "25");
 check("a duplicate administrator username is refused and leaves no company behind", dup.status === 409 && psql(`select count(*) from companies where id='dup_${RUN}'`) === "0");
 check("an invalid company id and the founding id are refused", (await send(op, "POST", "/api/platform/companies", { name: "Bad", id: "Bad Id!", ownerName: "x", ownerUsername: "abcd", ownerEmail: "a@b.co" })).status === 400 && (await send(op, "POST", "/api/platform/companies", { name: "F", id: "sunchaser", ownerName: "x", ownerUsername: "abcd", ownerEmail: "a@b.co" })).status === 400);
 
@@ -58,6 +65,7 @@ check("another company is not affected by this company's limit (alpha still crea
 // override and plan change
 const raise = await send(op, "PATCH", `/api/platform/companies/${co}`, { limitOverrides: { max_leads: 4 } });
 check("the operator raises the company's lead limit by an override", raise.status === 200 && (await mkLead(6)).status < 300 && (await mkLead(7)).status === 402);
+check("changing one limit keeps the others: the storage limit survives a lead-limit change", psql(`select limit_overrides->>'max_storage_mb' from saas_subscriptions where company_id='${co}'`) === "25");
 const ov = await json(await op("/api/platform/overview"));
 const row = (ov.companies || []).find((c) => c.id === co);
 check("the overview shows usage against limits for the company (leads 4 of 4, staff 1 of 2)", row?.usage.leads === 4 && row?.limits.max_leads === 4 && row?.usage.staff === 1 && row?.limits.max_staff === 2, JSON.stringify(row));

@@ -1,5 +1,8 @@
 // Minimal S3-compatible HTTPS store for isolated tests: PUT/GET/DELETE with If-Match / If-None-Match, and ListObjectsV2 (prefix, max-keys, continuation-token).
 // It does not verify request signatures, so it cannot prove real bucket credentials work.
+// Fault injection for tests: if a file named "fault" exists NEXT TO the objects directory, its first line chooses the failure:
+//   list    listings answer 503 (reads and writes still work)      put     writes answer 503      all     every request answers 503
+//   hang    listings never answer (the caller must time out)       (no file / anything else: normal)
 import https from "node:https"; import fs from "node:fs"; import { createHash } from "node:crypto";
 const store = new Map(); const dir = process.argv[2]; fs.mkdirSync(dir, { recursive: true });
 // Objects survive a restart of the mock: the index is rebuilt from the files already on disk.
@@ -9,6 +12,10 @@ https.createServer({ key: fs.readFileSync("key.pem"), cert: fs.readFileSync("cer
   const u = new URL(req.url, "https://x");
   const key = decodeURIComponent(u.pathname.slice(1));
   const chunks = []; req.on("data", c => chunks.push(c)); req.on("end", () => {
+    let fault = ""; try { fault = fs.readFileSync(dir + "/../fault", "utf8").split("\n")[0].trim(); } catch { /* no fault */ }
+    const isList = req.method === "GET" && u.searchParams.get("list-type") === "2";
+    if (fault === "all" || (fault === "list" && isList) || (fault === "put" && req.method === "PUT")) { res.writeHead(503); return res.end("injected fault"); }
+    if (fault === "hang" && isList) return; // never answers
     if (req.method === "GET" && u.searchParams.get("list-type") === "2") {
       const prefix = u.searchParams.get("prefix") || ""; const max = Number(u.searchParams.get("max-keys") || 1000); const after = u.searchParams.get("continuation-token") || "";
       const all = [...store.keys()].filter((k) => k.startsWith(prefix) && k > after).sort(); const page = all.slice(0, max); const more = all.length > page.length;

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, Star } from "lucide-react";
 import type { CompanyBranding } from "../lib/branding";
-import { portal, resolveGoogleReviewUrl } from "../lib/clientPortalUi";
+import { portal, portalCompanyLabel, resolveGoogleReviewUrl } from "../lib/clientPortalUi";
 import {
   googleReviewQrImageUrl,
   isGoogleReviewMarkedComplete,
@@ -26,6 +26,9 @@ export default function ClientPortalGoogleReview({ customerId, branding }: Clien
     setCompleted(true);
   };
 
+  // A company that has not set a review link has no review prompt (it is never pointed at Sunchaser's).
+  if (!reviewUrl) return null;
+
   return (
     <section className={`${portal.card} ${portal.cardPad} space-y-4`}>
       <div className="flex items-center gap-2">
@@ -33,7 +36,7 @@ export default function ClientPortalGoogleReview({ customerId, branding }: Clien
         <h2 className={portal.titleSm}>Leave a Google Review</h2>
       </div>
       <p className={portal.subtitle}>
-        Your project is complete. Help other homeowners discover Sunchaser Energy.
+        Your project is complete. Help other homeowners discover {portalCompanyLabel(branding)}.
       </p>
 
       <div className="flex flex-col sm:flex-row items-center gap-5">

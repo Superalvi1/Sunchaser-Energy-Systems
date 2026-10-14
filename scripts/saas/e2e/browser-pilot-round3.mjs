@@ -67,7 +67,7 @@ let alphaName = "";
   const has = (re) => bs.some((b) => re.test(b));
   check("the Sunchaser-only Learning Studio is not offered", !has(/Learning Studio/i), bs.join(" | ").slice(0, 400));
   check("WhatsApp connection, WhatsApp inbox and marketplace are not offered", !has(/WhatsApp Connection/i) && !has(/WhatsApp Inbox/i) && !has(/Marketplace/i));
-  check("the AI assistant carries no Sunchaser name", has(/^AI Assistant/) && !has(/Sunchaser AI Assistant/));
+  check("the AI assistant (Sunchaser prompts and equipment) is not offered to a pilot company, under any name", !has(/AI Assistant/i) && !has(/Solar AI/i));
   check("Company Settings is offered", has(/^Company Settings/));
   check("after-sales (Project Delivery) is not offered", !has(/^Project Delivery/));
   await page.screenshot({ path: `${OUT}/r3-03-alpha-workspace.png` });

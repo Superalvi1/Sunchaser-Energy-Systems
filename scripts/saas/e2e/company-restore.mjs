@@ -65,9 +65,17 @@ async function fill(c) {
   c.docs = [];
   for (const i of [1, 2]) {
     const bytes = miniPdf(`${c.t}CANARYFILE${i}`);
+    const t0 = Date.now(), at = new Date().toISOString();
     const ur = await c.api("/api/admin/customer-documents/upload", { method: "POST", body: JSON.stringify({ customerId: c.customerId, documentType: "other", title: `${c.t} document ${i}`, fileName: `${c.t}-${i}.pdf`, mimeType: "application/pdf", base64Data: bytes.toString("base64"), clientUploadId: `${c.t.toLowerCase()}-up-${i}` }) });
-    const r = await json(ur);
-    if (!r.id) c.uploadProblem = `${c.id} upload ${i}: HTTP ${ur.status} ${JSON.stringify(r).slice(0, 160)}`;
+    const raw = await ur.text();
+    let r = {}; try { r = JSON.parse(raw); } catch { /* not JSON: kept in the record below */ }
+    if (!r.id) {
+      // Evidence for an intermittent failure: the whole response, and the state of the thing the request depends on (the customer row it names).
+      const h = {}; for (const k of ["content-type", "retry-after", "x-subscription-state", "x-request-id"]) if (ur.headers.get(k)) h[k] = ur.headers.get(k);
+      const rec = { at, elapsedMs: Date.now() - t0, company: c.id, upload: i, status: ur.status, headers: h, body: raw.slice(0, 600), customerIdSent: c.customerId, customerRowExists: psql(`select count(*) from customers where id='${c.customerId}' and company_id='${c.id}'`), leadCustomerId: psql(`select coalesce(customer_id,'') from leads where id='${c.lead.id}'`), documentsOfCustomer: psql(`select count(*) from customer_documents where customer_id='${c.customerId}'`) };
+      c.uploadProblem = `${c.id} upload ${i}: HTTP ${ur.status} ${raw.slice(0, 160)}`;
+      console.log("UPLOAD-FAILURE-RECORD " + JSON.stringify(rec));
+    }
     c.docs.push({ id: r.id, bytes, hash: sha(bytes) });
   }
   c.number = psql(`select invoice_number from invoices where id='${c.invoiceId}'`);

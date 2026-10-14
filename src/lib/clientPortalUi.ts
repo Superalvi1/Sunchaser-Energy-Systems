@@ -35,21 +35,47 @@ export const portal = {
   divider: "border-t border-white/[0.06]",
 } as const;
 
-export function resolveGoogleReviewUrl(branding?: { googleReviewUrl?: string | null } | null): string {
+type PortalBrandLike = { legacyDefaults?: boolean; companyName?: string | null; googleReviewUrl?: string | null; phoneNumbers?: string | null } | null | undefined;
+
+/** True for a company other than the founding one: nothing of Sunchaser's is ever shown to its customers. */
+export function isNeutralPortal(branding?: PortalBrandLike): boolean {
+  return branding?.legacyDefaults === false;
+}
+
+/** The company's own name; Sunchaser's only for Sunchaser. Empty when a company has not set one. */
+export function portalCompanyName(branding?: PortalBrandLike): string {
+  const own = String(branding?.companyName || "").trim();
+  if (own) return own;
+  return isNeutralPortal(branding) ? "" : "Sunchaser Energy Systems";
+}
+
+/** A short form for sentences ("Hello X"): the company name, or a neutral phrase for a company that set none. */
+export function portalCompanyLabel(branding?: PortalBrandLike): string {
+  return portalCompanyName(branding) || "your solar company";
+}
+
+/**
+ * The review link. Sunchaser falls back to its own placeholder as before; any other company has a review link only if it set one, and
+ * with none the review prompt is not shown (an empty string).
+ */
+export function resolveGoogleReviewUrl(branding?: PortalBrandLike): string {
   const url = String(branding?.googleReviewUrl || "").trim();
   if (url.startsWith("http")) return url;
+  if (isNeutralPortal(branding)) return "";
   return DEFAULT_BRANDING.googleReviewUrl || SUNCHASER_GOOGLE_REVIEW_FALLBACK;
 }
 
 export const SUNCHASER_GOOGLE_REVIEW_FALLBACK =
   "https://search.google.com/local/writereview?placeid=ChIJSunchaserPlaceholder";
 
-export function supportPhoneFromBranding(phones?: string): string {
+/** The company's first support number. Sunchaser's own number is the fallback for Sunchaser only; another company with none gets "" (no call or WhatsApp button). */
+export function supportPhoneFromBranding(phones?: string, branding?: PortalBrandLike): string {
   const first = String(phones || "")
     .split(/[,;]/)
     .map((s) => s.trim())
     .find(Boolean);
-  return first || "03090236666";
+  if (first) return first;
+  return isNeutralPortal(branding) ? "" : "03090236666";
 }
 
 export function whatsAppHref(phone: string, text?: string): string {

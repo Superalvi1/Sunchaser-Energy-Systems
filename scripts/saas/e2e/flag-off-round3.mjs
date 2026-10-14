@@ -1,5 +1,6 @@
-// Flag-off equivalence for the round-3 changes (MULTI_COMPANY_ENABLED unset): what a single-company deployment sees. Disposable stack only; needs a
-// second application instance started without the flag. Not part of the CI job (the CI stack runs the flag on); run by hand or add a second instance.
+// Flag-off equivalence for the round-3 and round-4 changes (MULTI_COMPANY_ENABLED unset): what a single-company deployment sees. Disposable stack only;
+// needs a second application instance of the same build started without the flag and without the tenant key. Part of the CI job "pilot-journeys"
+// (scripts/saas/ci/run-pilot-journeys.sh starts that instance after the multi-company journeys); run by hand the same way.
 //   Env: E2E_BASE_URL (the flag-off instance), E2E_PSQL, TEST_PW (synthetic users t_admin, t_sales).
 import { execFileSync } from "node:child_process";
 const BASE = process.env.E2E_BASE_URL || "http://127.0.0.1:3152", PW = process.env.TEST_PW;
@@ -34,6 +35,23 @@ const snap = psql(`select coalesce(issuance_snapshot::text,'') from invoices whe
 console.log(`   (snapshot stored in single-company mode when t6 is applied: ${snap ? "yes" : "no"}; ${snap ? snap.slice(0, 140) : ""})`);
 const pr = await A(`/api/export/pdf/invoice/${inv.invoice?.id}`); const html = await pr.text();
 check(`the invoice prints (${pr.status}) with the founding company's own name and no neutral-company wording`, pr.status === 200 && /Sunchaser/i.test(html));
+// ---- round 4: the new gates and limits must not exist when the flag is off
+for (const [m, p, body] of [["GET", "/api/interactive-proposals"], ["GET", `/api/leads/${lead.id}/design-session`], ["POST", "/api/ai/chat", "{}"], ["POST", "/api/gemini/chat", "{}"]]) {
+  const r = await A(p, { method: m, ...(body ? { body } : {}) }); const b = await json(r);
+  check(`${m} ${p.replace(lead.id, "<lead>")} is not refused by the company gate (${r.status})`, b.code !== "not_available", `${r.status} ${JSON.stringify(b).slice(0, 120)}`);
+}
+const stTwo = await json(await A("/api/state"));
+check("no module flag named designTools or assistants is sent (nothing is hidden)", !("modules" in stTwo));
+const noLimitImg = await A("/api/upload", { method: "POST", body: JSON.stringify({ base64Data: "data:image/png;base64," + Buffer.alloc(300).toString("base64"), filename: `flagoff-${Date.now()}.png` }) });
+const nb = await json(noLimitImg);
+check(`the image upload still writes to the public uploads folder as before (${noLimitImg.status} ${nb.url})`, noLimitImg.status === 200 && /^\/uploads\//.test(nb.url || ""));
+{
+  const fs = await import("node:fs");
+  for (const d of ["public/uploads", "dist/public/uploads"]) { try { for (const f of fs.readdirSync(d)) if (f.startsWith("flagoff-")) fs.rmSync(`${d}/${f}`, { force: true }); } catch { /* no such folder */ } }
+}
+const doc = await A("/api/admin/customer-documents/upload", { method: "POST", body: JSON.stringify({ customerId: "does-not-exist", documentType: "other", fileName: "x.pdf", mimeType: "application/pdf", base64Data: Buffer.from("%PDF-1.4\n%%EOF").toString("base64") }) });
+const db2 = await json(doc);
+check(`a document upload is never answered with a storage-limit refusal (${doc.status} ${db2.code || ""})`, !["storage_limit_exceeded", "storage_unverified", "storage_limit_not_set"].includes(db2.code));
 check("a Sales Executive still cannot reach the company settings screen API for writing", (await S("/api/company/settings/branding", { method: "PUT", body: JSON.stringify({ companyName: "x" }) })).status >= 400);
 console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);

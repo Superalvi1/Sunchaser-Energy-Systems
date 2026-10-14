@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { evaluateSubscriptionAccess, graceDays } from "./subscriptionAccess.ts";
 import { resolveCompany, type CompanyStore } from "./companyResolver.ts";
 import { runWithCompany } from "./companyContext.ts";
-import { reserveStorage, setStorageQuotaDeps, StorageQuotaError } from "./storageQuota.ts";
+import { reserveStorage, setStorageQuotaDeps, StorageQuotaError, StorageUnverifiedError, StorageLimitNotSetError, storageErrorResponse, isStorageError } from "./storageQuota.ts";
 
 const NOW = new Date("2026-10-13T12:00:00Z");
 const day = (n: number) => new Date(NOW.getTime() + n * 86_400_000).toISOString().slice(0, 10);
@@ -94,23 +94,34 @@ const MB = 1024 * 1024;
 const inCompany = <T>(id: string, fn: () => Promise<T>) => runWithCompany({ companyId: id }, fn);
 const ON = (() => { process.env.MULTI_COMPANY_ENABLED = "true"; return true; })();
 
-test("storage: the limit is checked against real usage, reserves bytes, and releases them when the write fails", async () => {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("storage: the limit is checked against real usage; accepted bytes are held, committed, or given back", async () => {
   let listCalls = 0;
   setStorageQuotaDeps({ limitFor: async () => 10, list: async (ns) => { listCalls++; return ns === "customer-documents" ? [{ size: 6 * MB }] : []; } });
   await inCompany("acme", async () => {
     const a = await reserveStorage(3 * MB); // 6 + 3 = 9 <= 10
-    await assert.rejects(() => reserveStorage(2 * MB), (e: any) => e instanceof StorageQuotaError && e.statusCode === 402 && e.code === "storage_limit_exceeded", "9 + 2 > 10");
+    await assert.rejects(() => reserveStorage(2 * MB), (e: any) => e instanceof StorageQuotaError && e.statusCode === 402 && e.code === "storage_limit_exceeded" && e.retryable === false, "9 + 2 > 10");
     a.release(); // the first write failed: its bytes are given back
     const b = await reserveStorage(2 * MB); // 6 + 2 = 8 <= 10
-    b.release();
+    b.commit(); // finished: still counted (8)
+    await assert.rejects(() => reserveStorage(3 * MB), StorageQuotaError, "8 + 3 > 10 after the second write finished");
+    const c = await reserveStorage(2 * MB); // exactly 10: allowed, the limit is inclusive
+    c.commit();
+    await assert.rejects(() => reserveStorage(1), StorageQuotaError, "one byte over");
   });
-  assert.equal(listCalls, 2, "usage is listed once per namespace and then cached");
+  assert.ok(listCalls >= 2, "usage is listed once per namespace");
 });
 
-test("storage: no limit, founding company, no company, flag off, zero-byte write: never checked, never listed", async () => {
+test("storage: no limit set for a pilot company is refused (no unlimited default), with a coded, non-retryable message", async () => {
+  setStorageQuotaDeps({ limitFor: async () => null, list: async () => [] });
+  await inCompany("acme", async () => {
+    await assert.rejects(() => reserveStorage(1), (e: any) => e instanceof StorageLimitNotSetError && e.statusCode === 403 && e.code === "storage_limit_not_set" && e.retryable === false && /existing files are unaffected/i.test(e.message));
+  });
+});
+
+test("storage: never checked, never listed - the founding company, requests with no company, the flag off, a zero-byte write", async () => {
   let listCalls = 0;
-  setStorageQuotaDeps({ limitFor: async () => null, list: async () => { listCalls++; return []; } });
-  await inCompany("acme", async () => { await reserveStorage(900 * MB); });
   setStorageQuotaDeps({ limitFor: async () => 1, list: async () => { listCalls++; return [{ size: 5 * MB }]; } });
   await inCompany("sunchaser", async () => { await reserveStorage(900 * MB); });
   await inCompany("acme", async () => { await reserveStorage(0); });
@@ -119,17 +130,99 @@ test("storage: no limit, founding company, no company, flag off, zero-byte write
   assert.equal(listCalls, 0);
 });
 
-test("storage: fails open (the write is allowed, with a warning) when the limit or usage cannot be read", async () => {
+test("storage: FAILS CLOSED when the limit cannot be read, usage cannot be measured, or the store hangs - retryable, nothing touched", async () => {
+  const expectUnverified = (e: any) => e instanceof StorageUnverifiedError && e.statusCode === 503 && e.code === "storage_unverified" && e.retryable === true && e.retryAfterSeconds > 0 && /try the upload again/i.test(e.message) && /existing files are unaffected/i.test(e.message);
   setStorageQuotaDeps({ limitFor: async () => { throw new Error("db down"); } });
-  await inCompany("acme", async () => { await reserveStorage(50 * MB); });
-  setStorageQuotaDeps({ limitFor: async () => 1, list: async () => { throw new Error("store down"); } });
-  await inCompany("acme", async () => { await reserveStorage(50 * MB); });
+  await inCompany("acme", async () => { await assert.rejects(() => reserveStorage(1), expectUnverified, "limit unreadable"); });
+  setStorageQuotaDeps({ limitFor: async () => 1000, list: async () => { throw new Error("store down"); } });
+  await inCompany("acme", async () => { await assert.rejects(() => reserveStorage(1), expectUnverified, "usage unmeasurable"); });
+  setStorageQuotaDeps({ limitFor: async () => 1000, list: () => new Promise(() => {}), timeoutMs: 30 });
+  await inCompany("acme", async () => { await assert.rejects(() => reserveStorage(1), expectUnverified, "listing hangs"); });
+  // the response a route sends
+  const r = storageErrorResponse(new StorageUnverifiedError());
+  assert.equal(r.status, 503);
+  assert.ok(r.headers["Retry-After"]);
+  assert.equal((r.body as any).retryable, true);
+  assert.ok(isStorageError(new StorageQuotaError(1, 1, 1)) && !isStorageError(new Error("x")));
+  // and it recovers: the next attempt after the store is back is accepted
+  setStorageQuotaDeps({ limitFor: async () => 10, list: async () => [] });
+  await inCompany("acme", async () => { (await reserveStorage(1)).commit(); });
+});
+
+test("storage: a store that was down does not poison the company - one failed decision does not block the queue behind it", async () => {
+  let n = 0;
+  setStorageQuotaDeps({ limitFor: async () => 10, list: async () => { if (n++ === 0) throw new Error("blip"); return []; } });
+  await inCompany("acme", async () => {
+    const [first, second] = await Promise.allSettled([reserveStorage(1), reserveStorage(1)]);
+    assert.equal(first.status, "rejected");
+    assert.equal(second.status, "fulfilled");
+  });
 });
 
 test("storage: files already stored are never affected - being over the limit only blocks new writes", async () => {
   setStorageQuotaDeps({ limitFor: async () => 1, list: async () => [{ size: 50 * MB }] });
   await inCompany("acme", async () => { await assert.rejects(() => reserveStorage(1), StorageQuotaError); });
   // (reading, listing and deleting do not call reserveStorage at all)
+});
+
+test("storage: a refusal on an old figure is re-checked against a fresh listing (files deleted since are not counted)", async () => {
+  let stored = 9 * MB;
+  let t = 0;
+  setStorageQuotaDeps({ limitFor: async () => 10, list: async (ns) => (ns === "customer-documents" ? [{ size: stored }] : []), now: () => t });
+  await inCompany("acme", async () => {
+    await assert.rejects(() => reserveStorage(2 * MB), StorageQuotaError, "9 + 2 > 10");
+    stored = 1 * MB; // the company deleted files
+    t += 10_000; // more than the 2 s re-check threshold, less than the 60 s cache time
+    (await reserveStorage(2 * MB)).commit();
+  });
+});
+
+test("storage: CONCURRENT uploads at the boundary - exactly as many are accepted as fit, never more, whatever the timing", async () => {
+  for (const jitter of [0, 1, 5]) {
+    // limit 10 MB, 3 MB already stored, 1 MB uploads: room for exactly 7
+    setStorageQuotaDeps({
+      limitFor: async () => { await sleep(jitter); return 10; },
+      list: async (ns) => { await sleep(jitter * 2); return ns === "customer-documents" ? [{ size: 3 * MB }] : []; },
+    });
+    await inCompany("acme", async () => {
+      const results = await Promise.allSettled(Array.from({ length: 25 }, async (_, i) => {
+        const r = await reserveStorage(1 * MB);
+        await sleep((i % 5) * jitter); // the "write"
+        r.commit();
+        return i;
+      }));
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      const refused = results.filter((r) => r.status === "rejected" && (r as PromiseRejectedResult).reason instanceof StorageQuotaError).length;
+      assert.equal(ok, 7, `jitter ${jitter}: accepted`);
+      assert.equal(ok + refused, 25, `jitter ${jitter}: every other request was refused with the quota error, none failed otherwise`);
+    });
+  }
+});
+
+test("storage: concurrent uploads of different sizes never exceed the limit in total; failed writes free their room", async () => {
+  setStorageQuotaDeps({ limitFor: async () => 10, list: async () => [] });
+  await inCompany("acme", async () => {
+    const sizes = [4, 4, 4, 3, 3, 2, 2, 1, 1, 1, 6, 5];
+    let accepted = 0, failedWrites = 0;
+    await Promise.allSettled(sizes.map(async (mb, i) => {
+      const r = await reserveStorage(mb * MB);
+      await sleep(i % 3);
+      if (i === 0) { r.release(); failedWrites++; return; } // the first accepted write fails and gives its room back
+      r.commit(); accepted += mb;
+    }));
+    assert.ok(accepted <= 10, `accepted ${accepted} MB`);
+    // after it all the figure is consistent: nothing more than what is left fits
+    const left = 10 - accepted;
+    if (left > 0) (await reserveStorage(left * MB)).commit();
+    await assert.rejects(() => reserveStorage(1), StorageQuotaError);
+    assert.equal(failedWrites, 1);
+  });
+});
+
+test("storage: another company's usage never counts against this one", async () => {
+  setStorageQuotaDeps({ limitFor: async (c) => (c === "acme" ? 1 : 100), list: async (ns, prefix) => (ns !== "customer-documents" ? [] : prefix.includes("acme") ? [{ size: 1 * MB }] : [{ size: 50 * MB }]) });
+  await inCompany("acme", async () => { await assert.rejects(() => reserveStorage(1), StorageQuotaError); });
+  await inCompany("other", async () => { (await reserveStorage(1 * MB)).commit(); });
 });
 
 test("cleanup", () => { setStorageQuotaDeps(null); delete process.env.MULTI_COMPANY_ENABLED; assert.ok(ON); });

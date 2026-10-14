@@ -49,7 +49,11 @@ export function cleanCompanyInput(body: any) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new PlatformInputError("Administrator e-mail is not valid.");
   const trialDays = body?.trialDays == null || body.trialDays === "" ? 14 : Math.floor(num(body.trialDays, "Trial days"));
   if (trialDays > 365) throw new PlatformInputError("Trial days: at most 365.");
-  return { id, name, username, email, ownerName: clip(body?.ownerName, 120, "Administrator name", true), planId: clip(body?.planId || "pilot", 41, "Plan", true), trialDays };
+  // No unlimited default: a company is created with an explicit storage limit, which uploads are checked against.
+  if (body?.storageLimitMb == null || body.storageLimitMb === "") throw new PlatformInputError("Storage limit (MB) is required: a company cannot be created without one.");
+  const storageLimitMb = Number(body.storageLimitMb);
+  if (!Number.isInteger(storageLimitMb) || storageLimitMb < 1 || storageLimitMb > 1_048_576) throw new PlatformInputError("Storage limit (MB) must be a whole number from 1 to 1048576.");
+  return { id, name, username, email, ownerName: clip(body?.ownerName, 120, "Administrator name", true), planId: clip(body?.planId || "pilot", 41, "Plan", true), trialDays, storageLimitMb };
 }
 
 export function cleanOverrides(v: unknown): Record<string, number> {
@@ -154,7 +158,15 @@ export function registerPlatformRoutes(app: Express): void {
         p_actor: { id: (req as any).actor.id, username: (req as any).actor.username },
       });
       if (error) throw error;
-      return res.status(201).json({ company: data, owner: { username: c.username, temporaryPassword: password, note: "Shown once. The administrator should set a new password (Forgot password) at first sign-in." } });
+      // The explicit storage limit is the company's own override, so it does not depend on the plan. If this write fails the company
+      // exists with no limit, and uploads stay refused (fail closed) until the operator sets one.
+      const lim = await db.from("saas_subscriptions").update({ limit_overrides: { max_storage_mb: c.storageLimitMb }, updated_at: new Date().toISOString() }).eq("company_id", c.id);
+      if (lim.error) {
+        console.error("[platform] company created but its storage limit was not saved:", lim.error.message);
+        return res.status(500).json({ error: `The company ${c.id} was created, but its storage limit could not be saved. Uploads stay paused until you set the limit (Edit company).`, code: "storage_limit_not_saved", company: data });
+      }
+      await audit(db, req, "company.storage_limit_set", c.id, { maxStorageMb: c.storageLimitMb });
+      return res.status(201).json({ company: data, storageLimitMb: c.storageLimitMb, owner: { username: c.username, temporaryPassword: password, note: "Shown once. The administrator should set a new password (Forgot password) at first sign-in." } });
     } catch (e) { return fail(res, e); }
   });
 
@@ -180,7 +192,14 @@ export function registerPlatformRoutes(app: Express): void {
         if (!p) throw new PlatformInputError("Unknown or inactive plan.");
         subPatch.plan_id = planId; changes.planId = planId;
       }
-      if (req.body?.limitOverrides !== undefined) { subPatch.limit_overrides = cleanOverrides(req.body.limitOverrides); changes.limitOverrides = subPatch.limit_overrides; }
+      if (req.body?.limitOverrides !== undefined) {
+        // Merged into the existing overrides, never replacing them: changing one limit must not silently drop another (above all the
+        // storage limit, which uploads depend on). A null or empty value removes that one override.
+        const given = cleanOverrides(req.body.limitOverrides);
+        const merged: Record<string, number> = { ...((sub?.limit_overrides as Record<string, number>) || {}), ...given };
+        for (const [k, v] of Object.entries(req.body.limitOverrides as Record<string, unknown>)) if ((v === null || v === "") && (LIMIT_KEYS as readonly string[]).includes(k)) delete merged[k];
+        subPatch.limit_overrides = merged; changes.limitOverrides = given;
+      }
       if (req.body?.periodEnd !== undefined) { subPatch.current_period_end = isoDate(req.body.periodEnd, "periodEnd"); changes.periodEnd = subPatch.current_period_end; }
       if (req.body?.notes !== undefined) { subPatch.notes = clip(req.body.notes, 500, "Notes"); changes.notes = subPatch.notes; }
       if (!Object.keys(changes).length) throw new PlatformInputError("Nothing to change.");

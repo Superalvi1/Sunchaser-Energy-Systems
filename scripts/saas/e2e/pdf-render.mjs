@@ -160,6 +160,44 @@ A.q2 = await newQuote(A, "PDF2", A.rate + 9000, A.qty);
 const fresh = readPdf((await quotePdf(A, A.q2)).bytes);
 check("alpha's NEW quotation PDF shows the new name and the new price", fresh.flat.includes(NEWNAME) && !fresh.flat.includes(A.name) && fresh.digits.includes(String((A.rate + 9000) * A.qty)));
 
+// ---- companies WITHOUT a logo: the real PDFs carry no image of anyone else's - no Sunchaser logo, signature or bank-accounts picture, no other
+// company's logo - and still carry the company's own name. Then a company that has set nothing at all.
+{
+  const imageDims = (bytes) => {
+    const f = tmp("pdf"); fs.writeFileSync(f, bytes);
+    const prefix = tmp("img"); spawnSync("pdfimages", ["-png", f, prefix]);
+    const dims = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith(path.basename(prefix))).map((n) => { const p2 = path.join(os.tmpdir(), n); const b = fs.readFileSync(p2); fs.unlinkSync(p2); return `${b.readUInt32BE(16)}x${b.readUInt32BE(20)}`; });
+    fs.unlinkSync(f); return dims;
+  };
+  const sunchaserDims = ["public/assets/sunchaser-logo.png", "public/assets/signature.png", "public/sunchaser-bank-accounts.png", "public/sunchaser-ceo-signature.png"].filter((f) => fs.existsSync(f)).map((f) => { const b = fs.readFileSync(f); return `${b.readUInt32BE(16)}x${b.readUInt32BE(20)}`; });
+  check(`sanity: the dimensions of Sunchaser's own logo, signature and bank-accounts pictures are known (${sunchaserDims.join(", ")})`, sunchaserDims.length >= 1);
+  const B = CO.beta, A2 = CO.alpha;
+  const states = [
+    { label: "name only, no logo", body: { companyName: B.name, officeAddress: B.address, phoneNumbers: B.phones, logoUrl: "", invoiceLogoUrl: "" }, expectName: true },
+    { label: "nothing set at all", body: { companyName: "", officeAddress: "", phoneNumbers: "", billingEmail: "", websiteUrl: "", logoUrl: "", invoiceLogoUrl: "" }, expectName: false },
+  ];
+  for (const st of states) {
+    const r = await put(B.api, "/api/company/settings/branding", st.body);
+    check(`beta (${st.label}): settings saved`, r.status === 200, String(r.status));
+    const q = await newQuote(B, "NL" + st.label.length, B.rate, B.qty);
+    const inv = await invoiceFor(B, q);
+    const qp = await quotePdf(B, q);
+    const qr = readPdf(qp.bytes);
+    check(`beta (${st.label}): the quotation is still a real PDF with its amounts (${qp.status}, ${qr.pages} pages)`, qp.status === 200 && qr.isPdf && qr.digits.includes(String(q.total)), `${qp.status}`);
+    check(`beta (${st.label}): the quotation embeds no Sunchaser logo/signature/bank picture and none of alpha's logo`, !imageDims(qp.bytes).some((d) => sunchaserDims.includes(d)) && !hasColor(qr.colors, A2.color), imageDims(qp.bytes).join(","));
+    check(`beta (${st.label}): the quotation carries nothing of Sunchaser or alpha`, !SUNCHASER.test(qr.text) && ![A2.name, A2.address, A2.t].some((x) => qr.flat.includes(x)), (qr.text.match(SUNCHASER) || [])[0]);
+    if (st.expectName) check(`beta (${st.label}): the quotation shows the company's own name`, qr.flat.includes(B.name));
+    const ip = await invoicePdf(B, inv);
+    const ir = readPdf(ip.bytes);
+    check(`beta (${st.label}): the invoice is still a real PDF with its amounts (${ip.status}, ${ir.pages} pages)`, ip.status === 200 && ir.isPdf && ir.digits.includes(String(q.total)), `${ip.status}`);
+    check(`beta (${st.label}): the invoice embeds no Sunchaser logo/signature/bank picture and none of alpha's logo`, !imageDims(ip.bytes).some((d) => sunchaserDims.includes(d)) && !hasColor(ir.colors, A2.color), imageDims(ip.bytes).join(","));
+    check(`beta (${st.label}): the invoice carries nothing of Sunchaser (name, address, phones, accounts) or alpha`, !SUNCHASER.test(ir.text) && ![A2.name, A2.address, ...A2.banks.flatMap((b) => [b.bankName, b.accountNumber])].some((x) => ir.flat.includes(x)), (ir.text.match(SUNCHASER) || [])[0]);
+    if (st.expectName) check(`beta (${st.label}): the invoice shows the company's own name`, ir.flat.includes(B.name));
+    fs.writeFileSync(path.join(OUT, `beta-${st.expectName ? "nologo" : "bare"}-quotation.pdf`), qp.bytes);
+    fs.writeFileSync(path.join(OUT, `beta-${st.expectName ? "nologo" : "bare"}-invoice.pdf`), ip.bytes);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) console.log("Failed:\n - " + failures.join("\n - "));
 process.exitCode = fail ? 1 : 0;

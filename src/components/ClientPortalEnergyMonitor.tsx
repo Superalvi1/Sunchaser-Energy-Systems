@@ -1,3 +1,4 @@
+import { portalCompanyName } from "../lib/clientPortalUi";
 import React, { useEffect, useState } from "react";
 import {
   Loader2,
@@ -20,6 +21,7 @@ import { formatKw, formatKwhEnergy, formatPkrEnergy } from "../lib/clientPortalE
 
 interface ClientPortalEnergyMonitorProps {
   user: User;
+  branding?: { legacyDefaults?: boolean; companyName?: string | null } | null;
 }
 
 function MetricTile({
@@ -48,7 +50,7 @@ function MetricTile({
   );
 }
 
-export default function ClientPortalEnergyMonitor({ user }: ClientPortalEnergyMonitorProps) {
+export default function ClientPortalEnergyMonitor({ user, branding }: ClientPortalEnergyMonitorProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<EnergyMonitorPayload | null>(null);
@@ -110,12 +112,12 @@ export default function ClientPortalEnergyMonitor({ user }: ClientPortalEnergyMo
       </div>
 
       <p className="text-xs text-slate-500">
-        Single Sunchaser portal for GoodWe, Solis, Growatt, and Itel Hybrid — no separate vendor app required.
+        {portalCompanyName(branding) ? `Single ${portalCompanyName(branding) === "Sunchaser Energy Systems" ? "Sunchaser" : portalCompanyName(branding)} portal` : "One portal"} for GoodWe, Solis, Growatt, and Itel Hybrid — no separate vendor app required.
       </p>
 
       {devices.length === 0 ? (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-center text-slate-400 text-sm">
-          No inverter linked yet. Your Sunchaser team will register your device for live monitoring.
+          No inverter linked yet. {portalCompanyName(branding) ? `The ${portalCompanyName(branding) === "Sunchaser Energy Systems" ? "Sunchaser" : portalCompanyName(branding)} team` : "Your installer"} will register your device for live monitoring.
         </div>
       ) : (
         <>

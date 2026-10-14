@@ -1,4 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { fetchCompanyBranding } from "../services/api";
+import { getPlatformInfo, workspaceIsNeutral } from "../lib/workspaceModules";
+import { personalise } from "../lib/welcomeText";
 import { Sun, ChevronRight, ChevronLeft, Shield, BookOpen } from "lucide-react";
 
 type WizardVariant = "customer" | "staff" | "technical";
@@ -89,6 +92,17 @@ export default function WelcomeWizard({
     variant === "customer" ? CUSTOMER_STEPS : variant === "technical" ? TECH_STEPS : STAFF_STEPS;
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState(false);
+  // Which company's guide this is: asked of the server, and nothing is worded until the answer is in (no flash of another company's name).
+  const [company, setCompany] = useState<{ neutral: boolean; name: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetchCompanyBranding()
+      .then((b: any) => { if (alive) setCompany({ neutral: b?.legacyDefaults === false, name: String(b?.companyName || "") }); })
+      .catch(() => { if (alive) setCompany({ neutral: workspaceIsNeutral() || getPlatformInfo()?.multiCompany === true, name: "" }); });
+    return () => { alive = false; };
+  }, []);
+  const t = (text: string) => (company ? personalise(text, company) : "");
+  const heading = company ? (company.neutral ? company.name : "Sunchaser Energy") : "";
   const isLast = index >= steps.length - 1;
   const step = steps[index];
 
@@ -110,7 +124,7 @@ export default function WelcomeWizard({
           </div>
           <div>
             <p className="text-[10px] font-mono text-amber-400 uppercase tracking-widest">Welcome guide</p>
-            <h1 className="text-lg font-bold">Sunchaser Energy</h1>
+            <h1 className="text-lg font-bold" data-testid="welcome-company">{heading}</h1>
             {roleLabel && <p className="text-xs text-slate-400">{roleLabel}</p>}
           </div>
         </div>
@@ -133,8 +147,8 @@ export default function WelcomeWizard({
               Step {index + 1} of {steps.length}
             </span>
           </div>
-          <h2 className="text-xl font-extrabold leading-snug">{step.title}</h2>
-          <p className="text-sm text-slate-300 leading-relaxed">{step.body}</p>
+          <h2 className="text-xl font-extrabold leading-snug">{t(step.title)}</h2>
+          <p className="text-sm text-slate-300 leading-relaxed">{t(step.body)}</p>
         </div>
 
         <div className="flex flex-col gap-3 mt-8">

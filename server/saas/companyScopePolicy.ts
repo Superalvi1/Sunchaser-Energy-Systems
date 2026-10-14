@@ -35,6 +35,19 @@ export const AFTER_SALES_PATTERNS: RegExp[] = [
   /^\/api\/warranties(\/|$)/,
 ];
 
+/**
+ * Design tools (server/saas/moduleGate.ts, "designTools"): interactive proposals, Proposal Studio and Roof Studio. Their pricing and
+ * equipment catalogue are Sunchaser's and they were not exercised with two companies, so they are founding-only until they are.
+ */
+export const DESIGN_TOOLS_PATTERNS: RegExp[] = [
+  /^\/api\/interactive-proposals(\/|$)/,
+  /^\/api\/leads\/[^/]+\/design-session$/,
+  /^\/api\/export\/pdf\/design-studio-proposal(\/|$)/,
+  // The AI assistant and the solar sizing wizard (moduleGate.ts, "assistants"): Sunchaser prompts and catalogue.
+  /^\/api\/ai(\/|$)/,
+  /^\/api\/gemini(\/|$)/,
+];
+
 
 // Order matters: first match wins, so specific rules precede general ones.
 const RULES: Rule[] = [
@@ -74,8 +87,6 @@ const RULES: Rule[] = [
   { prefix: "/api/technical/", scope: "company" },
   { prefix: "/api/tickets", scope: "company" },
   { prefix: "/api/onboarding", scope: "company" },
-  { prefix: "/api/gemini/", scope: "company" },
-  { prefix: "/api/ai/", scope: "company" },
   { prefix: "/api/warranties", scope: "company" },
   { prefix: "/api/quote-assets", scope: "company" },
   { prefix: "/api/projects", scope: "company" },
@@ -89,13 +100,12 @@ const RULES: Rule[] = [
   // The WhatsApp inbox needs a WhatsApp connection, which exists for the founding company only (/api/admin/whatsapp, /api/whatsapp-agent).
   { prefix: "/api/conversations", scope: "founding_only" },
   { prefix: "/api/inbox", scope: "founding_only" },
-  { prefix: "/api/interactive-proposals", scope: "company" },
 ];
 
 export function resolveCompanyScope(method: string, pathname: string): CompanyScope {
   const path = (pathname.split("?")[0] || pathname).replace(/\/+$/, "") || "/";
   void normalizeHttpMethod(method);
-  if (AFTER_SALES_PATTERNS.some((re) => re.test(path))) return "founding_only";
+  if (AFTER_SALES_PATTERNS.some((re) => re.test(path)) || DESIGN_TOOLS_PATTERNS.some((re) => re.test(path))) return "founding_only";
   for (const rule of RULES) {
     if (rule.exact ? path === rule.prefix : path === rule.prefix.replace(/\/$/, "") || path.startsWith(rule.prefix)) {
       return rule.scope;

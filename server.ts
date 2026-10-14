@@ -375,7 +375,7 @@ import { moduleFlags, AUTOSIZER_DISABLED_MESSAGE } from "./server/saas/moduleGat
 import { registerCompanySettingsRoutes } from "./server/saas/companySettingsApi.ts";
 import { registerPlatformRoutes } from "./server/saas/platformApi.ts";
 import { planLimitMiddleware } from "./server/saas/subscriptionLimits.ts";
-import { reserveStorage, StorageQuotaError } from "./server/saas/storageQuota.ts";
+import { reserveStorage, isStorageError, storageErrorResponse } from "./server/saas/storageQuota.ts";
 import { listLoginCompanies } from "./server/saas/loginCompanies.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
@@ -2346,6 +2346,15 @@ app.post("/api/admin/customer-documents/assign", async (req, res) => {
   }
 });
 
+/** A refused upload (over the plan limit, usage not verifiable, or no limit set): answered with a clear, coded message. True when handled. */
+function respondStorageError(err: unknown, res: express.Response): boolean {
+  if (!isStorageError(err)) return false;
+  const r = storageErrorResponse(err);
+  for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
+  res.status(r.status).json(r.body);
+  return true;
+}
+
 app.post("/api/admin/customer-documents/upload", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
@@ -2385,7 +2394,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
     return res.status(201).json(doc);
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
-    if (err instanceof StorageQuotaError) return res.status(402).json({ error: err.message, code: err.code, limitMb: err.limitMb });
+    if (respondStorageError(err, res)) return;
     console.error("[customer-documents] upload failed:", err?.message || err);
     return res.status(500).json({ error: err.message });
   }
@@ -2412,11 +2421,13 @@ async function handleCustomerPortalMe(req: any, res: any) {
       return res.status(403).json({ error: "Not authorized for customer portal." });
     }
     loadDb();
+    // In multi-company mode the portal also learns which modules this company has and that it is not the founding company.
+    const workspace = isMultiCompanyEnabled() ? { documentIdentity: { neutral: usesNeutralIdentity() }, modules: moduleFlags() } : {};
     if (!String(req.actor.customerId || "").trim()) {
-      return res.json(buildPendingCustomerPortalPayload(req.actor));
+      return res.json({ ...buildPendingCustomerPortalPayload(req.actor), ...workspace });
     }
     const data = await fetchCustomerPortalData(req.actor.id, req.actor.username, db);
-    return res.json(data);
+    return res.json({ ...data, ...workspace });
   } catch (err: any) {
     if (ownershipErrorResponse(err, res)) return;
     console.error("[Customer Portal Error]:", err.message);
@@ -2425,6 +2436,28 @@ async function handleCustomerPortalMe(req: any, res: any) {
 }
 
 app.get("/api/customer-portal/me", handleCustomerPortalMe);
+
+/**
+ * The company's public face for ITS OWN customers' portal: name, address, phones, e-mail, website, logo, colours, review link. A customer cannot call
+ * /api/branding (staff only), so without this the portal of a company other than the founding one could not show its own name, logo or phone number.
+ * Terms, bank-account images, signature and invoice logo are not included. Single-company mode answers null: the portal keeps its existing look.
+ */
+const PORTAL_BRANDING_FIELDS = ["companyName", "officeAddress", "officeLocations", "phoneNumbers", "billingEmail", "websiteUrl", "logoUrl", "primaryColor", "secondaryColor", "accentColor", "googleReviewUrl", "legacyDefaults"] as const;
+app.get("/api/customer-portal/branding", async (req, res) => {
+  const identity = resolveCustomerPortalActor(req, res);
+  if (!identity) return;
+  try {
+    if (!isMultiCompanyEnabled()) return res.json({ branding: null });
+    loadDb();
+    const all: Record<string, unknown> = (await getCompanyBranding(db)) as any;
+    const branding: Record<string, unknown> = {};
+    for (const k of PORTAL_BRANDING_FIELDS) if (k in all) branding[k] = all[k];
+    return res.json({ branding });
+  } catch (err: any) {
+    console.error("[Customer Portal] branding:", err?.message || err);
+    return res.status(500).json({ error: "Could not load the company details." });
+  }
+});
 app.post("/api/customer-portal/me", handleCustomerPortalMe);
 
 /** Phase 1B.2A — customer portal identity from req.actor only; customerId never from request. */
@@ -4659,6 +4692,7 @@ app.get("/api/admin/invoices/:id", async (req, res) => {
 
 /** Maps an invoice write failure to a coded 4xx; anything unexpected is logged and answered without database text. */
 function invoiceMutationErrorResponse(err: any, res: express.Response, action: string) {
+  if (respondStorageError(err, res)) return;
   if (err instanceof InvoiceDbError) {
     return res.status(err.statusCode).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
@@ -6750,6 +6784,19 @@ app.post("/api/upload", async (req, res) => {
     if (!base64Input) {
       return res.status(400).json({ error: "base64Data or base64 field is required" });
     }
+
+    // A pilot company never writes to the shared public uploads folder (one folder for everybody, served without a sign-in): its
+    // images go to the company's own key space in the object store, where the plan storage limit is enforced. Images only.
+    if (isMultiCompanyEnabled() && usesNeutralIdentity()) {
+      if (!isRailwayObjectStorageConfigured()) return res.status(503).json({ error: "File storage is not available right now. Please try again in a minute.", code: "storage_unavailable", retryable: true });
+      let parsed;
+      try { parsed = parseQuoteAssetBase64Upload(base64Input); }
+      catch (e: any) { return res.status(400).json({ error: String(e?.message || "Invalid image.").replace("watermark ", "") }); }
+      const key = scopeObjectKey(`uploads/${Date.now()}-${randomUUID().slice(0, 12)}.${parsed.extension}`);
+      await putRailwayObject("quote-assets", key, parsed.buffer, parsed.contentType);
+      const dataUrl = String(base64Input).startsWith("data:") ? base64Input : `data:${parsed.contentType};base64,${base64Input}`;
+      return res.json({ url: buildRailwayObjectProxyUrl("quote-assets", key), dataUrl });
+    }
     
     const matches = base64Input.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
     let dataBuffer;
@@ -6776,6 +6823,7 @@ app.post("/api/upload", async (req, res) => {
     // Return both the file path URL and the original base64 data URL for direct storage
     res.json({ url: `/uploads/${cleanFilename}`, dataUrl: base64Input });
   } catch (err: any) {
+    if (respondStorageError(err, res)) return;
     res.status(500).json({ error: "Failed to upload file: " + err.message });
   }
 });
@@ -6793,6 +6841,7 @@ app.post("/api/quote-assets/watermark", async (req, res) => {
     );
     res.json(uploaded);
   } catch (err: any) {
+    if (respondStorageError(err, res)) return;
     res.status(400).json({ error: err.message || "Watermark upload failed." });
   }
 });

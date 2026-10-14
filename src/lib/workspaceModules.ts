@@ -3,15 +3,17 @@
  * which is how single-company mode and the founding company behave. The API refuses a disabled module on its own
  * (server/saas/moduleGate.ts); hiding it here only keeps the interface honest.
  */
-export type WorkspaceModules = { autoSizer: boolean; afterSales: boolean };
+export type WorkspaceModules = { autoSizer: boolean; afterSales: boolean; designTools: boolean; assistants: boolean };
 
-let current: WorkspaceModules = { autoSizer: true, afterSales: true };
+let current: WorkspaceModules = { autoSizer: true, afterSales: true, designTools: true, assistants: true };
 /** True when the server runs in multi-company mode (it then sends the module flags); false in single-company mode. */
 let multiCompany = false;
 
 export function setWorkspaceModules(m: Partial<WorkspaceModules> | null | undefined): void {
   multiCompany = m != null;
-  current = { autoSizer: m?.autoSizer !== false, afterSales: m?.afterSales !== false };
+  current = { autoSizer: m?.autoSizer !== false, afterSales: m?.afterSales !== false, designTools: m?.designTools !== false, assistants: m?.assistants !== false };
+  version++;
+  listeners.forEach((l) => l());
 }
 
 export function autoSizerEnabled(): boolean {
@@ -21,6 +23,16 @@ export function autoSizerEnabled(): boolean {
 /** The company settings screen (branding, bank accounts, terms, prices, history) exists only in multi-company mode. */
 export function companySettingsEnabled(): boolean {
   return multiCompany;
+}
+
+/** Interactive proposals, Proposal Studio and Roof Studio. */
+export function designToolsEnabled(): boolean {
+  return current.designTools;
+}
+
+/** The AI assistant widget and the customer-portal solar sizing wizard. */
+export function assistantsEnabled(): boolean {
+  return current.assistants;
 }
 
 /** Delivery challans, delivery certificates, project completion and handover, customer warranties and warranty claims. */
@@ -38,7 +50,10 @@ let brand: WorkspaceBrand | null = null;
 let neutral = false;
 let platform: PlatformInfo | null = null;
 const listeners = new Set<() => void>();
-const emit = () => listeners.forEach((l) => l());
+let version = 0;
+const emit = () => { version++; listeners.forEach((l) => l()); };
+/** Changes whenever the modules, brand or neutral flag change; for useSyncExternalStore in components that read the module flags. */
+export function workspaceVersion(): number { return version; }
 
 export function subscribeWorkspace(l: () => void): () => void { listeners.add(l); return () => { listeners.delete(l); }; }
 export function getWorkspaceBrand(): WorkspaceBrand | null { return brand; }

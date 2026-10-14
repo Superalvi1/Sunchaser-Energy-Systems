@@ -1,4 +1,4 @@
-import { getWorkspaceBrand, subscribeWorkspace, workspaceIsNeutral } from "./lib/workspaceModules";
+import { assistantsEnabled, getWorkspaceBrand, subscribeWorkspace, workspaceIsNeutral } from "./lib/workspaceModules";
 import { usePlatformInfo } from "./components/PlatformMark";
 import AccountsWorkspace from "./components/AccountsWorkspace";
 import { canCreateInvoice } from "./lib/invoices";
@@ -654,7 +654,9 @@ function AuthenticatedApp() {
       .filter(t => !isNativeApp() || !["Learning Studio", "Sunchaser AI", "Activity Telemetry"].includes(t.id))
       // Learning Studio runs on Sunchaser's own platform (founding company only); another company's workspace does not offer it.
       .filter(t => !(neutralWorkspace && t.id === "Learning Studio"))
-      .map(t => (neutralWorkspace && t.id === "Sunchaser AI" ? { ...t, label: t.label.replace("Sunchaser AI Assistant", "AI Assistant") } : t)),
+      // The AI assistant tab and the floating assistant speak as "Sunchaser AI" with Sunchaser's equipment and prices; they are not offered to
+      // another company (server/saas/moduleGate.ts, "assistants"; the API refuses them too).
+      .filter(t => t.id !== "Sunchaser AI" || assistantsEnabled()),
     ...(canCreateInvoice(currentUser.username,currentUser.role) ? [{id:"Accounts",label:"Accounts",icon:FileText}] : [])
   ] : [];
   if (isNativeApp()) { const i = shellTabs.findIndex(t => t.id === "Accounts"); if(i > 1) shellTabs.splice(1,0,...shellTabs.splice(i,1)); }
@@ -696,7 +698,7 @@ function AuthenticatedApp() {
           onLogout={handleLogout}
           onShowWelcomeGuide={() => setShowOnboarding(false)}
         />
-        {!isNativeApp() && <AICommandCenter layout="customer" />}
+        {!isNativeApp() && assistantsEnabled() && <AICommandCenter layout="customer" />}
       </>
     );
   }
@@ -721,7 +723,7 @@ function AuthenticatedApp() {
           onLogout={handleLogout}
           onShowWelcomeGuide={() => setShowOnboarding(true)}
         />
-        {!isNativeApp() && <AICommandCenter />}
+        {!isNativeApp() && assistantsEnabled() && <AICommandCenter />}
         {isGlobalSearchAllowedForUser(currentUser) ? (
           <GlobalSearch
             appState={null}
@@ -1385,7 +1387,7 @@ function AuthenticatedApp() {
         </MobileMoreSheet>
       </>
     )}
-    {currentUser && !isNativeApp() ? <AICommandCenter /> : null}
+    {currentUser && !isNativeApp() && assistantsEnabled() ? <AICommandCenter /> : null}
     {currentUser && isGlobalSearchAllowedForUser(currentUser) ? (
       <GlobalSearch
         appState={appState}

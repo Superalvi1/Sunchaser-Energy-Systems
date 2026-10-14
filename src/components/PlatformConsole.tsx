@@ -19,7 +19,7 @@ export default function PlatformConsole({ onExit }: { onExit?: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [secret, setSecret] = useState<{ title: string; username: string; password: string } | null>(null);
-  const [form, setForm] = useState({ name: "", ownerName: "", ownerUsername: "", ownerEmail: "", planId: "pilot", trialDays: "14" });
+  const [form, setForm] = useState({ name: "", ownerName: "", ownerUsername: "", ownerEmail: "", planId: "pilot", trialDays: "14", storageLimitMb: "" });
   const [pay, setPay] = useState<{ id: string; amount: string; method: string; reference: string; coversTo: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -35,9 +35,9 @@ export default function PlatformConsole({ onExit }: { onExit?: () => void }) {
     try { await fn(); setNotice(ok); await load(); } catch (e: any) { setError(e?.message || "Failed."); }
   };
   const create = (e: React.FormEvent) => { e.preventDefault(); void act(async () => {
-    const r = await platformRequest<any>("/companies", "POST", { ...form, trialDays: Number(form.trialDays) });
+    const r = await platformRequest<any>("/companies", "POST", { ...form, trialDays: Number(form.trialDays), storageLimitMb: Number(form.storageLimitMb) });
     setSecret({ title: `Administrator of ${form.name}`, username: r.owner.username, password: r.owner.temporaryPassword });
-    setForm({ name: "", ownerName: "", ownerUsername: "", ownerEmail: "", planId: form.planId, trialDays: "14" });
+    setForm({ name: "", ownerName: "", ownerUsername: "", ownerEmail: "", planId: form.planId, trialDays: "14", storageLimitMb: "" });
   }, "Company created."); };
   const setStatus = (id: string, status: string) => void act(async () => { await platformRequest(`/companies/${id}`, "PATCH", { status }); }, `Company ${status}.`);
   const submitPay = (e: React.FormEvent) => { e.preventDefault(); if (!pay) return; void act(async () => {
@@ -111,6 +111,7 @@ export default function PlatformConsole({ onExit }: { onExit?: () => void }) {
             <input className={inputCls} required placeholder="Administrator username" aria-label="Administrator username" value={form.ownerUsername} onChange={(e) => setForm({ ...form, ownerUsername: e.target.value })} />
             <input className={inputCls} required type="email" placeholder="Administrator e-mail" aria-label="Administrator e-mail" value={form.ownerEmail} onChange={(e) => setForm({ ...form, ownerEmail: e.target.value })} />
             <select className={inputCls} aria-label="Plan" value={form.planId} onChange={(e) => setForm({ ...form, planId: e.target.value })}>{plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            <input className={inputCls} required type="number" min="1" step="1" placeholder="Storage limit (MB), required" aria-label="Storage limit (MB)" value={form.storageLimitMb} onChange={(e) => setForm({ ...form, storageLimitMb: e.target.value })} />
             <input className={inputCls} type="number" min="0" max="365" aria-label="Trial days" value={form.trialDays} onChange={(e) => setForm({ ...form, trialDays: e.target.value })} />
           </div>
           <button className={btnCls} type="submit">Create company</button>

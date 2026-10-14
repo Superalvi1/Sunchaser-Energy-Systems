@@ -109,19 +109,29 @@ export RAILWAY_OBJECT_PROXY_SECRET="$(openssl rand -hex 32)"  # shared by the ap
 export E2E_S3_DIR="$WORK/s3/objects"
 # the journeys that read the object store directly (company restore) need the same settings the application has
 export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem"
-(
-  export NODE_ENV=production PORT="$APP_PORT" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000
-  export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY" CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" MULTI_COMPANY_ENABLED=true
-  export JWT_SECRET="$(openssl rand -hex 32)" RAILWAY_OBJECT_PROXY_SECRET
-  export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto
-  export NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem" NO_PROXY='*' no_proxy='*'
-  unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY
-  export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001
-  export WHATSAPP_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-  export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false
-  exec node dist/server.cjs
-) > "$REPORT_DIR/app.log" 2>&1 & PIDS+=($!)
-for i in $(seq 1 60); do curl -s --noproxy '*' "http://127.0.0.1:$APP_PORT/health" | grep -q '"ok"' && break; sleep 1; [ "$i" = 60 ] && { tail -15 "$REPORT_DIR/app.log"; die "the application did not come up"; }; done
+JWT_SECRET_VALUE="$(openssl rand -hex 32)"
+# start_app <port> <multi-company true|false> <log file>: the built application against the stack. With multi-company "false" the flag and the tenant key
+# are NOT set - the deployment as it is today (single company), on the same migrated database.
+start_app() {
+  local port="$1" multi="$2" log="$3"
+  (
+    export NODE_ENV=production PORT="$port" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000
+    export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY"
+    if [ "$multi" = true ]; then export CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" MULTI_COMPANY_ENABLED=true; else unset CRM_TENANT_POSTGREST_KEY MULTI_COMPANY_ENABLED; fi
+    export JWT_SECRET="$JWT_SECRET_VALUE" RAILWAY_OBJECT_PROXY_SECRET
+    export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto
+    export NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem" NO_PROXY='*' no_proxy='*'
+    unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY
+    export STORAGE_USAGE_CACHE_MS=2000 STORAGE_LIMIT_CACHE_MS=2000   # short caches so the storage journey does not wait out the production defaults (60 s / 15 s)
+    export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001
+    export WHATSAPP_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+    export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false
+    exec node dist/server.cjs
+  ) > "$log" 2>&1 & PIDS+=($!)
+  for i in $(seq 1 60); do curl -s --noproxy '*' "http://127.0.0.1:$port/health" | grep -q '"ok"' && return 0; sleep 1; done
+  tail -15 "$log"; die "the application on :$port did not come up"
+}
+start_app "$APP_PORT" true "$REPORT_DIR/app.log"
 echo "stack up: PostgreSQL $(psql $CI_PG -d "$DB" -tAc 'show server_version'), PostgREST ($POSTGREST_MODE), app on :$APP_PORT"
 
 # ------------------------------------------------------------------------------------------------------------------------------- journeys
@@ -134,13 +144,18 @@ journey() { # name, command..., (the description is in $DESC)
   local name="$1"; shift
   # JOURNEYS="name1,name2" runs only those (for diagnosing one journey); unset runs all, which is what CI does.
   if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
-  reseed
-  local t0=$SECONDS
-  echo "-- $name"
-  if "$@" > "$REPORT_DIR/$name.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name.log" | sed 's/^/   | /'; fi
-  local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name.log" | tail -1)"
-  echo "$name: $r ${tail_line:+($tail_line)}"
-  echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
+  # JOURNEY_REPEAT=N runs each selected journey N times (reseeding every time), keeping every log: for catching an intermittent failure.
+  local n total="${JOURNEY_REPEAT:-1}" suffix=""
+  for n in $(seq 1 "$total"); do
+    [ "$total" -gt 1 ] && suffix=".$n"
+    reseed
+    local t0=$SECONDS
+    echo "-- $name$suffix"
+    if "$@" > "$REPORT_DIR/$name$suffix.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name$suffix.log" | sed 's/^/   | /'; fi
+    local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name$suffix.log" | tail -1)"
+    echo "$name$suffix: $r ${tail_line:+($tail_line)}"
+    echo "| \`$name$suffix\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
+  done
 }
 export OUT_DIR="$REPORT_DIR/screens"; mkdir -p "$OUT_DIR"
 node --import tsx scripts/saas/e2e/reset-founding-test-passwords.mjs > /dev/null 2>&1 || true
@@ -151,10 +166,33 @@ DESC="per-company branding, bank accounts, terms and prices; quotations keep the
 DESC="real Chromium PDFs per company, read back as bytes (text, logo, amounts), no other company or Sunchaser identity" journey pdf-render node --import tsx scripts/saas/e2e/pdf-render.mjs
 DESC="operator onboarding, manual subscriptions, enforced plan limits, operator audit trail" journey platform-onboarding node scripts/saas/e2e/platform-onboarding.mjs
 DESC="invoice issuance snapshot and legacy label, local QR, AutoSizer and after-sales refused, subscription expiry at request time, storage limit, settings permissions and history" journey pilot-round3 node scripts/saas/e2e/pilot-round3.mjs
+DESC="every disabled module (AutoSizer, after-sales, WhatsApp inbox, design tools, AI) answers 404 to the real pilot users - administrators, sales, portal customers - before any handler runs" journey disabled-modules node scripts/saas/e2e/disabled-modules.mjs
+DESC="storage limit: concurrent uploads at the boundary, every upload route, usage that cannot be verified (fail closed, retryable), no limit set" journey storage-quota node scripts/saas/e2e/storage-quota.mjs
 DESC="company restore leaves every other company and the founding company byte-identical" journey company-restore node --import tsx scripts/saas/e2e/company-restore.mjs
 DESC="deploy order: the new backend keeps working on a database where migrations t6 and t7 are not applied yet (they are rolled back, checked, re-applied)" journey compat-before-t6-t7 node scripts/saas/e2e/compat-before-t6-t7.mjs
 DESC="company selection and Switch company in a real browser" journey browser-company-ui node scripts/saas/e2e/browser-company-ui.mjs
+DESC="settings screen: bank account edit and delete with confirmation, history with the values before and after, a non-administrator read-only; customer portal and welcome guide with and without logo/phone/review link (no Sunchaser identity); unfinished modules not offered" journey browser-pilot-round4 node scripts/saas/e2e/browser-pilot-round4.mjs
 DESC="Sunchaser Sync on sign-in and company selection, company branding in the workspace, settings screen and history, hidden modules, founding company unchanged" journey browser-pilot-round3 node scripts/saas/e2e/browser-pilot-round3.mjs
+
+# ----------------------------------------------------------------------------- flag-off equivalence (the deployment as it is today)
+# A second instance of the SAME build on the SAME migrated database, started WITHOUT the multi-company flag and without the tenant key: what a
+# single-company deployment sees must not change. Run after the multi-company journeys, so the migrations are in place when the flag is off.
+OFF_PORT="${FLAG_OFF_PORT:-3198}"
+if (exec 3<>"/dev/tcp/127.0.0.1/$OFF_PORT") 2>/dev/null; then die "port $OFF_PORT is already in use"; fi
+node --import tsx scripts/saas/e2e/reset-founding-test-passwords.mjs > /dev/null 2>&1 || true
+start_app "$OFF_PORT" false "$REPORT_DIR/app-flag-off.log"
+off_journey() { # same reporting as journey(), against the flag-off instance
+  local name="$1"; shift
+  if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
+  local t0=$SECONDS
+  echo "-- $name (flag off)"
+  if E2E_BASE_URL="http://127.0.0.1:$OFF_PORT" "$@" > "$REPORT_DIR/$name.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name.log" | sed 's/^/   | /'; fi
+  local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name.log" | tail -1)"
+  echo "$name: $r ${tail_line:+($tail_line)}"
+  echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
+}
+DESC="flag off (single-company mode) on the migrated database: login, lead, quotation, contract, invoice, payment, PDF as before; no company fields in any response" off_journey single-company-smoke node scripts/saas/e2e/single-company-smoke.mjs
+DESC="flag off: no module flags, no identity mark, AutoSizer, after-sales, WhatsApp inbox and design tools all available as before, Sunchaser sign-in kept, uploads unmetered" off_journey flag-off-round3 node scripts/saas/e2e/flag-off-round3.mjs
 
 echo; echo "$([ "$FAILED" = 0 ] && echo "All journeys passed." || echo "$FAILED journey(s) FAILED.")" | tee -a "$REPORT_DIR/summary.md"
 cat "$REPORT_DIR/summary.md"

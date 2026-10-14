@@ -182,6 +182,14 @@ export async function fetchWithTimeout(
   }
 }
 
+/** The module flags and "another company" flag the server sent (boot payload of staff, portal payload of customers). Absent in single-company mode. */
+function applyWorkspaceFlags(payload: any): void {
+  const neutral = payload?.documentIdentity?.neutral === true;
+  setWorkspaceModules(payload?.modules);
+  setAuthoringIdentityNeutral(neutral);
+  setWorkspaceNeutral(neutral);
+}
+
 export async function fetchAppState(): Promise<AppState> {
   const url = `${API_BASE_URL}/api/state`;
   try {
@@ -192,9 +200,7 @@ export async function fetchAppState(): Promise<AppState> {
       throw new Error(CONNECTION_ERROR_MESSAGE);
     }
     const state = await res.json();
-    setWorkspaceModules(state?.modules);
-    setWorkspaceNeutral(state?.documentIdentity?.neutral === true);
-    setAuthoringIdentityNeutral(state?.documentIdentity?.neutral === true);
+    applyWorkspaceFlags(state);
     if (state?.modules) void refreshWorkspaceBrand(); // multi-company: the workspace carries the company's own name and logo
     return state;
   } catch (err) {
@@ -263,7 +269,9 @@ export async function fetchCustomerPortalMe(
       }
       throw new Error(CONNECTION_ERROR_MESSAGE);
     }
-    return res.json();
+    const payload = await res.json();
+    applyWorkspaceFlags(payload); // a customer of another company gets that company's modules and no Sunchaser identity
+    return payload;
   } catch (err) {
     if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
     logApiFailure("fetchCustomerPortalMe", url, null, {}, err);
@@ -2530,6 +2538,14 @@ export async function initWorkspaceIdentity(): Promise<void> {
 export function clearWorkspaceIdentity(): void {
   setWorkspaceBrand(null);
   setWorkspaceNeutral(false);
+}
+
+/** The branding a customer's portal shows: the customer's own company's public details (multi-company mode), or null (single-company mode: the portal keeps its existing look). */
+export async function fetchPortalBranding(): Promise<Record<string, any> | null> {
+  const res = await apiFetch("/api/customer-portal/branding");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load company details.");
+  return (data.branding as Record<string, any>) ?? null;
 }
 
 export async function fetchCompanyBranding() {

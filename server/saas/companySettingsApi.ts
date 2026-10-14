@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { summariseSettingsChange } from "../../src/lib/settingsDiff.ts";
 import type { Express, Request, Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase, getSystemSupabase, isSupabaseActive } from "../../dbManager.js";
@@ -140,14 +141,7 @@ export async function recordSettingsAudit(req: Request, section: AuditSection, s
 
 /** A short description of what differs, never the values themselves (those are in the before/after columns). */
 export function describeChange(section: AuditSection, before: any, after: any): string {
-  if (section === "branding") {
-    const keys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])].filter((k) => JSON.stringify(before?.[k] ?? "") !== JSON.stringify(after?.[k] ?? ""));
-    return keys.length ? `Branding changed: ${keys.join(", ")}` : "Branding saved (no value changed)";
-  }
-  if (section === "bank_accounts") return `Bank accounts changed: ${(before || []).length} -> ${(after || []).length} account(s)`;
-  if (section === "terms") return `Terms changed: ${(before || []).length} -> ${(after || []).length} clause(s)`;
-  const keys = Object.keys(after || {}).filter((k) => JSON.stringify(before?.[k] ?? "") !== JSON.stringify(after?.[k] ?? ""));
-  return keys.length ? `Price settings changed: ${keys.join(", ")}` : "Price settings saved (no value changed)";
+  return summariseSettingsChange(section, before, after);
 }
 
 function requireWriter(req: Request, res: Response): boolean {

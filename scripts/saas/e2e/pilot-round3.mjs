@@ -188,41 +188,7 @@ const newLead = (c, tag) => c.api("/api/leads", { method: "POST", body: JSON.str
   const fo = await FOUNDING.api("/api/leads", { method: "POST", body: JSON.stringify({ name: `founding ${RUN}`, email: `f${RUN}@example.test`, phone: "0316" + String(Math.floor(1000000 + Math.random() * 8999999)), leadSource: "Direct/Referral" }) });
   check(`the founding company has no subscription row and is never limited (${fo.status})`, fo.status === 201);
 }
-// storage limit
-{
-  const mkPdf = (kb, tag) => { const head = Buffer.from(`%PDF-1.4\n% ${tag}\n`); const body = Buffer.alloc(kb * 1024, 0x20); return Buffer.concat([head, body, Buffer.from("\n%%EOF\n")]).toString("base64"); };
-  const upload = (c, tag, kb) => c.api("/api/admin/customer-documents/upload", { method: "POST", body: JSON.stringify({ customerId: c.inv1.customerId, documentType: "other", title: `${c.id} ${tag} ${RUN}`, fileName: `${tag}.pdf`, mimeType: "application/pdf", base64Data: mkPdf(kb, tag) }) });
-  const a = CO.alpha, b = CO.beta;
-  // The stack's S3 stand-in keeps one file per object, so the company's real stored size can be read from disk. Earlier runs leave files behind.
-  const S3DIR = process.env.E2E_S3_DIR || "/srv/saas-c1/s3/objects";
-  const usedBytes = fs.readdirSync(S3DIR).filter((f) => /^(customer-documents|quote-assets)%2Fc%2Fco_alpha%2F/.test(f)).reduce((n, f) => n + fs.statSync(`${S3DIR}/${f}`).size, 0);
-  const MB = 1024 * 1024, L = Math.ceil(usedBytes / MB) + 1, freeBytes = L * MB - usedBytes, KB = Math.max(1, Math.floor(freeBytes * 0.6 / 1024));
-  const rn = await opSend("/api/platform/companies/co_alpha", { limitOverrides: { max_storage_mb: L } });
-  check(`the operator sets a ${L} MB storage limit for alpha (it stores ${(usedBytes / MB).toFixed(2)} MB; two uploads of ${KB} KB cannot both fit) (${rn.status})`, rn.status === 200);
-  await sleep(16000); // the limit is cached for 15 seconds
-  const u1 = await upload(a, "first", KB);
-  check(`alpha: a first upload that fits is accepted (${u1.status})`, u1.status === 201, JSON.stringify(await json(u1)).slice(0, 200));
-  const objCount = () => fs.readdirSync(S3DIR).filter((f) => /%2Fc%2Fco_alpha%2F/.test(f)).length;
-  const objBefore = objCount();
-  const u2 = await upload(a, "second", KB);
-  const b2 = await json(u2);
-  check(`alpha: a second upload of the same size would exceed the limit and is refused with 402 storage_limit_exceeded (${u2.status})`, u2.status === 402 && b2.code === "storage_limit_exceeded", JSON.stringify(b2).slice(0, 200));
-  check("the refused upload left nothing behind (no document row, no stored object)", objCount() === objBefore && psql(`select count(*) from customer_documents where company_id='co_alpha' and title = 'co_alpha second ${RUN}'`) === "0");
-  check("the first document is still there and readable", psql(`select count(*) from customer_documents where company_id='co_alpha' and title='co_alpha first ${RUN}'`) === "1");
-  const read = await a.api("/api/state");
-  check(`being at the limit never blocks reading (${read.status})`, read.status === 200);
-  const bu = await Promise.all([upload(b, "one", KB), upload(b, "two", KB)]);
-  check(`beta, with no limit set beyond its plan's, uploads the same files (${bu.map((r) => r.status).join(",")})`, bu.every((r) => r.status === 201));
-  await opSend("/api/platform/companies/co_alpha", { limitOverrides: { max_storage_mb: L + 10 } });
-  await sleep(16000);
-  const u3 = await upload(a, "third", KB);
-  check(`after the operator raises the limit alpha can upload again (${u3.status})`, u3.status === 201);
-  await opSend("/api/platform/companies/co_alpha", { limitOverrides: { max_storage_mb: 0 } });
-  await sleep(16000);
-  const u4 = await upload(a, "fourth", 1);
-  check(`with a limit of 0 MB every new upload is refused (${u4.status}) but existing files and reading are untouched`, u4.status === 402 && (await a.api("/api/state")).status === 200 && psql(`select count(*) from customer_documents where company_id='co_alpha' and title in ('co_alpha first ${RUN}','co_alpha third ${RUN}')`) === "2");
-  await opSend("/api/platform/companies/co_alpha", { limitOverrides: {} });
-}
+// storage limit: its own journey (storage-quota.mjs): concurrent uploads at the boundary, every upload route, usage that cannot be verified, no limit set.
 // leave the subscriptions in a clean, valid state for the other journeys. The application caches a company's limits for 15 seconds, so wait that
 // out: the next journey must not meet this journey's "0 MB" limit.
 await sleep(16000);
@@ -256,7 +222,7 @@ for (const c of Object.values(CO)) {
   const mine = (h.history || []).filter((e) => JSON.stringify(e).includes(marker));
   check(`${c.id}: the history lists the changes, newest first, with who, when, section and before/after`, h.available === true && mine.length === 4 && mine[0].section === "prices" && mine.every((e) => e.by === c.user && e.role && e.at && e.summary) && new Date(h.history[0].at) >= new Date(h.history[1].at), JSON.stringify(h).slice(0, 300));
   const bank = mine.find((e) => e.section === "bank_accounts");
-  check(`${c.id}: the bank-account entry holds the account before and after the change`, Array.isArray(bank?.before) && JSON.stringify(bank?.after).includes(`AuditBank${marker}`) && /->/.test(bank?.summary));
+  check(`${c.id}: the bank-account entry holds the account before and after the change`, Array.isArray(bank?.before) && JSON.stringify(bank?.after).includes(`AuditBank${marker}`) && /^Bank accounts changed: .*(added|removed|edited)/.test(bank?.summary || "") && !(bank?.summary || "").includes(`AuditBank${marker}`));
   check(`${c.id}: every history row is stored under ${c.id}`, psql(`select count(*) from company_settings_audit where company_id <> '${c.id}' and (summary like '%${marker}%' or after_value::text like '%${marker}%')`) === "0");
   check(`${c.id}: the history cannot be edited or deleted, even by the database owner`, (() => { for (const q of [`update company_settings_audit set summary='x' where company_id='${c.id}'`, `delete from company_settings_audit where company_id='${c.id}'`]) { try { psql(q); return false; } catch {} } return true; })());
 }
