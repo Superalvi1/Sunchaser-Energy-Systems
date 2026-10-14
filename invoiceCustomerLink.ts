@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
-import { generateCustomerCode } from "./customerCode.js";
+import { generateCustomerCode, insertWithUniqueCustomerCode } from "./customerCode.js";
 import { normalizePakistanPhone, phonesMatch } from "./src/lib/phoneNormalize.ts";
 import { namesPlausiblyMatch } from "./src/lib/clientIdentity.ts";
 
@@ -97,23 +97,22 @@ async function insertCustomer(
   },
   localDb?: Database
 ) {
-  const customerCode = row.customerCode || (await generateCustomerCode(localDb));
-  const payload = {
+  const buildPayload = (customer_code: string) => ({
     id: row.id,
     name: row.name,
     email: row.email,
     phone: row.phone,
     address: row.address,
-    customer_code: customerCode,
+    customer_code,
     created_at: new Date().toISOString(),
-  };
+  });
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("customers").insert(payload);
+    const { error } = await insertWithUniqueCustomerCode((code) => getSupabase()!.from("customers").insert(buildPayload(code)), { first: row.customerCode, localDb });
     if (error) throw error;
   } else {
     const db = localDb as any;
     db.customers = db.customers || [];
-    db.customers.push(payload);
+    db.customers.push(buildPayload(row.customerCode || (await generateCustomerCode(localDb))));
   }
 }
 

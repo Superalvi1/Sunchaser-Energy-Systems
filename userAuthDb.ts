@@ -5,7 +5,7 @@ import {
   isSupabaseConnectivityError,
   SupabaseUnavailableError,
 } from "./supabaseConnectivity";
-import { findCustomerByCode, generateCustomerCode, normalizeCustomerCode } from "./customerCode.js";
+import { findCustomerByCode, generateCustomerCode, insertWithUniqueCustomerCode, isCustomerCodeConflict, normalizeCustomerCode } from "./customerCode.js";
 import { hashPassword, verifyPassword } from "./src/lib/passwordHash";
 import {
   canSelfRegister,
@@ -793,14 +793,13 @@ async function ensureCustomerRecord(
   localDb?: Database
 ) {
   const now = new Date().toISOString();
-  const customerCode = await generateCustomerCode(localDb);
-  const customerRow = buildRegistrationCustomerRow({
+  const rowFor = (code: string) => buildRegistrationCustomerRow({
     customerId,
     userId: opts.userId || "",
     name: opts.name,
     email: opts.email,
     phone: opts.phone,
-    customerCode,
+    customerCode: code,
     now,
   });
 
@@ -826,9 +825,11 @@ async function ensureCustomerRecord(
       }
       return;
     }
-    const { error } = await supabase.from("customers").insert(customerRow);
-    if (error && String(error.message || "").includes("customer_code")) {
-      const { customer_code: _omit, ...withoutCode } = customerRow as any;
+    // A clash on the customer code is retried with a NEW code inside insertWithUniqueCustomerCode. Only a database WITHOUT the column (an old schema)
+    // falls back to inserting without it - a duplicate-key message also contains "customer_code" and must never take that path.
+    const { error } = await insertWithUniqueCustomerCode((code) => supabase.from("customers").insert(rowFor(code)), { localDb });
+    if (error && !isCustomerCodeConflict(error) && String(error.message || "").includes("customer_code")) {
+      const { customer_code: _omit, ...withoutCode } = rowFor("") as any;
       const retry = await supabase.from("customers").insert(withoutCode);
       if (retry.error) throw retry.error;
       return;
@@ -855,7 +856,7 @@ async function ensureCustomerRecord(
       phone: String(existing.phone || "").trim() ? existing.phone : opts.phone || existing.phone,
     };
   } else {
-    db.customers.push(customerRow);
+    db.customers.push(rowFor(await generateCustomerCode(localDb)));
   }
 }
 
