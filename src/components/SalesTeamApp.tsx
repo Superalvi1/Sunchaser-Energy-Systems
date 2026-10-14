@@ -3025,7 +3025,7 @@ export default function SalesTeamApp({
                         Save as New Package
                       </button>
 
-                      {REQUIRE_EXPLICIT_QUOTE_SAVE && (
+                      {REQUIRE_EXPLICIT_QUOTE_SAVE && autoSizerEnabled() && (
                       <button
                         type="button"
                         onClick={handleCopyAutoSizerToManualBoq}
@@ -3312,7 +3312,7 @@ export default function SalesTeamApp({
                     <DraftingCompass className="h-3.5 w-3.5" /> Roof Studio
                   </button>
                   )}
-                  {REQUIRE_EXPLICIT_QUOTE_SAVE && (
+                  {REQUIRE_EXPLICIT_QUOTE_SAVE && autoSizerEnabled() && (
                   <button
                     type="button"
                     disabled={!latestAutoSizerSavedQuote}

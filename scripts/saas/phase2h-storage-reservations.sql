@@ -129,4 +129,7 @@ do $$ begin
   end if;
 end $$;
 
+-- PostgREST caches the schema: ask it to reload so the new functions can be called without a restart (harmless if no PostgREST is listening).
+notify pgrst, 'reload schema';
+
 commit;

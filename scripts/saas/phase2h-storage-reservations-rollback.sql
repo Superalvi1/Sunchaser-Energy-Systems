@@ -8,4 +8,5 @@ drop function if exists public.saas_storage_reserve(text, bigint, bigint, bigint
 drop function if exists public.saas_storage_mark();
 drop table if exists public.saas_storage_reservations;
 drop sequence if exists public.saas_storage_seq;
+notify pgrst, 'reload schema';
 commit;
