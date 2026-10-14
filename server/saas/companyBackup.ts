@@ -58,7 +58,7 @@ export function loadClassification(file: string): Record<string, { class: string
 type Db = pg.Client;
 
 /** Tables to export: classified company-owned, present in the database with a company_id column. */
-async function discoverTables(db: Db, classification: Record<string, { class: string }>) {
+export async function discoverTables(db: Db, classification: Record<string, { class: string }>) {
   const wanted = Object.entries(classification).filter(([, v]) => EXPORT_CLASSES.has(v.class)).map(([k]) => k).sort();
   const present = await db.query(
     `select c.table_name, array_agg(c.column_name::text order by c.ordinal_position) as cols,
@@ -418,4 +418,78 @@ export async function companyFingerprint(client: pg.ClientConfig, companyId: str
   } finally {
     await db.end();
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// Row-level snapshot and comparison. companyFingerprint() answers "is anything different?" with one digest per table; this says WHAT: per table the
+// primary key of every row and a hash of its full content, so a missing row, an added row and a changed row are each named. A verification that
+// uses it fails on any difference (the isolation and restore journeys do).
+
+export type RowSnapshot = {
+  /** table -> { pk columns, rows: primary key -> md5 of the row's JSON } */
+  tables: Record<string, { pk: string[]; rows: Record<string, string> }>;
+  objects: Record<string, string>;
+};
+export type SnapshotDiff = {
+  missing: string[];   // "table: key" present before, absent after
+  added: string[];     // absent before, present after
+  changed: string[];   // present in both with different content
+  counts: Array<{ table: string; before: number; after: number }>;
+};
+
+export async function companyRowSnapshot(client: pg.ClientConfig, companyId: string, classificationFile: string, options: { skipObjects?: boolean } = {}): Promise<RowSnapshot> {
+  const db = new pg.Client(client);
+  await db.connect();
+  try {
+    await db.query("set time zone 'UTC'");
+    const { tables } = await discoverTables(db, loadClassification(classificationFile));
+    const out: RowSnapshot["tables"] = {};
+    for (const t of tables) {
+      const pkRes = await db.query(
+        `select a.attname::text as col from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+          where i.indrelid = to_regclass($1) and i.indisprimary order by array_position(i.indkey::int2[], a.attnum)`,
+        [`public.${q(t.name)}`]);
+      const pk: string[] = pkRes.rows.map((r: any) => r.col);
+      const keyExpr = pk.length ? `concat_ws('|', ${pk.map((c) => `t.${q(c)}::text`).join(", ")})` : `md5(to_jsonb(t)::text)`;
+      const r = await db.query(`select ${keyExpr} as k, md5(to_jsonb(t)::text) as h from public.${q(t.name)} t where t.company_id = $1 order by 1, 2`, [companyId]);
+      const rows: Record<string, string> = {};
+      const seen = new Map<string, number>();
+      for (const row of r.rows) { // a table without a primary key: identical rows are told apart by a counter
+        const n = (seen.get(row.k) || 0) + 1; seen.set(row.k, n);
+        rows[pk.length || n === 1 ? row.k : `${row.k}#${n}`] = row.h;
+      }
+      out[t.name] = { pk, rows };
+    }
+    const objects: Record<string, string> = {};
+    if (companyId !== FOUNDING_COMPANY_ID && !options.skipObjects) {
+      for (const ns of NAMESPACES) for (const o of await listRailwayObjects(ns, `c/${companyId}/`)) {
+        const got = await getRailwayObject(ns, o.key);
+        objects[`${ns}/${o.key}`] = got ? sha256(got.body) : "missing";
+      }
+    }
+    return { tables: out, objects };
+  } finally {
+    await db.end();
+  }
+}
+
+/** Every difference between two snapshots, by name. Empty arrays everywhere mean the two are identical. Objects are compared too. */
+export function diffRowSnapshots(before: RowSnapshot, after: RowSnapshot): SnapshotDiff {
+  const d: SnapshotDiff = { missing: [], added: [], changed: [], counts: [] };
+  for (const t of [...new Set([...Object.keys(before.tables), ...Object.keys(after.tables)])].sort()) {
+    const b = before.tables[t]?.rows || {}, a = after.tables[t]?.rows || {};
+    d.counts.push({ table: t, before: Object.keys(b).length, after: Object.keys(a).length });
+    for (const k of Object.keys(b)) { if (!(k in a)) d.missing.push(`${t}: ${k}`); else if (a[k] !== b[k]) d.changed.push(`${t}: ${k}`); }
+    for (const k of Object.keys(a)) if (!(k in b)) d.added.push(`${t}: ${k}`);
+  }
+  for (const k of Object.keys(before.objects)) { if (!(k in after.objects)) d.missing.push(`object: ${k}`); else if (after.objects[k] !== before.objects[k]) d.changed.push(`object: ${k}`); }
+  for (const k of Object.keys(after.objects)) if (!(k in before.objects)) d.added.push(`object: ${k}`);
+  return d;
+}
+export const snapshotsIdentical = (d: SnapshotDiff): boolean => !d.missing.length && !d.added.length && !d.changed.length;
+export const snapshotRowTotal = (s: RowSnapshot): number => Object.values(s.tables).reduce((n, t) => n + Object.keys(t.rows).length, 0);
+/** A short human-readable account of a difference (first few entries of each kind), for a failure message. */
+export function describeSnapshotDiff(d: SnapshotDiff, limit = 6): string {
+  const part = (label: string, xs: string[]) => (xs.length ? `${xs.length} ${label}: ${xs.slice(0, limit).join("; ")}${xs.length > limit ? "; ..." : ""}` : "");
+  return [part("missing", d.missing), part("added", d.added), part("changed", d.changed)].filter(Boolean).join(" | ") || "identical";
 }

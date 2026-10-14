@@ -8,6 +8,7 @@
 //   Env: E2E_BASE_URL (process 1), E2E_BASE_URL_2 (process 2), E2E_APP2_PID, E2E_S3_DIR (stand-in objects dir; "fault" is read from its parent), RAILWAY_S3_ENDPOINT,
 //        E2E_PSQL, TEST_PW. The runner starts both processes with STORAGE_USAGE_CACHE_MS / STORAGE_LIMIT_CACHE_MS = 2000 and process 2 with a 12 s reservation expiry.
 //   Seed first: seed-two-companies.mjs
+import "./lib/fresh-connections.mjs";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";

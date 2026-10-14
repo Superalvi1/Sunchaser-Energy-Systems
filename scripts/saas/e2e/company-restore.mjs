@@ -3,13 +3,14 @@
 // and every stored object of beta and of the founding company must be byte-identical before and after. Disposable stack only.
 //   Env: E2E_BASE_URL, E2E_PSQL, TEST_PW, PG* (superuser of the disposable server), the RAILWAY_S3_* variables of the stack.
 //   Run with:  node --import tsx scripts/saas/e2e/company-restore.mjs      after seed-two-companies.mjs (clean companies)
+import "./lib/fresh-connections.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { companyFingerprint } from "../../../server/saas/companyBackup.ts";
+import { companyFingerprint, companyRowSnapshot, describeSnapshotDiff, diffRowSnapshots, snapshotRowTotal, snapshotsIdentical } from "../../../server/saas/companyBackup.ts";
 import { deleteRailwayObject, listRailwayObjects, putRailwayObject, getRailwayObject } from "../../../server/storage/railwayObjectStorage.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -86,8 +87,34 @@ async function fill(c) {
   }
   c.number = psql(`select invoice_number from invoices where id='${c.invoiceId}'`);
 }
-await Promise.all([fill(CO.alpha), fill(CO.beta)]);
+const RS = (id, skipObjects = false) => companyRowSnapshot(PG, id, CLASSIFICATION, { skipObjects });
 const A = CO.alpha, B = CO.beta;
+
+// ------------------------------------------------------------------------------------------ 1a. OPTIONAL hunt: FILL_PARITY_ROUNDS=N extra rounds of the concurrent fill
+// Both companies are filled with identical data at the same moment. For every round the rows each company GAINED are compared table by table; a company that
+// gained fewer rows than the other in any table is a silent loss (the request answered 2xx, nothing was logged). Each mismatch names the table and the rows.
+const ROUNDS = Number(process.env.FILL_PARITY_ROUNDS || 0);
+if (ROUNDS > 0) {
+  let mismatches = 0; const byTable = {};
+  for (let i = 1; i <= ROUNDS; i++) {
+    const [a0, b0] = await Promise.all([RS(A.id, true), RS(B.id, true)]);
+    await Promise.all([fill(A), fill(B)]);
+    const [a1, b1] = await Promise.all([RS(A.id, true), RS(B.id, true)]);
+    const da = diffRowSnapshots(a0, a1), db = diffRowSnapshots(b0, b1);
+    const gain = (d) => Object.fromEntries(d.counts.map((c) => [c.table, c.after - c.before]));
+    const ga = gain(da), gb = gain(db);
+    const bad = Object.keys(ga).filter((t) => ga[t] !== gb[t]);
+    for (const t of bad) {
+      mismatches++; byTable[t] = (byTable[t] || 0) + 1;
+      console.log("PARITY-MISMATCH-RECORD " + JSON.stringify({ round: i, table: t, alphaGained: ga[t], betaGained: gb[t], alphaRows: da.added.filter((x) => x.startsWith(t + ":")).slice(0, 4), betaRows: db.added.filter((x) => x.startsWith(t + ":")).slice(0, 4) }));
+    }
+    for (const c of [A, B]) { c.docs = []; c.steps = []; }
+  }
+  console.log(`FILL-PARITY: ${ROUNDS} rounds of two simultaneous fills; ${mismatches} table mismatches ${JSON.stringify(byTable)}`);
+  check(`fill parity: in ${ROUNDS} rounds of two simultaneous identical fills, each company gained the same number of rows in every table (${mismatches} mismatches)`, mismatches === 0, JSON.stringify(byTable));
+}
+
+await Promise.all([fill(CO.alpha), fill(CO.beta)]);
 const filled = (c) => ({ invoice: Boolean(c.invoiceId), documents: c.docs.every((d) => d.id), payments: c.invoiceId ? psql(`select count(*) from invoice_payments where invoice_id='${c.invoiceId}'`) : "no invoice" });
 check("both companies are filled: invoice, payment, quotation, two documents, settings", [A, B].every((c) => { const f = filled(c); return f.invoice && f.documents && f.payments === "1"; }),
   [A, B].map((c) => `${c.id}: ${JSON.stringify(filled(c))} steps=${JSON.stringify(c.steps || [])}${c.uploadProblem ? " " + c.uploadProblem : ""}`).join(" | "));
@@ -96,6 +123,35 @@ check("each company has stored documents under its own prefix", (await keysOf(A)
 
 const FP = (id) => companyFingerprint(PG, id, CLASSIFICATION);
 const fpA0 = await FP(A.id), fpB0 = await FP(B.id), fpS0 = await FP("sunchaser");
+// Row-level baselines (primary key and content hash of EVERY row of every table, and every object): any missing, added or changed row afterwards is named and fails.
+const rsA0 = await RS(A.id), rsB0 = await RS(B.id), rsS0 = await RS("sunchaser");
+const counterA0 = psql(`select last_value from document_counters where company_id='${A.id}' and kind='invoice'`);   // 1 after one fill; more after FILL_PARITY_ROUNDS
+const countsLine = (name, s) => `${name}: ${Object.keys(s.tables).length} tables, ${snapshotRowTotal(s)} rows, ${Object.keys(s.objects).length} objects`;
+console.log("ROW-BASELINE " + [countsLine("alpha", rsA0), countsLine("beta", rsB0), countsLine("founding", rsS0)].join(" | "));
+console.log("ROW-COUNTS (table: alpha / beta / founding) " + Object.keys(rsA0.tables).filter((t) => Object.keys(rsA0.tables[t].rows).length || Object.keys(rsB0.tables[t]?.rows || {}).length).map((t) => `${t}: ${Object.keys(rsA0.tables[t].rows).length}/${Object.keys(rsB0.tables[t]?.rows || {}).length}/${Object.keys(rsS0.tables[t]?.rows || {}).length}`).join("; "));
+{
+  // The two companies are filled with identical data at the same moment: they must hold the same number of rows in every table. A difference is a row that
+  // was lost (or never written) without any check noticing - name the table and the rows of the larger side.
+  const diffs = Object.keys(rsA0.tables).filter((t) => Object.keys(rsA0.tables[t].rows).length !== Object.keys(rsB0.tables[t]?.rows || {}).length);
+  check(`fill parity: alpha and beta hold the same number of rows in every one of ${Object.keys(rsA0.tables).length} tables (${snapshotRowTotal(rsA0)} / ${snapshotRowTotal(rsB0)} rows)`, diffs.length === 0,
+    diffs.map((t) => { const a = Object.keys(rsA0.tables[t].rows), b = Object.keys(rsB0.tables[t]?.rows || {}); return `${t}: alpha ${a.length} / beta ${b.length}; rows of the larger: ${(a.length > b.length ? a : b).slice(0, 5).join(", ")}`; }).join(" | "));
+}
+// Content checks that do not depend on any earlier snapshot: what the fill wrote must be what is stored.
+const contentOf = (c) => ({
+  lines: psql(`select string_agg(item_name||'x'||qty::float||'@'||rate::float, ',' order by item_name) from invoice_items where invoice_id='${c.invoiceId}'`),
+  invoice: psql(`select grand_total::float||':'||paid_amount::float from invoices where id='${c.invoiceId}'`),
+  pay: psql(`select count(*)||':'||coalesce(sum(amount),0)::float from invoice_payments where invoice_id='${c.invoiceId}'`),
+  lead: psql(`select name from leads where id='${c.lead.id}'`),
+  quote: psql(`select count(*) from quotations where lead_id='${c.lead.id}'`),
+  docs: psql(`select count(*) from customer_documents where customer_id='${c.customerId}' and document_type='other'`),
+  contractLog: psql(`select count(*) from activity_logs where action='Contract-to-Invoice' and details like 'Lead ${c.lead.id} %'`),
+  project: psql(`select count(*) from projects where lead_id='${c.lead.id}'`),
+});
+const wantContent = (c) => ({ lines: `${c.t}-PANELx${c.qty}@${c.rate}`, invoice: `${c.total}:${Math.round(c.total * 0.3)}`, pay: `1:${Math.round(c.total * 0.3)}`, lead: `${c.t} Customer`, quote: "1", docs: "2", contractLog: "1", project: "1" });
+for (const c of [A, B]) {
+  const got = contentOf(c), want = wantContent(c);
+  check(`content of ${c.id} as written by the fill: invoice lines, totals, payment, lead, quotation, two documents, contract log row and project row`, JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+}
 const rowsOf = (fp) => Object.values(fp.tables).reduce((s, v) => s + Number(v.split(":")[0]), 0);
 check(`fingerprints taken (alpha ${rowsOf(fpA0)} rows / ${Object.keys(fpA0.objects).length} objects, beta ${rowsOf(fpB0)} / ${Object.keys(fpB0.objects).length}, founding ${rowsOf(fpS0)} rows)`, rowsOf(fpA0) > 20 && rowsOf(fpB0) > 20 && Object.keys(fpA0.objects).length >= 2,
   // when it fails: which tables hold a different number of rows for the two companies (they are filled identically)
@@ -136,11 +192,37 @@ psql(`set session_replication_role = replica; delete from invoice_payments where
 const fpADamaged = await FP(A.id);
 check("alpha is damaged: invoice and payments gone, lead renamed, bank accounts gone, a document row and an object gone, counter reset, junk added", JSON.stringify(fpADamaged) !== JSON.stringify(fpA0) && psql(`select count(*) from invoices where id='${A.invoiceId}'`) === "0");
 check("beta and the founding company are unchanged by the damage (digests of every table and object)", JSON.stringify(await FP(B.id)) === JSON.stringify(fpB0) && JSON.stringify((await FP("sunchaser")).tables) === JSON.stringify(fpS0.tables));
+{
+  // The row-level comparison must SEE every kind of damage, by name. (If it did not, a "passed" restore would prove nothing.)
+  const dmg = diffRowSnapshots(rsA0, await RS(A.id));
+  const has = (list, re) => list.some((x) => re.test(x));
+  check("row-level comparison names the damage to alpha: the missing invoice, its items and payment, the missing document row and object, bank accounts", has(dmg.missing, new RegExp(`^invoices: ${A.invoiceId}$`)) && has(dmg.missing, /^invoice_items: /) && has(dmg.missing, /^invoice_payments: /) && has(dmg.missing, new RegExp(`^customer_documents: ${A.docs[1].id}$`)) && has(dmg.missing, /^bank_accounts: /) && has(dmg.missing, /^object: /), describeSnapshotDiff(dmg, 12));
+  check("...the renamed lead and the reset counter as changed rows, the junk term and the stray object as added rows", has(dmg.changed, new RegExp(`^leads: ${A.lead.id}$`)) && has(dmg.changed, /^document_counters: /) && has(dmg.added, new RegExp(`^company_terms: junk-${RUN}$`)) && has(dmg.added, /^object: .*stray-/), describeSnapshotDiff(dmg, 12));
+  check("...and finds NOTHING different in beta or in the founding company (no row missing, added or changed)", snapshotsIdentical(diffRowSnapshots(rsB0, await RS(B.id))) && snapshotsIdentical(diffRowSnapshots(rsS0, await RS("sunchaser"))));
+}
 // sensitivity of the comparison itself (negative control): one changed row of beta is detected
 psql(`update leads set name=name||'x' where id='${B.lead.id}'`);
 check("negative control: a single changed row of beta IS detected by the fingerprint", JSON.stringify(await FP(B.id)) !== JSON.stringify(fpB0));
 psql(`update leads set name=left(name, length(name)-1) where id='${B.lead.id}'`);
 check("...and reverting it restores the identical fingerprint", JSON.stringify(await FP(B.id)) === JSON.stringify(fpB0));
+{
+  // negative controls of the ROW-LEVEL comparison on beta: a changed row, a deleted row and an added row are each found by name, and putting everything back is identical
+  psql(`update leads set name=name||'x' where id='${B.lead.id}'`);
+  let dd = diffRowSnapshots(rsB0, await RS(B.id));
+  check("negative control (row level): one changed row of beta is named", dd.changed.length === 1 && dd.changed[0] === `leads: ${B.lead.id}` && !dd.missing.length && !dd.added.length, describeSnapshotDiff(dd));
+  psql(`update leads set name=left(name, length(name)-1) where id='${B.lead.id}'`);
+  const term = psql(`select to_jsonb(t) from company_terms t where company_id='${B.id}' order by id limit 1`);
+  const termId = JSON.parse(term).id;
+  psql(`delete from company_terms where id='${termId}'`);
+  dd = diffRowSnapshots(rsB0, await RS(B.id));
+  check("negative control (row level): one DELETED row of beta is named as missing", dd.missing.length === 1 && dd.missing[0] === `company_terms: ${termId}` && !dd.added.length && !dd.changed.length, describeSnapshotDiff(dd));
+  psql(`insert into company_terms select * from jsonb_populate_record(null::company_terms, '${term.replace(/'/g, "''")}'::jsonb)`);
+  psql(`insert into company_terms (id, term_text, sort_order, company_id) values ('ctl-${RUN}','control',98,'${B.id}')`);
+  dd = diffRowSnapshots(rsB0, await RS(B.id));
+  check("negative control (row level): one ADDED row of beta is named as added", dd.added.length === 1 && dd.added[0] === `company_terms: ctl-${RUN}` && !dd.missing.length && !dd.changed.length, describeSnapshotDiff(dd));
+  psql(`delete from company_terms where id='ctl-${RUN}'`);
+  check("...and with all three put back the row-level comparison reports beta identical again", snapshotsIdentical(diffRowSnapshots(rsB0, await RS(B.id))), describeSnapshotDiff(diffRowSnapshots(rsB0, await RS(B.id))));
+}
 
 // ------------------------------------------------------------------------------------------ 4. things that must be refused, and a dry run that changes nothing
 r = cli(["restore", "--dir", OUT, "--company", A.id]);
@@ -180,8 +262,22 @@ const wantObjects = Object.fromEntries(Object.entries(fpA0.objects));
 check("alpha's stored documents are identical to the export (the deleted one is back; the stray one made after the export is kept)", Object.entries(wantObjects).every(([k, v]) => fpA1.objects[k] === v) && Object.keys(fpA1.objects).some((k) => k.endsWith(`stray-${RUN}.txt`)));
 check("BETA is byte-identical before and after (every table and every stored object)", JSON.stringify(await FP(B.id)) === JSON.stringify(fpB0));
 check("the FOUNDING company's tables are identical before and after", JSON.stringify((await FP("sunchaser")).tables) === JSON.stringify(fpS0.tables));
+{
+  // Row level, before and after the restore. Any row missing, added or changed fails and is named.
+  const rsA1 = await RS(A.id), rsB1 = await RS(B.id), rsS1 = await RS("sunchaser");
+  const dA = diffRowSnapshots(rsA0, rsA1);
+  const onlyStray = !dA.missing.length && !dA.changed.length && dA.added.length === 1 && /^object: .*stray-/.test(dA.added[0]);
+  console.log(`ROW-COMPARE alpha: ${snapshotRowTotal(rsA0)} rows before, ${snapshotRowTotal(rsA1)} after; ${dA.missing.length} missing, ${dA.added.length} added, ${dA.changed.length} changed (${describeSnapshotDiff(dA)})`);
+  check(`alpha: every row of every table is back - primary keys and full content, ${snapshotRowTotal(rsA0)} rows in ${Object.keys(rsA0.tables).length} tables - and the only difference is the stray object made after the export, which a restore keeps`, onlyStray, describeSnapshotDiff(dA));
+  const dB = diffRowSnapshots(rsB0, rsB1), dS = diffRowSnapshots(rsS0, rsS1);
+  console.log(`ROW-COMPARE beta: ${snapshotRowTotal(rsB0)} -> ${snapshotRowTotal(rsB1)} rows, ${dB.missing.length} missing, ${dB.added.length} added, ${dB.changed.length} changed; founding: ${snapshotRowTotal(rsS0)} -> ${snapshotRowTotal(rsS1)}, ${dS.missing.length} missing, ${dS.added.length} added, ${dS.changed.length} changed`);
+  check(`beta: no row missing, added or changed (${snapshotRowTotal(rsB0)} rows, ${Object.keys(rsB0.objects).length} objects compared by key and content)`, snapshotsIdentical(dB), describeSnapshotDiff(dB));
+  check(`founding company: no row missing, added or changed (${snapshotRowTotal(rsS0)} rows)`, snapshotsIdentical(dS), describeSnapshotDiff(dS));
+  const got = contentOf(A), want = wantContent(A);
+  check("alpha's content after the restore equals what the fill wrote (lines, totals, payment, lead, quotation, documents, contract log row, project row)", JSON.stringify(got) === JSON.stringify(want), `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+}
 check("alpha's invoice is back with its number, total and its payment, and the lead name is back", psql(`select invoice_number||':'||grand_total::float||':'||paid_amount::float from invoices where id='${A.invoiceId}'`) === `${A.number}:${A.total}:${Math.round(A.total * 0.3)}` && psql(`select name from leads where id='${A.lead.id}'`) === `${A.t} Customer` && psql(`select count(*) from company_terms where id='junk-${RUN}'`) === "0");
-check("alpha's numbering counter is back at 1 (it was reset to 0 by the damage), so the next invoice number cannot repeat the restored one", psql(`select last_value from document_counters where company_id='${A.id}' and kind='invoice'`) === "1");
+check(`alpha's numbering counter is back at ${counterA0} (it was reset to 0 by the damage), so the next invoice number cannot repeat the restored one`, psql(`select last_value from document_counters where company_id='${A.id}' and kind='invoice'`) === counterA0);
 // the application sees it again
 const a2 = caller((await login(A.user)).token);
 const inv = await json(await a2(`/api/admin/invoices/${A.invoiceId}`));
@@ -209,6 +305,7 @@ const fpA2 = await FP(A.id);
 check("--prune-objects removes the object the export does not contain and nothing else", r.status === 0 && !Object.keys(fpA2.objects).some((k) => k.endsWith(`stray-${RUN}.txt`)) && JSON.stringify(fpA2.objects) === JSON.stringify(fpA0.objects), r.stderr);
 check("...and beta's objects and tables are still identical (against beta's baseline taken just before)", JSON.stringify(await FP(B.id)) === JSON.stringify(fpB1));
 check("restoring twice gives the same result (idempotent)", JSON.stringify((await FP(A.id)).tables) === JSON.stringify(fpA0.tables));
+check("after the pruning restore alpha is identical to its first export row for row and object for object (nothing missing, added or changed)", snapshotsIdentical(diffRowSnapshots(rsA0, await RS(A.id))), describeSnapshotDiff(diffRowSnapshots(rsA0, await RS(A.id))));
 
 // ------------------------------------------------------------------------------------------ 7. a different database: an empty target built from the release schema + tenant migrations
 const TARGET = `t_restore_${RUN.toLowerCase()}`;

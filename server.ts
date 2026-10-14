@@ -1478,7 +1478,8 @@ loadDb();
 /* --- AUDIT LOGGING & NOTIFICATION SYNC ACTIONS --- */
 async function appendActivityLog(userId: string, userName: string, role: string, action: string, details: string) {
   const newLog = {
-    id: `log-${Date.now()}`,
+    // Not the clock alone: two actions in the same millisecond (two requests, or two companies) built the same id and the second row was dropped silently.
+    id: `log-${Date.now()}-${randomUUID().slice(0, 8)}`,
     timestamp: new Date().toISOString(),
     userId,
     userName,
@@ -1493,7 +1494,7 @@ async function appendActivityLog(userId: string, userName: string, role: string,
   if (isSupabaseActive()) {
     try {
       const supabase = getSupabase()!;
-      await supabase.from("activity_logs").insert({
+      const { error: logErr } = await supabase.from("activity_logs").insert({
         id: newLog.id,
         timestamp: newLog.timestamp,
         user_id: newLog.userId,
@@ -1502,6 +1503,8 @@ async function appendActivityLog(userId: string, userName: string, role: string,
         action: newLog.action,
         details: newLog.details
       });
+      // The client returns the database's refusal instead of throwing it; it used to be ignored, so a lost row left no trace.
+      if (logErr) console.error("[Supabase Error] activity log row was not saved:", logErr.code, logErr.message);
     } catch (err) {
       console.error("[Supabase Error] Failed to synclog:", err);
     }

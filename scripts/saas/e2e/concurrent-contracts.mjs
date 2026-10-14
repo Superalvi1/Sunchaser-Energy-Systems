@@ -3,6 +3,7 @@
 // (inv-<ms>, item-<ms>-<n>, cust-inv-<ms>) collides when two requests build one in the same millisecond, and the second request fails with a duplicate-key
 // error. With unique ids every contract must succeed and every invoice must exist exactly once.
 //   Env: E2E_BASE_URL, E2E_PSQL, TEST_PW.   Seed first: seed-two-companies.mjs
+import "./lib/fresh-connections.mjs";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 
@@ -57,6 +58,10 @@ const logged = Number(psql(`select count(distinct l.id) from leads l where l.id 
 check(`every contracted lead has its "Contract-to-Invoice" activity-log row (${logged} of ${leadIds.length})`, logged === leadIds.length, `${leadIds.length - logged} activity-log rows were silently lost`);
 const withProject = Number(psql(`select count(distinct lead_id) from projects where lead_id in (${inList})`));
 check(`every contracted lead has its project row (${withProject} of ${leadIds.length})`, withProject === leadIds.length, `${leadIds.length - withProject} project rows were silently lost`);
+const custOfInv = `select distinct customer_id from invoices where id in (${ids.map((i) => `'${i}'`).join(",") || "''"})`;
+const nCust = Number(psql(`select count(*) from (${custOfInv}) c`));
+const withVault = Number(psql(`select count(distinct customer_id) from customer_documents where document_type='invoice' and customer_id in (${custOfInv})`));
+check(`every invoice's customer has the invoice in their document vault (${withVault} of ${nCust}; the vault row used to be lost with only a warning when two ids met)`, withVault === nCust, `${nCust - withVault} vault rows lost`);
 const dupProjects = psql(`select count(*) from (select lead_id from projects where lead_id in (${inList}) group by 1 having count(*)>1) x`);
 check("no lead has two projects", dupProjects === "0", dupProjects);
 console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);

@@ -6,6 +6,7 @@
 // has a counter sequence (sequences are not rolled back, so the count survives the failed insert). Each request therefore gets a deterministic, real
 // 23505 from PostgreSQL, also when 30 requests of two companies run at the same moment.
 //   Env: E2E_BASE_URL, E2E_PSQL, TEST_PW.  Seed first: seed-two-companies.mjs.   Disposable stack only (refuses hosted URLs); removes its trigger and rows at the end.
+import "./lib/fresh-connections.mjs";
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 
@@ -80,15 +81,7 @@ try {
 
   // ---------------------------------------------------------------- 4. the invoice route creates its customer through a different code path
   const tag = 90; arm(tag, 2);
-  // The 30 database look-ups above take longer than the server keeps an idle connection; the client may then reuse a connection the server has closed
-  // ("other side closed"). That failure happens BEFORE the request is processed, which the attempts counter proves (still 0), so one repeat is safe.
-  const sendInvoice = () => alpha.api("/api/admin/invoices", { method: "POST", body: JSON.stringify({ customerName: `Collide invoice ${RUN}`, customerPhone: phoneOf(tag), items: [{ itemName: "x", description: "x", qty: 1, unit: "pcs", rate: 100, taxPercent: 0, discountAmount: 0 }] }) });
-  let inv;
-  try { inv = await sendInvoice(); }
-  catch (e) {
-    if (e.cause?.code === "UND_ERR_SOCKET" && attemptsOf(tag) === 0) { console.log("   (stale keep-alive connection before the request was processed; repeating once)"); inv = await sendInvoice(); }
-    else throw e;
-  }
+  const inv = await alpha.api("/api/admin/invoices", { method: "POST", body: JSON.stringify({ customerName: `Collide invoice ${RUN}`, customerPhone: phoneOf(tag), items: [{ itemName: "x", description: "x", qty: 1, unit: "pcs", rate: 100, taxPercent: 0, discountAmount: 0 }] }) });
   const invBody = await json(inv);
   const icode = codeOfLeadCustomer(tag);
   check(`two forced collisions on the invoice route that creates its customer: the invoice is created (HTTP ${inv.status}) and the customer has a new code (${icode})`, inv.status < 300 && /^SES-\d{6}$/.test(icode) && icode !== VICTIM, `${inv.status} ${JSON.stringify(invBody).slice(0, 200)}`);
