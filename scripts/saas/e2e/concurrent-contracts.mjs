@@ -47,5 +47,17 @@ const lonely = psql(`select count(*) from invoices i where i.id in (${ids.map((i
 check("every invoice has its line items", lonely === "0", lonely);
 const owners = psql(`select count(*) from invoices where id in (${ids.map((i) => `'${i}'`).join(",") || "''"}) and company_id not in ('co_alpha','co_beta')`);
 check("every invoice belongs to the company that contracted it (no cross-company row)", owners === "0");
+// 3. Rows that are written as a side effect of the contract and whose failure is NOT reported to the caller. Two such inserts (the activity-log row `log-<ms>` and the
+//    project row `project-<ms>`) ignored the database's answer: a clash on the clock-built id dropped the row silently, with HTTP 200 and no log line. That is the
+//    only explanation found for a restore run in which one company ended with one row fewer than the other and no check failed. Each contracted lead must have
+//    exactly one "Contract-to-Invoice" activity-log row and exactly one project.
+const leadIds = results.map((x) => x.j.lead.id).filter(Boolean);
+const inList = leadIds.map((i) => `'${i}'`).join(",") || "''";
+const logged = Number(psql(`select count(distinct l.id) from leads l where l.id in (${inList}) and exists (select 1 from activity_logs a where a.action='Contract-to-Invoice' and a.details like 'Lead ' || l.id || ' %')`));
+check(`every contracted lead has its "Contract-to-Invoice" activity-log row (${logged} of ${leadIds.length})`, logged === leadIds.length, `${leadIds.length - logged} activity-log rows were silently lost`);
+const withProject = Number(psql(`select count(distinct lead_id) from projects where lead_id in (${inList})`));
+check(`every contracted lead has its project row (${withProject} of ${leadIds.length})`, withProject === leadIds.length, `${leadIds.length - withProject} project rows were silently lost`);
+const dupProjects = psql(`select count(*) from (select lead_id from projects where lead_id in (${inList}) group by 1 having count(*)>1) x`);
+check("no lead has two projects", dupProjects === "0", dupProjects);
 console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);

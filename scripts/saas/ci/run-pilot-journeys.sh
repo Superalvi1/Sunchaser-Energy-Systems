@@ -21,7 +21,7 @@ REPO="$PWD"
 case "$CI_PG" in *railway*|*supabase*|*rlwy*|*amazonaws*) echo "Refusing: looks like a hosted database." >&2; exit 2;; esac
 export E2E_ADMIN="$CI_PG"
 DB="${CI_DB:-t_ci_stack}"
-APP_PORT="${APP_PORT:-3199}"; PGRST_PORT="${PGRST_PORT:-54399}"; S3_PORT="${S3_PORT:-9499}"
+APP_PORT="${APP_PORT:-3199}"; APP2_PORT="${APP2_PORT:-3197}"; PGRST_PORT="${PGRST_PORT:-54399}"; S3_PORT="${S3_PORT:-9499}"
 REPORT_DIR="${REPORT_DIR:-$REPO/ci-report-stack}"
 WORK="$(mktemp -d)"
 POSTGREST_MODE="${POSTGREST_MODE:-docker}"
@@ -44,7 +44,7 @@ say() { echo "== $*"; }
 die() { echo "FATAL: $*" >&2; { echo "**Stack could not be built:** $*"; } >> "$REPORT_DIR/summary.md"; exit 1; }
 
 # Refuse to run against something that is already listening: a stale process would be tested instead of this build.
-for port in "$APP_PORT" "$PGRST_PORT" "$S3_PORT"; do
+for port in "$APP_PORT" "$APP2_PORT" "$PGRST_PORT" "$S3_PORT"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then die "port $port is already in use (a previous run's process?)"; fi
 done
 
@@ -113,7 +113,7 @@ JWT_SECRET_VALUE="$(openssl rand -hex 32)"
 # start_app <port> <multi-company true|false> <log file>: the built application against the stack. With multi-company "false" the flag and the tenant key
 # are NOT set - the deployment as it is today (single company), on the same migrated database.
 start_app() {
-  local port="$1" multi="$2" log="$3"
+  local port="$1" multi="$2" log="$3" extra="${4:-}"
   (
     export NODE_ENV=production PORT="$port" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000
     export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY"
@@ -126,12 +126,17 @@ start_app() {
     export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001
     export WHATSAPP_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
     export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false
+    [ -n "$extra" ] && export $extra
     exec node dist/server.cjs
-  ) > "$log" 2>&1 & PIDS+=($!)
+  ) > "$log" 2>&1 & PIDS+=($!); LAST_APP_PID=$!
   for i in $(seq 1 60); do curl -s --noproxy '*' "http://127.0.0.1:$port/health" | grep -q '"ok"' && return 0; sleep 1; done
   tail -15 "$log"; die "the application on :$port did not come up"
 }
-start_app "$APP_PORT" true "$REPORT_DIR/app.log"
+start_app "$APP_PORT" true "$REPORT_DIR/app.log"; APP1_PID="$LAST_APP_PID"
+# A SECOND process of the same build against the same database, for the journeys that prove the storage limit holds across server processes.
+# Its pending storage reservations expire after 12 s (production default 180 s) so the journey can show that a killed process stops counting.
+start_app "$APP2_PORT" true "$REPORT_DIR/app2.log" "STORAGE_RESERVATION_TTL_SECONDS=12"; APP2_PID="$LAST_APP_PID"
+export E2E_BASE_URL_2="http://127.0.0.1:$APP2_PORT" E2E_APP1_PID="$APP1_PID" E2E_APP2_PID="$APP2_PID" E2E_APP1_LOG="$REPORT_DIR/app.log" E2E_APP2_LOG="$REPORT_DIR/app2.log"
 echo "stack up: PostgreSQL $(psql $CI_PG -d "$DB" -tAc 'show server_version'), PostgREST ($POSTGREST_MODE), app on :$APP_PORT"
 
 # ------------------------------------------------------------------------------------------------------------------------------- journeys
@@ -168,6 +173,7 @@ DESC="operator onboarding, manual subscriptions, enforced plan limits, operator 
 DESC="invoice issuance snapshot and legacy label, local QR, AutoSizer and after-sales refused, subscription expiry at request time, storage limit, settings permissions and history" journey pilot-round3 node scripts/saas/e2e/pilot-round3.mjs
 DESC="every disabled module (AutoSizer, after-sales, WhatsApp inbox, design tools, AI) answers 404 to the real pilot users - administrators, sales, portal customers - before any handler runs" journey disabled-modules node scripts/saas/e2e/disabled-modules.mjs
 DESC="storage limit: concurrent uploads at the boundary, every upload route, usage that cannot be verified (fail closed, retryable), no limit set" journey storage-quota node scripts/saas/e2e/storage-quota.mjs
+DESC="storage limit across TWO server processes: 24 uploads of mixed routes at the boundary race over both, failed writes give their room back, a deleted file frees exactly its room, a database refusal fails closed, a process killed mid-upload stops counting after its reservation expires" journey storage-two-instances node scripts/saas/e2e/storage-two-instances.mjs
 DESC="72 contracts of two companies at the same instant: every one succeeds and provisions its own invoice (row ids no longer collide on the clock; found by the restore journey)" journey concurrent-contracts node scripts/saas/e2e/concurrent-contracts.mjs
 DESC="customer codes at insert time: forced real unique-index collisions (1, 2, 4, and more than the bound), 30 simultaneous requests of two companies, the invoice route; bounded retry, no orphan rows" journey customer-code-collisions node scripts/saas/e2e/customer-code-collisions.mjs
 DESC="company restore leaves every other company and the founding company byte-identical" journey company-restore node --import tsx scripts/saas/e2e/company-restore.mjs

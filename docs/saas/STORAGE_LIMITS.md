@@ -18,12 +18,23 @@ There is **no unlimited default**. Operator onboarding (`POST /api/platform/comp
 
 Reading, downloading (signed links), listing and deleting never go through the guard. Files already stored are never deleted, moved or truncated, whatever the usage and whatever state the guard is in (tested: at the limit, at 0 MB, and with the object store's listing down).
 
-## How concurrent uploads are kept inside the limit
+## How concurrent uploads are kept inside the limit (across server processes)
 
-* Usage is the real size of the company's objects (a listing of its own key prefix in both namespaces), cached for 60 seconds.
-* The decision for one company is made one at a time (a queue per company). Bytes of uploads that were accepted but not yet finished are counted ("in flight"), so a burst cannot all pass on one stale number. A failed write gives its bytes back; a finished one stays counted.
-* A refusal made on a figure older than 2 seconds is re-checked once against a fresh listing, so a company that deleted files is not refused on old data.
-* **Known limit:** the queue lives in one server process. With several server processes serving the same company at the same moment, uploads in different processes can overshoot by the size of the uploads in flight; the next listing corrects it. It is a commercial control, not a security boundary.
+The decision is made **by the database**, not by the server process, so several processes serving the same company cannot overshoot together. It needs migration **t8-storage-reservations** (`scripts/saas/phase2h-storage-reservations.sql`, rollback beside it); without it pilot-company uploads are refused as "could not verify" (retryable), the founding company and single-company mode are not affected. Apply t8 **before** the backend that needs it.
+
+1. **Usage** is the real size of the company's objects (a listing of its own key prefix in both namespaces). Each process caches its last listing for 60 seconds. Just before listing, the process takes a **mark** (`saas_storage_mark()`, a number from a database sequence).
+2. **Reserve:** `saas_storage_reserve(company, bytes, limit, measured bytes, mark, ...)` runs in one short transaction under an advisory lock for that company, which every process takes. It counts: the measured bytes + reservations still **pending** + reservations that **finished after the mark** (those cannot be in the listing). It admits the write only if all of that plus the new file fits, and records a pending reservation.
+3. **Settle:** after the write, the process calls `saas_storage_settle(id, 'commit')` (kept as a finished reservation, so processes with an older listing still count it) or `'release'` (the write failed: the row is deleted and the bytes are free at once).
+4. **Cleanup:** a pending reservation whose process died expires by itself (180 s by default, longer than the object-store write timeout; `STORAGE_RESERVATION_TTL_SECONDS` overrides); a finished one is purged after 15 minutes (or three times the listing cache, if longer). Expired rows are purged by the company's next reservation. Settling is idempotent; if settling fails (database blip) the reservation just stays pending and expires, so the limit still holds.
+5. A refusal made on a listing older than 2 seconds is re-checked once against a fresh listing, so a company that deleted files is not refused on old data.
+
+What is counted twice, briefly, and why that is acceptable: an upload that completed just before a listing but whose "finished" note arrives just after it. That can only make the figure larger (an early refusal near the boundary), never let a write through.
+
+**Assumptions and remaining limits (stated, not hidden):**
+* The object store's **listing includes every object whose write has completed** (read-after-write listing). This is not proven for the production bucket; a store with lagging listings could let a burst overshoot by the uploads of the lag window. **Production-access item.**
+* A pending reservation expires after its TTL even if the (very slow) upload is still running; the TTL is longer than the write timeout, so a live upload is not expected to outlive it.
+* A reservation function that is missing, not permitted or unreachable fails **closed** (HTTP 503, retryable). Nothing falls back to a weaker check.
+* It is a commercial control, not a security boundary.
 
 ## Which routes are metered (all go through `putRailwayObject`)
 
@@ -38,4 +49,7 @@ Not counted: smart-quote PDFs and WhatsApp-agent files (founding company only); 
 
 ## Tests
 
-`server/saas/subscriptionEnforcement.test.ts` (fail-closed, boundary, concurrency, queue not poisoned by a failure, no cross-company counting; the concurrency test fails if the serialisation is removed), `server/saas/platformApi.test.ts` (limit required at onboarding), and the journey `scripts/saas/e2e/storage-quota.mjs`, which on a real stack with a fault-injectable object store runs 14 simultaneous uploads at the boundary, every route above over the limit and with room, listing down, listing hanging, a rejected write, no limit set, no subscription, and a 0 MB limit. The cache times can be shortened for such a stack with `STORAGE_USAGE_CACHE_MS` and `STORAGE_LIMIT_CACHE_MS` (defaults 60 000 and 15 000).
+* `server/saas/subscriptionEnforcement.test.ts` (fail-closed, boundary, concurrency in one process, no cross-company counting) and `server/saas/storageReservations.test.ts` (several simulated processes sharing one reservation store: exactly as many fit as fit, randomised mixed sizes with failing writes, failed writes give room back in every process, a finished upload is counted by a process with an older listing and not twice after it lists again, a killed process's reservation expires, fail-closed, a **negative control** showing that processes that do not share the decision overshoot).
+* `scripts/saas/tests/test-storage-reservations.sh` against a real PostgreSQL: the arithmetic, expiry, argument checks, privileges (service role only; the tenant role cannot call or read), idempotent apply/rollback, **40 simultaneous sessions competing for 10 units are admitted exactly 10 times (5 rounds)**, and a **negative control** (the same function without its lock admits more).
+* Journey `scripts/saas/e2e/storage-two-instances.mjs` on **two real server processes** of the same build on one database and one object store: 24 mixed-route uploads race over both at the boundary (exactly as many accepted as fit), a deleted file frees exactly its room, failed writes through both processes leave no reservation and use no room, the founding company never reserves, a database that refuses the reservation function makes both processes fail closed (503, retryable, log line names the function) and recover without a restart, and a process killed with SIGKILL mid-upload leaves a pending reservation that blocks while it lives and stops blocking after it expires. Run against the previous per-process design it fails: 10 of 24 uploads accepted against a limit that fits 5, 1.9 MB stored against 1 MB (`docs/saas/evidence/round5/storage/`).
+* `scripts/saas/e2e/storage-quota.mjs` (single-process, every upload route, fault injection of the store: listing down, listing hangs, rejected write, no limit set, no subscription, 0 MB). The cache times can be shortened for such a stack with `STORAGE_USAGE_CACHE_MS` and `STORAGE_LIMIT_CACHE_MS` (defaults 60 000 and 15 000).

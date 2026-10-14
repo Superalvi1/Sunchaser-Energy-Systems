@@ -462,6 +462,10 @@
    "class": "platform",
    "note": "Plans offered by the operator (limits, informational price). Platform table: no tenant privilege. Created by phase2e-subscriptions.sql."
   },
+  "saas_storage_reservations": {
+   "class": "platform",
+   "note": "Transient bookkeeping of file-storage reservations (in-flight and recently finished uploads of the pilot companies), created by scripts/saas/phase2h-storage-reservations.sql. Platform table: no tenant privilege; reached only through the saas_storage_* functions with the service role. Not part of a company export or restore."
+  },
   "saas_subscriptions": {
    "class": "platform",
    "note": "One manual subscription per company (plan, status, period, per-company limit overrides). Platform table: no tenant privilege."

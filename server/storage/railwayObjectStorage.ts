@@ -179,7 +179,7 @@ async function failure(res: Response, action: string, knownCode?: string): Promi
  * Optional guard run around every write (the plan storage limit, server/saas/storageQuota.ts). Registered by the server at start-up so
  * this module does not depend on the SaaS code. `reserve` throws to refuse the write and returns a handle that is released if the write fails.
  */
-type WriteReservation = { release(): void; commit?(): void };
+type WriteReservation = { release(): void | Promise<void>; commit?(): void | Promise<void> };
 let writeGuard: ((bytes: number) => Promise<WriteReservation>) | null = null;
 export function setRailwayWriteGuard(guard: ((bytes: number) => Promise<WriteReservation>) | null): void { writeGuard = guard; }
 
@@ -200,11 +200,11 @@ export async function putRailwayObject(
   try {
     const res = await signedBucketRequest("PUT", namespace, key, { body, contentType });
     if (!res.ok) throw await failure(res, "upload");
-    reservation?.commit?.();
   } catch (err) {
-    reservation?.release();
+    await reservation?.release();   // never throws: the bytes are given back whether or not the database answers
     throw err;
   }
+  await reservation?.commit?.();    // the write succeeded; never throws
 }
 
 export async function deleteRailwayObject(
