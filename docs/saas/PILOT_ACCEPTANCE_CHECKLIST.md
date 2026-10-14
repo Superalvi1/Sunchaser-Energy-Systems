@@ -105,7 +105,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | # | Check | Status | Evidence |
 |---|---|---|---|
 | 6.1 | With `MULTI_COMPANY_ENABLED` unset, on a database that has the migrations applied, the application behaves as before: login, lead, quotation, contract, invoice, payment, PDF; no company fields; no module flags; AutoSizer, after-sales, inbox, design tools and AI reachable; the image upload still writes to the public folder; no storage refusal | PASSED | `single-company-smoke` (12/12), `flag-off-round3` (18/18); run by the CI job `pilot-journeys` on a second instance of the same build |
-| 6.2 | The same in GitHub's CI | PASSED | job `pilot-journeys` at `6a71cb9`, on PostgreSQL 16 and 17: `single-company-smoke` and `flag-off-round3` pass |
+| 6.2 | The same in GitHub's CI | PASSED | job `pilot-journeys` on the exact head `f2fffb7` (also green at `6a71cb9`), on PostgreSQL 16 and 17: `single-company-smoke` and `flag-off-round3` pass |
 
 ### 7. Intermittent restore-journey failure (`docs/saas/evidence/round4/restore-repeat/SUMMARY.md`)
 
@@ -126,7 +126,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 |---|---|---|---|
 | 8.1 | Invoice issuance snapshot (bank accounts and terms frozen at issue; reprints preserve them; legacy invoices labelled, not back-filled; backend works before `t6`/`t7`) | PASSED | `pilot-round3` A, `compat-before-t6-t7`, DB test 15/15 |
 | 8.2 | Local QR codes (no third-party service), decode-tested | PASSED | `localQr.test.ts`; phone scan and QR inside a Chromium PDF remain UNTESTED |
-| 8.3 | The two-company journeys on **PostgreSQL 16** | PASSED | all 16 journeys locally on 16.15 (`postgres16/`) and in CI on 16 and 17 at `6a71cb9` |
+| 8.3 | The two-company journeys on **PostgreSQL 16** | PASSED | all 16 journeys locally on 16.15 (`postgres16/`) and in CI on 16 and 17 on the exact head `f2fffb7` |
 | 8.4 | Subscription expiry enforced on every request (not by a job); renewal effective within seconds | PASSED | `pilot-round3` E |
 | 8.5 | Delivery, warranty and handover documents carry no Sunchaser identity; quote-editor defaults neutral | PASSED | `documentLeak.test.ts` |
 | 8.6 | Delivery / warranty / handover **flows** with two companies | FAILED (not possible) | the code writes `delivery_challans.created_by_user_id`, which no SQL in the repository creates; group disabled for pilots (Part C, PA2) |
@@ -172,7 +172,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 
 ## Evidence
 
-`docs/saas/evidence/round4/`: `journeys-summary.md`, one log per journey, `restore-repeat/` (every run of the restore journey), `sunchaser-wording-audit.md`, `unit-tests-saas.txt`, `typecheck-tsc.txt`, `typecheck-server.txt`, `postgres16/` (the same journeys on PostgreSQL 16), the screenshots `r4-*.png`, and the PDFs `*-nologo-*.pdf`, `*-bare-*.pdf`, `*-portal-invoice.pdf`.
+`docs/saas/evidence/round4/`: `final-pg17/` (16 journeys, PostgreSQL 17, with `summary.md` and every log), `postgres16/` (the same on PostgreSQL 16), `restore-repeat/` (15 runs BEFORE the fix and the reproduction), `restore-repeat-final/` (15 restore and 15 concurrent-contracts runs at `18ec172`), `customer-code-collision.txt`, `sunchaser-wording-audit.md`, `unit-tests-saas.txt`, `typecheck-tsc.txt`, `typecheck-server.txt`, the screenshots `r4-*.png`, and the PDFs `*-nologo-*.pdf`, `*-bare-*.pdf`, `*-portal-invoice.pdf`.
 
 
 ## Shortest path to a paid pilot
