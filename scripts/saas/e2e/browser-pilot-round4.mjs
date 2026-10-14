@@ -89,8 +89,15 @@ console.log("\n1. administrator: bank account edit / delete and the history with
   await page.getByTestId("discard-banks").click();
   check("discarding puts the saved IBAN back and clears the warning", (await page.getByTestId("bank-0-iban").inputValue()) === "PK36SCBL0000001123456701" && (await page.getByTestId("banks-unsaved").count()) === 0);
   await page.getByTestId("bank-0-iban").fill(newIban);
+  // The settings are re-read after a save. Make that re-read SLOW (1.5 s) so the order of "notice" and "refreshed list" cannot depend on the speed of
+  // the machine: CI failed this check at 76/77 on both PostgreSQL versions while two local runs passed (the notice used to appear before the re-read).
+  await page.route("**/api/company/settings", async (route) => { if (route.request().method() === "GET") await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });
   await page.getByTestId("save-banks").click();
   await answered(page);
+  const warningAtNotice = await page.getByTestId("banks-unsaved").count();
+  await page.unroute("**/api/company/settings");
+  check("the edited IBAN is saved (notice shown, warning gone) - at the moment the notice appears, even when the re-read is slow", warningAtNotice === 0 && (await page.getByTestId("banks-unsaved").count()) === 0, `warning present when the notice appeared: ${warningAtNotice}`);
+  void 0;
   check("the edited IBAN is saved (notice shown, warning gone)", (await page.getByTestId("company-settings-notice").innerText()).includes("Bank accounts saved") && (await page.getByTestId("banks-unsaved").count()) === 0);
 
   // delete: ask, decline, ask again, confirm, save

@@ -109,8 +109,9 @@ export default function CompanySettingsScreen() {
     setSaving(true); setError(null); setNotice(null);
     try {
       const res = await saveCompanySettingsSection(section, body);
-      setNotice(res.auditRecorded === false ? `${done} (the change could not be written to the history; the operator has been logged an error).` : done);
+      // Re-read first, then say it is saved: the "unsaved changes" warning compares the edited list with the re-read one, and must not show beside "saved".
       await load();
+      setNotice(res.auditRecorded === false ? `${done} (the change could not be written to the history; the operator has been logged an error).` : done);
       if (section === "branding") void refreshWorkspaceBrand(); // the header shows the new name and logo at once
       setHistory(null);
     } catch (e: any) {
