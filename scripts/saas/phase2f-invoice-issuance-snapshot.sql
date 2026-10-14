@@ -33,6 +33,16 @@ alter table public.invoices add constraint invoices_issuance_snapshot_shape
   )) not valid;
 alter table public.invoices validate constraint invoices_issuance_snapshot_shape;
 
+-- A previous rollback kept the snapshots: put them back (only where the invoice has none; the guard below is not installed yet at this point of a first apply).
+do $$ begin
+  if to_regclass('app_rollback_backup.invoice_issuance_snapshot') is not null then
+    alter table public.invoices disable trigger user;
+    update public.invoices i set issuance_snapshot = b.issuance_snapshot
+      from app_rollback_backup.invoice_issuance_snapshot b where b.id = i.id and i.issuance_snapshot is null;
+    alter table public.invoices enable trigger user;
+  end if;
+end $$;
+
 create or replace function public.invoices_issuance_snapshot_guard() returns trigger
 language plpgsql as $$
 begin

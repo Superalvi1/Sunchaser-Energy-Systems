@@ -36,6 +36,10 @@ $P -f "$SAAS/phase2f-invoice-issuance-snapshot-rollback.sql" > /dev/null 2>&1; c
 check "rollback keeps every invoice" "$($Q -c "select count(*) from invoices where id in ('legacy-1','new-1')")" "2"
 check "rollback removes the column" "$($Q -c "select count(*) from information_schema.columns where table_name='invoices' and column_name='issuance_snapshot'")" "0"
 $P -f "$SAAS/phase2f-invoice-issuance-snapshot.sql" > /dev/null 2>&1; check "re-apply after rollback works" "$?" "0"
-check "after re-apply the old invoices have no snapshot (rollback is not a back-fill)" "$($Q -c "select count(*) from invoices where issuance_snapshot is not null")" "0"
+check "after re-apply the invoice that had a snapshot has it back, unchanged (the rollback kept it)" "$($Q -c "select issuance_snapshot->>'companyTerms' from invoices where id='new-1'")" "Pay in 7 days."
+check "...and the legacy invoice still has none (neither the rollback nor the re-apply back-fills)" "$($Q -c "select count(*) from invoices where issuance_snapshot is not null and id <> 'new-1'")" "0"
+check "...the restored snapshot is protected again (it cannot be changed)" "$(err "update invoices set issuance_snapshot = null where id='new-1'")" "invoices.issuance_snapshot is written once, when the invoice is created, and cannot be changed"
+$P -f "$SAAS/phase2f-invoice-issuance-snapshot.sql" > /dev/null 2>&1; check "a further apply is harmless" "$?" "0"
+check "...and changes nothing" "$($Q -c "select count(*) from invoices where issuance_snapshot is not null")" "1"
 
 echo; echo "invoice issuance snapshot: $ok passed, $bad failed"; [ "$bad" = 0 ]
