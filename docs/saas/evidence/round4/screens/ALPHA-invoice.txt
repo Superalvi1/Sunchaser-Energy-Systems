@@ -1,0 +1,76 @@
+                                                                                                                                                PREMIUM INVOICE V3
+                  Alpha Solar Works 6F387B
+                  📞 021-1010101 · ✉ billing.6f387b@alpha.test                                                                              INVOICE
+                  🌐 www.alpha-6f387b.test
+                  📍 1 Alpha Road 6F387B Karachi
+
+  BILL TO                                                                                  INVOICE DETAILS
+
+  ALPHA6F387B PDF                                                                          Invoice No.                                                INV-2026-0001
+                                                                                           Date                                                          14/10/2026
+  Tel: 03158613157
+                                                                                           Time                                                            05:18 am
+                                                                                           Due Date                                                                 —
+                                                                                           Status                                                         PARTIAL
+
+
+
+  PROJECT INFORMATION
+ Project Number                                                                     project-1791955104003
+ System Size                                                                        5 kW
+ System Type                                                                        Hybrid
+ Panel Brand                                                                        Synthetic 500W
+ Inverter Brand                                                                     Synthetic 5kW
+ Battery Brand                                                                      None
+ Structure Type                                                                     Standard
+ Net Metering Status                                                                Yes
+
+
+  PAYMENT PROGRESS
+                 TOTAL AMOUNT                               RECEIVED                                  BALANCE DUE                            % PAID
+                Rs 328,000                               Rs 82,000                                  Rs 246,000                               25%
+
+                                                                                                                                      25% of invoice amount received
+
+
+
+
+                          Scan to Pay / Share Payment Details
+                          QR encodes invoice number, total, and balance. Use bank details on the last page for transfer.
+
+
+
+
+ #       Item                                                                                                               Qty             Rate             Amount
+
+     1   ALPHA6F387B-PANEL-PDF                                                                                                    8   Rs 41,000          Rs 328,000
+         ALPHA6F387B panel PDF
+
+                                                                                                                            8                            Rs 328,000
+
+Amount in words: Three Lakh Twenty Eight Thousand Rupees only                                            Sub Total                                       Rs 328,000
+Terms & Conditions
+System booked in COD basis.                                                                              Total                                         Rs 328,000
+                                                                                                         Received                                         Rs 82,000
+
+                                                                                                         Balance Due                                     Rs 246,000
+
+Authorized Signatory                                                                                     Previous Balance                                      Rs 0
+For Alpha Solar Works 6F387B
+                                                                                                         Current Balance                                 Rs 246,000
+             Payment — Bank Accounts
+             Transfer to an account below. Reference: INV-2026-0001
+
+
+
+Company / Account Title                           Bank Name                                 Account Number           IBAN
+
+ALPHA SOLAR WORKS 6F387B                          Alpha Bank 6F387B                         A6F387B0001              PK00ALPH6F387B000001
+
+
+ALPHA SOLAR WORKS 6F387B                          Alpha Islamic 6F387B                      A6F387B0002              N/A
+
+
+
+                                                Alpha Solar Works 6F387B · 021-1010101 · billing.6f387b@alpha.test
+
