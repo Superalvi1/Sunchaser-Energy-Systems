@@ -32,13 +32,20 @@ try {
   const ov = await fetch(BASE + "/api/platform/overview", { headers: { authorization: "Bearer " + o } });
   check(`the operator overview still loads (${ov.status})`, ov.status === 200);
   const up = await api("/api/admin/customer-documents/upload", { method: "POST", body: JSON.stringify({ customerId: ij.invoice?.customerId, documentType: "other", title: "compat", fileName: "c.pdf", mimeType: "application/pdf", base64Data: Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64") }) });
-  check(`uploads still work with no storage limit column (${up.status})`, up.status === 201);
+  // Rolling back t6 also rolls back t8 (it depends on t7). A pilot company's upload cannot be checked without the reservation functions, so it FAILS CLOSED:
+  // 503 storage_unverified, retryable, nothing written. (Deploy order: t8 before the backend that needs it. A production database has no pilot company before t1-t7.)
+  const ub = await up.clone().json().catch(() => ({}));
+  check(`a pilot company's upload, with t7 and t8 not applied, fails closed: 503 storage_unverified, retryable (${up.status} ${ub.code})`, up.status === 503 && ub.code === "storage_unverified" && ub.retryable === true);
+  const fa = (await login("t_admin")).token;
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(500)]);
+  const fu = await fetch(BASE + "/api/upload", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + fa }, body: JSON.stringify({ base64Data: `data:image/png;base64,${png.toString("base64")}`, filename: "compat-founding.png" }) });
+  check(`the founding company's upload is unaffected (${fu.status})`, fu.status === 200);
   const lead = await api("/api/leads", { method: "POST", body: JSON.stringify({ name: "Compat lead", email: "compat@example.test", phone: "03002222222", leadSource: "Direct/Referral" }) });
   check(`other writes are unaffected (${lead.status})`, lead.status === 201);
 } finally {
   runner("apply");
   await reload();
 }
-check("t6 and t7 are applied again", psql(`select (select count(*) from information_schema.columns where table_schema='public' and table_name='invoices' and column_name='issuance_snapshot')::text || (select count(*) from information_schema.tables where table_schema='public' and table_name='company_settings_audit')::text`) === "11");
+check("t6, t7 and t8 are applied again", psql(`select (select count(*) from information_schema.columns where table_schema='public' and table_name='invoices' and column_name='issuance_snapshot')::text || (select count(*) from information_schema.tables where table_schema='public' and table_name='company_settings_audit')::text`) === "11");
 console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);
