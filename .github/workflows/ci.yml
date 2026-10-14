@@ -177,14 +177,22 @@ jobs:
           npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
       - name: Run the pilot journeys
         run: bash scripts/saas/ci/run-pilot-journeys.sh
+      - name: Deployment-state matrix (every migration of both releases, one at a time; this build with the flag off. The repair build is checked locally, see docs/ops/COMBINED_DEPLOYMENT_AND_ROLLBACK.md)
+        if: always()
+        env:
+          REPORT_DIR: ci-report-matrix
+        run: bash scripts/saas/ci/run-deploy-matrix.sh
       - name: Journey summary
         if: always()
         run: |
           if [ -f ci-report-stack/summary.md ]; then cat ci-report-stack/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ -f ci-report-matrix/matrix.md ]; then cat ci-report-matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Upload journey logs and screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ci-report-pilot-journeys-pg${{ matrix.postgres }}
-          path: ci-report-stack/
+          path: |
+            ci-report-stack/
+            ci-report-matrix/
           retention-days: 14
