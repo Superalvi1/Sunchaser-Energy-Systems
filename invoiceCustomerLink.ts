@@ -159,7 +159,7 @@ export async function resolveInvoiceCustomerId(
 
   if (!name || !phone) return null;
 
-  const customerId = `cust-inv-${Date.now()}-${randomUUID().slice(0, 6)}`;
+  const customerId = `cust-inv-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const customerEmail = email || placeholderEmail(phone, customerId);
   await insertCustomer(
     {

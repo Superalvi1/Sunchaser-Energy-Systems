@@ -47,7 +47,7 @@ export async function upsertVaultCustomerDocument(
 
   const now = new Date().toISOString();
   const doc = {
-    id: `doc-${Date.now()}-${randomUUID().slice(0, 8)}`,   // not the clock alone: two invoices in one millisecond lost a document row
+    id: `doc-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`,   // not the clock alone: two invoices in one millisecond lost a document row
     customer_id: customerId,
     project_id: null,
     document_type: body.documentType,

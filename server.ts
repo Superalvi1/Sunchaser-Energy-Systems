@@ -1479,7 +1479,7 @@ loadDb();
 async function appendActivityLog(userId: string, userName: string, role: string, action: string, details: string) {
   const newLog = {
     // Not the clock alone: two actions in the same millisecond (two requests, or two companies) built the same id and the second row was dropped silently.
-    id: `log-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    id: `log-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`,
     timestamp: new Date().toISOString(),
     userId,
     userName,

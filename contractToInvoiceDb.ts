@@ -143,7 +143,7 @@ async function ensureProjectForLead(
     : findLocalProject(lead.id, localDb);
   if (existing) return existing.id || existing.project_id;
 
-  const projId = `project-${Date.now()}-${randomUUID().slice(0, 8)}`;   // not the clock alone: two contracts in one millisecond lost a project row silently
+  const projId = `project-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`;   // not the clock alone: two contracts in one millisecond lost a project row silently
   const sizeKw = Number(quote?.systemSizekW) || 0;
   const row = {
     id: projId,
