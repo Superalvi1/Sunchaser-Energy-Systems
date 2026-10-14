@@ -3,7 +3,7 @@ import {
   isSupabaseActive,
   type Database,
 } from "./dbManager.js";
-import { generateCustomerCode } from "./customerCode.js";
+import { generateCustomerCode, insertWithUniqueCustomerCode } from "./customerCode.js";
 import { pickQuoteForInvoice, resolveLeadCustomerId } from "./src/lib/invoiceFromLead.ts";
 import { createInvoiceFromContractedLead } from "./invoiceDb.js";
 import { provisionInternalCostingSheet } from "./internalCostingDb.js";
@@ -94,24 +94,23 @@ async function ensureCustomerForLead(lead: any, localDb?: Database): Promise<str
     return customerId;
   }
 
-  const customerCode = await generateCustomerCode(localDb);
-  const row = {
+  const buildRow = (customer_code: string) => ({
     id: customerId,
     name,
     email,
     phone,
     address,
-    customer_code: customerCode,
+    customer_code,
     created_at: new Date().toISOString(),
-  };
+  });
 
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("customers").insert(row);
+    const { error } = await insertWithUniqueCustomerCode((code) => getSupabase()!.from("customers").insert(buildRow(code)), { localDb });
     if (error) throw error;
   } else {
     const db = localDb as any;
     db.customers = db.customers || [];
-    db.customers.push(row);
+    db.customers.push(buildRow(await generateCustomerCode(localDb)));
   }
 
   return customerId;
