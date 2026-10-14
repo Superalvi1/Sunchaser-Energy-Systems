@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { captureInvoiceIssuanceSnapshot } from "./invoicePdfResolve.ts";
 import {
   getSupabase,
@@ -337,7 +338,7 @@ async function loadItems(invoiceId: string, localDb?: Database): Promise<Invoice
 
 function toInvoiceItemRow(invoiceId: string, it: InvoiceLineItem, idx: number) {
   return {
-    id: it.id || `item-${Date.now()}-${idx}`,
+    id: it.id || `item-${Date.now()}-${idx}-${randomUUID().slice(0, 6)}`,
     invoice_id: invoiceId,
     sort_order: idx,
     item_name: it.itemName || it.description,
@@ -673,7 +674,8 @@ export async function createAdminInvoice(
 
   await assertInvoiceStaff(actor, localDb);
   const username = actor.username;
-  const id = `inv-${Date.now()}`;
+  // Unique even for two invoices built in the same millisecond (two contracts at once): a clock alone collided on the primary key.
+  const id = `inv-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const invoiceNumber = String(body.invoiceNumber || "") || (await nextInvoiceNumber(localDb));
   const rawItems = (body.items as InvoiceLineItem[]) || [];
   const totals = computeInvoiceTotals(
@@ -755,7 +757,7 @@ export async function createAdminInvoice(
   };
 
   const itemRows = totals.items.map((it, idx) => ({
-    id: it.id || `item-${Date.now()}-${idx}`,
+    id: it.id || `item-${Date.now()}-${idx}-${randomUUID().slice(0, 6)}`,
     invoice_id: id,
     sort_order: idx,
     item_name: it.itemName || it.description,

@@ -101,6 +101,22 @@ for (const [module, list] of Object.entries(MODULES)) {
   check("the founding administrator's payload keeps every module on", fst.modules && Object.values(fst.modules).every((v) => v === true), JSON.stringify(fst.modules));
 }
 
+// the portal's company details: a customer sees their own company's public face and nothing else
+{
+  console.log("\nportal branding endpoint");
+  const A = who["alpha administrator"].api;
+  await A("/api/company/settings/branding", { method: "PUT", body: JSON.stringify({ companyName: "Alpha Portal Co", phoneNumbers: "021-5550000", terms: "SECRET-TERMS-TEXT", googleReviewUrl: "https://g.page/r/alpha-co" }) });
+  const mine = await json(await who["alpha portal customer"].api("/api/customer-portal/branding"));
+  const b = mine.branding || {};
+  check("a portal customer gets their own company's name, phone and review link", b.companyName === "Alpha Portal Co" && b.phoneNumbers === "021-5550000" && b.googleReviewUrl === "https://g.page/r/alpha-co" && b.legacyDefaults === false, JSON.stringify(b).slice(0, 200));
+  check("...and not the terms text, signature, invoice logo or bank-accounts image", !("terms" in b) && !("signatureUrl" in b) && !("invoiceLogoUrl" in b) && !("bankAccountsImageUrl" in b) && !JSON.stringify(mine).includes("SECRET-TERMS-TEXT"), JSON.stringify(Object.keys(b)));
+  const theirs = await json(await who["beta portal customer"].api("/api/customer-portal/branding"));
+  check("another company's portal customer gets that company's details, never alpha's", theirs.branding && theirs.branding.companyName !== "Alpha Portal Co" && !JSON.stringify(theirs).includes("021-5550000") && !JSON.stringify(theirs).includes("alpha-co"), JSON.stringify(theirs).slice(0, 200));
+  const staff = await A("/api/customer-portal/branding");
+  const anon = await fetch(`${BASE}/api/customer-portal/branding`);
+  check(`staff are not served the customer endpoint (${staff.status}) and an unauthenticated call is refused (${anon.status})`, staff.status === 403 && anon.status === 401);
+}
+
 console.log(`\n${calls} calls made as pilot users`);
 console.log(`${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);

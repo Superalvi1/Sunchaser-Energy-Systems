@@ -232,7 +232,32 @@ async function portalVisit(user, label, expect) {
       await page.screenshot({ path: `${OUT}/r4-09-${user}-${tab.toLowerCase()}.png` });
     }
   }
-  const energy = page.locator("button", { hasText: /Energy monitor/i }).first();
+  // every other screen a customer can reach from the portal: the bottom tabs and each service tile
+  const crawled = [];
+  const scanScreen = async (name) => {
+    await page.waitForTimeout(900);
+    const t3 = await text(page);
+    const h3 = await page.locator("a[href]").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
+    const bad = (t3.match(/.{0,40}sunchaser.{0,40}/i) || sunHrefs(h3))[0];
+    crawled.push(name);
+    check(`${label}: the "${name}" screen says nothing of Sunchaser and shows no Sunchaser number, logo or link`, !SUNCH.test(t3) && sunHrefs(h3).length === 0 && (await page.locator(SUN_ASSETS).count()) === 0, bad);
+  };
+  for (const tab of ["Dashboard", "Proposals", "Payments"]) {
+    const btn = page.locator("nav button", { hasText: new RegExp("^" + tab, "i") }).first();
+    if (await btn.count()) { await btn.click(); await scanScreen(`${tab} tab`); }
+  }
+  await page.locator("nav button", { hasText: /^Dashboard/i }).first().click();
+  await page.waitForTimeout(600);
+  for (const tile of ["Service Requests", "Service History", "Energy Monitor", "Savings Calculator", "Care Plans", "My Solar System"]) {
+    const btn = page.locator("button", { hasText: new RegExp("^" + tile, "i") }).first();
+    if (!(await btn.count())) continue;
+    await btn.click();
+    await scanScreen(`${tile} service`);
+    const back = page.locator("button[aria-label*='ack' i], button:has-text('Back')").first();
+    if (await back.count()) await back.click(); else await page.locator("nav button", { hasText: /^Dashboard/i }).first().click();
+    await page.waitForTimeout(500);
+  }
+  check(`${label}: ${crawled.length} portal screens were read (tabs and services)`, crawled.length >= 7, crawled.join(", "));
   await ctx.close();
 }
 // the welcome guide of staff (first sign-in): it names the company, never Sunchaser

@@ -83,6 +83,10 @@ const stamp = Date.now().toString(36);
   await form.getByLabel("Administrator name").fill("Browser Owner");
   await form.getByLabel("Administrator username").fill(owner);
   await form.getByLabel("Administrator e-mail").fill(`${owner}@browser.test`);
+  // The form will not submit without a storage limit (no unlimited default): try it first, then give one.
+  await form.getByRole("button", { name: "Create company" }).click();
+  check("the onboarding form will not submit without a storage limit (the field is required)", (await page.getByTestId("temp-password").count()) === 0 && (await form.getByLabel("Storage limit (MB)").evaluate((el) => el.validity.valueMissing)) === true);
+  await form.getByLabel("Storage limit (MB)").fill("300");
   await form.getByRole("button", { name: "Create company" }).click();
   await page.getByTestId("temp-password").waitFor();
   const temp = (await page.getByTestId("temp-password-value").innerText()).trim();

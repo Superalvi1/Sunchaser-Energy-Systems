@@ -1,0 +1,2 @@
+342:[Lead Update Error]: duplicate key value violates unique constraint "invoices_pkey"
+435:[Lead Update Error]: duplicate key value violates unique constraint "invoice_items_pkey"

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
 import { generateCustomerCode } from "./customerCode.js";
 import { normalizePakistanPhone, phonesMatch } from "./src/lib/phoneNormalize.ts";
@@ -159,7 +160,7 @@ export async function resolveInvoiceCustomerId(
 
   if (!name || !phone) return null;
 
-  const customerId = `cust-inv-${Date.now()}`;
+  const customerId = `cust-inv-${Date.now()}-${randomUUID().slice(0, 6)}`;
   const customerEmail = email || placeholderEmail(phone, customerId);
   await insertCustomer(
     {

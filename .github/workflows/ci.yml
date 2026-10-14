@@ -127,12 +127,16 @@ jobs:
   # and server bundle with MULTI_COMPANY_ENABLED=true. Black-box API journeys, real-Chromium PDFs read back as bytes, and real-browser journeys.
   # Synthetic data only. A failed journey fails the job; its log, the summary table and the screenshots are uploaded either way.
   pilot-journeys:
-    name: pilot-journeys (two-company stack)
+    name: pilot-journeys (two-company stack, PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["16", "17"]
     services:
       postgres:
-        image: postgres:17
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -181,6 +185,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-report-pilot-journeys
+          name: ci-report-pilot-journeys-pg${{ matrix.postgres }}
           path: ci-report-stack/
           retention-days: 14

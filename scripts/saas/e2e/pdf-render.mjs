@@ -140,6 +140,29 @@ for (const c of Object.values(CO)) {
   } else console.log("   (founding sanity skipped: no founding test user can sign in)");
 }
 
+// ---- a customer's OWN invoice, downloaded by the customer through the portal handler (alpha has a logo and bank accounts; beta's settings are cleared
+// further down, so here beta still has its own)
+{
+  for (const c of Object.values(CO)) {
+    const o = other(c);
+    const tag = c === CO.alpha ? "alpha" : "beta";
+    const pl = await login(`${tag}_portal`);
+    const P = caller(pl.token);
+    const cr = await json(await c.api("/api/admin/invoices", { method: "POST", body: JSON.stringify({ customerId: `cust-${tag}-portal`, customerName: `${tag} portal client`, customerPhone: "03000000000", items: [{ itemName: `${c.t}-PORTAL`, description: `${c.t} portal item`, qty: 2, unit: "pcs", rate: 12345, taxPercent: 0, discountAmount: 0 }] }) }));
+    const id = cr.invoice?.id;
+    check(`${c.t}: an invoice is issued to the company's portal customer`, Boolean(id), JSON.stringify(cr).slice(0, 160));
+    if (!id) continue;
+    const mine = await P(`/api/export/pdf/invoice/${id}`);
+    const pdf = mine.status === 200 ? await renderQuotationHtmlToPdf(await mine.text()) : Buffer.alloc(0);
+    const r = readPdf(pdf);
+    fs.writeFileSync(path.join(OUT, `${c.t.replace(RUN, "")}-portal-invoice.pdf`), pdf);
+    check(`${c.t}: the customer downloads their own invoice as a real PDF through the portal (${mine.status}, ${pdf.length} bytes)`, mine.status === 200 && r.isPdf, String(mine.status));
+    check(`${c.t}: that PDF shows the company's identity, its bank accounts and the amount, with its own logo and nothing of ${o.t} or Sunchaser`, [c.name, ...c.banks.flatMap((b) => [b.bankName, b.accountNumber])].every((x) => r.flat.includes(x)) && r.digits.includes(String(2 * 12345)) && hasColor(r.colors, c.color) && !hasColor(r.colors, o.color) && !SUNCHASER.test(r.text) && ![o.name, ...o.banks.map((b) => b.accountNumber)].some((x) => r.flat.includes(x)), (r.text.match(SUNCHASER) || [])[0] || [c.name].filter((x) => !r.flat.includes(x)).join(","));
+    const theirs = await P(`/api/export/pdf/invoice/${o.inv}`);
+    check(`${c.t}'s portal customer cannot download ${o.t}'s invoice (${theirs.status})`, theirs.status >= 400 && !(await theirs.text()).includes(o.name));
+  }
+}
+
 // ---- cross-company download attempts
 for (const c of Object.values(CO)) {
   const o = other(c);

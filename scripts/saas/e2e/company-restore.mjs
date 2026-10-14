@@ -49,19 +49,25 @@ const CO = {
 for (const c of Object.values(CO)) { const l = await login(c.user); c.api = caller(l.token); c.token = l.token; }
 
 // ------------------------------------------------------------------------------------------ 1. fill both companies through the API
+// Evidence for an intermittent failure: every step of the fill keeps its HTTP status; a step that is not 2xx prints a record at once.
+const record = (c, step, r, body) => { c.steps = c.steps || []; c.steps.push({ step, status: r.status }); if (r.status >= 300) console.log("STEP-FAILURE-RECORD " + JSON.stringify({ at: new Date().toISOString(), company: c.id, step, status: r.status, body: JSON.stringify(body ?? "").slice(0, 400) })); return r; };
 async function fill(c) {
   await put(c.api, "/api/company/settings/branding", { companyName: c.name, officeAddress: `1 ${c.t} Road`, phoneNumbers: "021-1", billingEmail: `${c.t.toLowerCase()}@example.test`, websiteUrl: `www.${c.t.toLowerCase()}.test` });
   await put(c.api, "/api/company/settings/bank-accounts", { accounts: [{ bankName: `${c.t} Bank`, accountTitle: `${c.t} TITLE`, accountNumber: `${c.t}001`, iban: `PK00${c.t}0001`, showOnInvoice: true }] });
   await put(c.api, "/api/company/settings/terms", { terms: [`${c.t} term one.`, `${c.t} term two.`] });
   await put(c.api, "/api/company/settings/prices", { quoteValidityDays: 12, currencySettings: "PKR (Rs.)" });
   const phone = "0316" + String(Math.floor(1000000 + Math.random() * 8999999));
-  c.lead = await json(await c.api("/api/leads", { method: "POST", body: JSON.stringify({ name: `${c.t} Customer`, email: `${c.t.toLowerCase()}@example.test`, phone, leadSource: "Direct/Referral" }) }));
+  const leadRes = await c.api("/api/leads", { method: "POST", body: JSON.stringify({ name: `${c.t} Customer`, email: `${c.t.toLowerCase()}@example.test`, phone, leadSource: "Direct/Referral" }) });
+  c.lead = await json(leadRes); record(c, "create lead", leadRes, c.lead);
   const boq = [{ type: "item", name: `${c.t}-PANEL`, description: `${c.t} panel`, qty: c.qty, unit: "pcs", rate: c.rate, total: c.qty * c.rate }];
-  await c.api(`/api/leads/${c.lead.id}/create-quote`, { method: "POST", body: JSON.stringify({ systemSizekW: 5, panelCount: c.qty, panelType: "Synthetic 500W", inverterType: "Synthetic 5kW", batteryCapacity: "None", totalCost: c.qty * c.rate, boqItems: boq }) });
-  const cr = await json(await c.api(`/api/leads/${c.lead.id}`, { method: "PUT", body: JSON.stringify({ status: "Contracted" }) }));
+  const quoteRes = await c.api(`/api/leads/${c.lead.id}/create-quote`, { method: "POST", body: JSON.stringify({ systemSizekW: 5, panelCount: c.qty, panelType: "Synthetic 500W", inverterType: "Synthetic 5kW", batteryCapacity: "None", totalCost: c.qty * c.rate, boqItems: boq }) });
+  record(c, "create quotation", quoteRes, quoteRes.status >= 300 ? await quoteRes.clone().text() : "");
+  const contractRes = await c.api(`/api/leads/${c.lead.id}`, { method: "PUT", body: JSON.stringify({ status: "Contracted" }) });
+  const cr = await json(contractRes); record(c, "contract (provisions customer and invoice)", contractRes, cr.contractProvision ?? cr);
   c.invoiceId = cr.contractProvision?.invoiceId; c.customerId = cr.contractProvision?.customerId || psql(`select customer_id from leads where id='${c.lead.id}'`);
   c.total = c.qty * c.rate;
-  await c.api(`/api/admin/invoices/${c.invoiceId}/payments`, { method: "POST", body: JSON.stringify({ amount: Math.round(c.total * 0.3), paymentMethod: "Cash", paymentDate: new Date().toISOString().slice(0, 10), clientRequestId: `${c.t}-p1` }) });
+  const payRes = await c.api(`/api/admin/invoices/${c.invoiceId}/payments`, { method: "POST", body: JSON.stringify({ amount: Math.round(c.total * 0.3), paymentMethod: "Cash", paymentDate: new Date().toISOString().slice(0, 10), clientRequestId: `${c.t}-p1` }) });
+  record(c, "payment", payRes, payRes.status >= 300 ? await payRes.clone().text() : "");
   c.docs = [];
   for (const i of [1, 2]) {
     const bytes = miniPdf(`${c.t}CANARYFILE${i}`);
@@ -82,14 +88,18 @@ async function fill(c) {
 }
 await Promise.all([fill(CO.alpha), fill(CO.beta)]);
 const A = CO.alpha, B = CO.beta;
-check("both companies are filled: invoice, payment, quotation, two documents, settings", [A, B].every((c) => c.invoiceId && c.docs.every((d) => d.id) && psql(`select count(*) from invoice_payments where invoice_id='${c.invoiceId}'`) === "1"), [A, B].map((c) => c.uploadProblem).filter(Boolean).join("; "));
+const filled = (c) => ({ invoice: Boolean(c.invoiceId), documents: c.docs.every((d) => d.id), payments: c.invoiceId ? psql(`select count(*) from invoice_payments where invoice_id='${c.invoiceId}'`) : "no invoice" });
+check("both companies are filled: invoice, payment, quotation, two documents, settings", [A, B].every((c) => { const f = filled(c); return f.invoice && f.documents && f.payments === "1"; }),
+  [A, B].map((c) => `${c.id}: ${JSON.stringify(filled(c))} steps=${JSON.stringify(c.steps || [])}${c.uploadProblem ? " " + c.uploadProblem : ""}`).join(" | "));
 const keysOf = async (c) => (await Promise.all(["customer-documents", "quote-assets"].map((ns) => listRailwayObjects(ns, `c/${c.id}/`)))).flat().length;
 check("each company has stored documents under its own prefix", (await keysOf(A)) >= 2 && (await keysOf(B)) >= 2);
 
 const FP = (id) => companyFingerprint(PG, id, CLASSIFICATION);
 const fpA0 = await FP(A.id), fpB0 = await FP(B.id), fpS0 = await FP("sunchaser");
 const rowsOf = (fp) => Object.values(fp.tables).reduce((s, v) => s + Number(v.split(":")[0]), 0);
-check(`fingerprints taken (alpha ${rowsOf(fpA0)} rows / ${Object.keys(fpA0.objects).length} objects, beta ${rowsOf(fpB0)} / ${Object.keys(fpB0.objects).length}, founding ${rowsOf(fpS0)} rows)`, rowsOf(fpA0) > 20 && rowsOf(fpB0) > 20 && Object.keys(fpA0.objects).length >= 2);
+check(`fingerprints taken (alpha ${rowsOf(fpA0)} rows / ${Object.keys(fpA0.objects).length} objects, beta ${rowsOf(fpB0)} / ${Object.keys(fpB0.objects).length}, founding ${rowsOf(fpS0)} rows)`, rowsOf(fpA0) > 20 && rowsOf(fpB0) > 20 && Object.keys(fpA0.objects).length >= 2,
+  // when it fails: which tables hold a different number of rows for the two companies (they are filled identically)
+  Object.keys({ ...fpA0.tables, ...fpB0.tables }).filter((t) => String(fpA0.tables[t] || "0").split(":")[0] !== String(fpB0.tables[t] || "0").split(":")[0]).map((t) => `${t}: alpha ${String(fpA0.tables[t] || "0").split(":")[0]} / beta ${String(fpB0.tables[t] || "0").split(":")[0]}`).join("; "));
 
 // ------------------------------------------------------------------------------------------ 2. export alpha
 const cli = (args, env = {}) => spawnSync("node", ["--import", "tsx", path.join(REPO, "scripts/saas/company-backup.mjs"), ...args], { encoding: "utf8", env: { ...pgEnv(), ...env }, cwd: REPO });

@@ -2443,9 +2443,10 @@ app.get("/api/customer-portal/me", handleCustomerPortalMe);
  * Terms, bank-account images, signature and invoice logo are not included. Single-company mode answers null: the portal keeps its existing look.
  */
 const PORTAL_BRANDING_FIELDS = ["companyName", "officeAddress", "officeLocations", "phoneNumbers", "billingEmail", "websiteUrl", "logoUrl", "primaryColor", "secondaryColor", "accentColor", "googleReviewUrl", "legacyDefaults"] as const;
-app.get("/api/customer-portal/branding", async (req, res) => {
-  const identity = resolveCustomerPortalActor(req, res);
-  if (!identity) return;
+app.get("/api/customer-portal/branding", async (req: any, res) => {
+  // Any signed-in customer, linked to a profile or not: a customer whose profile is still pending must not see another company's name either.
+  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+  if (req.actor.role !== "Customer") return res.status(403).json({ error: "Not authorized for customer portal." });
   try {
     if (!isMultiCompanyEnabled()) return res.json({ branding: null });
     loadDb();
