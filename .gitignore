@@ -19,3 +19,4 @@ whatsapp-web-auth/
 ci-report/
 ci-report-docker/
 ci-report-stack/
+.matrix/

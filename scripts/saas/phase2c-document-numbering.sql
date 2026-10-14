@@ -101,7 +101,16 @@ begin
   on conflict (company_id, kind, period) do nothing;
 
   -- The row lock taken here is what makes concurrent callers get different numbers.
-  update public.document_counters set last_value = last_value + 1, updated_at = now()
+  perform 1 from public.document_counters where company_id = v_company and kind = p_kind and period = p_period for update;
+  -- Numbers can also be issued OUTSIDE this counter: an older backend that is still running during a rolling deployment, or that was rolled back to and then
+  -- left again, numbers invoices by counting. The counter therefore never trusts itself over the invoices: it starts from the higher of its own value and the
+  -- highest number the company actually holds. (Without this, the next number after such a window would already exist and the save would fail.)
+  update public.document_counters
+     set last_value = greatest(last_value,
+           (select coalesce(max(substring(i.invoice_number from '^' || p_prefix || '-' || p_period || '-([0-9]+)$')::bigint), 0)
+              from public.invoices i
+             where i.company_id = v_company and i.invoice_number ~ ('^' || p_prefix || '-' || p_period || '-[0-9]+$'))) + 1,
+         updated_at = now()
    where company_id = v_company and kind = p_kind and period = p_period
    returning last_value into v_next;
   return p_prefix || '-' || p_period || '-' || lpad(v_next::text, p_width, '0');

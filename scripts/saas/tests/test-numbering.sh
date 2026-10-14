@@ -97,4 +97,12 @@ OUT="$(psql $E2E_ADMIN -d $DB -q -v ON_ERROR_STOP=1 -f "$SAAS/phase2c-document-n
 check "rollback refuses to bring the global unique key back while two companies share a number" "$(echo "$OUT" | grep -c 'rollback refused')" "1"
 check "the refused rollback changed nothing" "$($Q -c "select to_regprocedure('public.next_document_number(text,text,text,int)') is not null")" "t"
 
+# 3b. numbers issued OUTSIDE the counter (an older backend that numbers by counting, still running during a rolling deployment, or rolled back to and left again):
+#     the counter must never hand out a number the company already holds, and must not fall behind it afterwards
+CUR="$(next service_role '' | sed -E 's/.*-0*([0-9]+)$/\1/')"
+for off in 1 2 3; do N=$((CUR + off)); $P -c "set session_replication_role = replica; insert into invoices (id, invoice_number, company_id, customer_name) values ('outside-$off', 'INV-$YEAR-$(printf %04d $N)', 'sunchaser', 'x')" > /dev/null 2>&1 || $P -c "set session_replication_role = replica; insert into invoices (id, invoice_number, company_id) values ('outside-$off', 'INV-$YEAR-$(printf %04d $N)', 'sunchaser')" > /dev/null; done
+EXPECT="INV-$YEAR-$(printf %04d $((CUR + 4)))"
+check "numbers issued outside the counter (three invoices numbered by an older backend) are never reissued: the next number is one past the highest the company holds" "$(next service_role '')" "$EXPECT"
+check "...and the counter stays ahead afterwards (the following number is one more)" "$(next service_role '')" "INV-$YEAR-$(printf %04d $((CUR + 5)))"
+$P -c "delete from invoices where id like 'outside-%'" > /dev/null 2>&1 || true
 echo; echo "$ok passed, $bad failed"; [ "$bad" = 0 ]
