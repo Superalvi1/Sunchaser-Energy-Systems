@@ -1,4 +1,6 @@
 import { Lead, Ticket, AppState, Quote, User, Product } from "../types";
+import { isNativeApp } from "../lib/appPlatform";
+import { resolveCrmApiBaseUrl } from "../lib/apiBaseUrl";
 import {
   CONNECTION_ERROR_MESSAGE,
   LOGIN_FETCH_TIMEOUT_MS,
@@ -11,23 +13,11 @@ import {
   toLoginError,
 } from "../lib/startupFetch.ts";
 
-const RENDER_PRODUCTION_API = "https://sunchaser-energy-systems.onrender.com";
-
-function resolveApiBaseUrl(): string {
-  // These web domains proxy the production API as well as the UI. Using the
-  // current origin avoids a second DNS/TLS/CORS dependency for guest saves.
-  if (typeof window !== "undefined" && ["crm.sunchaserenergy.co", "smartquote.sunchaserenergy.co"].includes(window.location.hostname)) return "";
-  const fromEnv = String((import.meta as any).env?.VITE_API_BASE_URL ?? "").trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
-  // Local Vite / same-origin: use relative /api paths so Design Studio login hits this server.
-  if (typeof window !== "undefined") {
-    const host = window.location.hostname;
-    if (host === "localhost" || host === "127.0.0.1") return "";
-  }
-  return RENDER_PRODUCTION_API;
-}
-
-export const API_BASE_URL = resolveApiBaseUrl();
+export const API_BASE_URL = resolveCrmApiBaseUrl(
+  typeof window !== "undefined" ? window.location.hostname : undefined,
+  String((import.meta as any).env?.VITE_API_BASE_URL ?? ""),
+  isNativeApp()
+);
 
 console.log("API URL:", API_BASE_URL || "(same-origin)");
 
