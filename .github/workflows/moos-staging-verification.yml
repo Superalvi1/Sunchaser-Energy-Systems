@@ -59,6 +59,30 @@ jobs:
           grep -q 'revoke all' scripts/moos-relay-outbox-schema.sql
           grep -q 'moos_relay_outbox' scripts/moos-relay-outbox-schema.sql
 
+
+  worker-integration:
+    name: Worker source + relay HTTP integration (required)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Require source-controlled worker (not just a local archive)
+        run: |
+          test -f moos-worker/package.json || { echo "::error::moos-worker source is not committed on this branch"; exit 1; }
+          test -f moos-worker/src/index.mjs
+          test -f moos-worker/tests/relay.integration.mjs
+      - name: Locked dependency install
+        working-directory: moos-worker
+        run: npm ci --ignore-scripts
+      - name: Run entire worker unit and relay integration suite
+        working-directory: moos-worker
+        env:
+          ENABLE_AUTOSEND: "false"
+        run: npm test
+
   production-switch-audit:
     name: Static no-send release audit
     runs-on: ubuntu-24.04
