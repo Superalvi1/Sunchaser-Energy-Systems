@@ -7,9 +7,9 @@ android {
     signingConfigs {
         release {
             storeFile file("sunchaser-release-key.jks")
-            storePassword "Sunchaser@2026"
-            keyAlias "sunchaser-key"
-            keyPassword "Sunchaser@2026"
+            storePassword System.getenv("SUN_ANDROID_STORE_PASSWORD")
+            keyAlias System.getenv("SUN_ANDROID_KEY_ALIAS") ?: "sunchaser-key"
+            keyPassword System.getenv("SUN_ANDROID_KEY_PASSWORD")
         }
     }
 
@@ -17,8 +17,8 @@ android {
         applicationId "com.sunchaser.crm"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 19
-        versionName "1.0.16"
+        versionCode 21
+        versionName "1.0.18"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
