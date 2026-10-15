@@ -865,14 +865,6 @@ await test("customer isolation: sends target each conversation's own contact", a
   }
 });
 
-if (failed > 0) {
-  console.error(`\n${failed} test(s) failed`);
-  process.exit(1);
-} else {
-  console.log("\nAll Moos router integration tests passed.");
-}
-
-
 // Test-only scope applies to both text and approved PDF sends.
 // Never let a worker-supplied recipient override the CRM's verified contact.
 await test("test-only recipient scope blocks other customer texts and PDFs", async () => {
@@ -900,3 +892,12 @@ await test("test-only recipient scope blocks other customer texts and PDFs", asy
     await ctx.close();
   }
 });
+
+if (failed > 0) {
+  console.error(`\n${failed} test(s) failed`);
+  process.exit(1);
+} else {
+  console.log("\nAll Moos router integration tests passed.");
+}
+
+
