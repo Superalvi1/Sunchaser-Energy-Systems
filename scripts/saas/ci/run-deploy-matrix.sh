@@ -28,15 +28,7 @@ POSTGREST_MODE="${POSTGREST_MODE:-docker}"
 POSTGREST_IMAGE="${POSTGREST_IMAGE:-postgrest/postgrest:v16.4@sha256:d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df}"
 export TEST_PW="${TEST_PW:-$(openssl rand -hex 12)Aa1!}"
 PIDS=(); PGRST_CONTAINER=""
-emit_failures_to_pg() { # CI only (CI_REPORT_TO_PG=1): the hosted log API returns only the end of a job log, which is the database's own; see run-pilot-journeys.sh
-  [ -n "${CI_REPORT_TO_PG:-}" ] && [ "${FAILED:-0}" != 0 ] || return 0
-  local sql="do \$q\$ begin" line
-  while IFS= read -r line; do sql="$sql raise warning 'MATRIX-FAILURE: %', \$t\$$(printf '%s' "$line" | tr '$' '#' | cut -c1-300)\$t\$;"; done < <({ cat "$REPORT_DIR/matrix.md"; grep -h -E "^FAIL" "$REPORT_DIR"/smoke-*.log 2>/dev/null | head -20; tail -5 "$REPORT_DIR/verify.log" 2>/dev/null; } | head -60)
-  sql="$sql end \$q\$"
-  psql $CI_PG -d postgres -qc "$sql" > /dev/null 2>&1 || true
-}
 cleanup() {
-  emit_failures_to_pg
   for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
   for i in $(seq 1 10); do alive=0; for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill -0 "$p" 2>/dev/null && alive=1; done; [ "$alive" = 0 ] && break; sleep 1; done
   for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill -9 "$p" 2>/dev/null || true; done

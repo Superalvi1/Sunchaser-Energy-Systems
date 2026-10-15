@@ -46,7 +46,7 @@ const SUN0 = sunRows();
 // With pilot companies present, a process that is not in multi-company mode PAUSES (server/saas/tenantIsolationGuard.ts): it neither serves nor changes anything.
 console.log("\nFlag OFF (a second process of the same build, flag unset, no tenant key), pilot data present");
 const offHealth = await json(await fetch(`${OFF}/health`));
-check("the flag-off process reports that serving is paused because other companies' data exists", offHealth.tenantIsolation?.paused === true && offHealth.tenantIsolation?.reason === "tenant_data_present", JSON.stringify(offHealth));
+check("[status label] the flag-off process reports that serving is paused because other companies' data exists", offHealth.tenantIsolation?.paused === true && offHealth.tenantIsolation?.reason === "tenant_data_present", JSON.stringify(offHealth));
 {
   const t = await login(OFF, "t_admin");
   check("the founding administrator cannot sign in on it: 503 tenant_isolation_unavailable, no token (the maintenance error, not an unfiltered session)", !t.token && t.code === "tenant_isolation_unavailable", JSON.stringify(t).slice(0, 200));

@@ -17,6 +17,13 @@ The three lists are kept apart on purpose: only the first is work for engineerin
 | F8 | Least-privilege database roles per service (cron, messaging pool, auto-import already has one; the rest use the owner/service key) | direct PostgreSQL connections are outside the barrier | no |
 | F9 | Reproducible frontend build (the bundle embeds a build time) | reports name the server bundle hash only | no |
 
+### Operational limitation kept outside this verification round: company removal
+There is an export and a restore of one company (`scripts/saas/company-backup.mjs`) but **no supported command to remove a company** (F3). Consequences, stated plainly:
+* Once a pilot company holds data, **the environment cannot be taken back to single-company mode in place.** The tenancy marker stays on, `t1b` and `t1` refuse to roll back, `app.tenancy_disable()` refuses while another company or its rows exist, and an older backend is refused by the database. This is a flexibility limit, **not a safety risk**: every refusal fails closed.
+* The ways out that exist today: keep running in multi-company mode (isolated); or, for staging, discard the database and rebuild it from the backup (runbook section 9); or, for production, export the pilot companies, restore the pre-change backup into a **new** database and point the application at it (data created since is lost, which is why the export comes first).
+* `scripts/saas/e2e/seed-two-companies.mjs --cleanup` removes companies, but it is a **test tool for disposable databases** (it refuses hosted-looking databases) and is not an offboarding procedure. Do not use it, or hand-written SQL, to remove a company from a database that matters.
+* Offboarding a real pilot company before F3 exists is therefore a decision for the owner with engineering, taken case by case, with a verified export first.
+
 ## B. Owner actions (decisions, access, accounts)
 | # | Action | Needed for |
 |---|---|---|

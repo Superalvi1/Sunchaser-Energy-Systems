@@ -29,21 +29,7 @@ POSTGREST_IMAGE="${POSTGREST_IMAGE:-postgrest/postgrest:v16.4@sha256:d155c6718ed
 export TEST_PW="${TEST_PW:-$(openssl rand -hex 12)Aa1!}"  # throw-away password of the synthetic users
 mkdir -p "$REPORT_DIR"; : > "$REPORT_DIR/summary.md"
 PIDS=(); PGRST_CONTAINER=""
-# CI diagnostics. The hosted CI log API hands back only the END of a job log, which is the database container's own log; the runner's output sits before it and cannot be
-# read. With CI_REPORT_TO_PG=1 the failing FAIL lines of every failed journey are therefore also written into the DATABASE LOG (as warnings) just before it is dropped.
-FAIL_NOTES="$(mktemp)"
-note_failure() { # journey-name logfile
-  { echo "JOURNEY $1"; grep -E "^(FAIL|FAILED|Error|ERROR)|Error:" "$2" | head -12 | cut -c1-300; } >> "$FAIL_NOTES"
-}
-emit_failures_to_pg() {
-  [ -n "${CI_REPORT_TO_PG:-}" ] && [ -s "$FAIL_NOTES" ] || return 0
-  local sql="do \$q\$ begin"
-  while IFS= read -r line; do sql="$sql raise warning 'RUNNER-FAILURE: %', \$t\$$(printf '%s' "$line" | tr '$' '#')\$t\$;"; done < "$FAIL_NOTES"
-  sql="$sql end \$q\$"
-  psql $CI_PG -d postgres -qc "$sql" > /dev/null 2>&1 || true
-}
 cleanup() {
-  emit_failures_to_pg
   # The application drains on SIGTERM and can outlive the script: ask, wait up to 10 seconds, then force. A survivor would keep the port, and
   # the next run would silently test the old process.
   for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
@@ -188,7 +174,7 @@ journey() { # name, command..., (the description is in $DESC)
     reseed
     local t0=$SECONDS
     echo "-- $name$suffix"
-    if "$@" > "$REPORT_DIR/$name$suffix.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name$suffix.log" | sed 's/^/   | /'; note_failure "$name$suffix" "$REPORT_DIR/$name$suffix.log"; fi
+    if "$@" > "$REPORT_DIR/$name$suffix.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name$suffix.log" | sed 's/^/   | /'; fi
     local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name$suffix.log" | tail -1)"
     echo "$name$suffix: $r ${tail_line:+($tail_line)}"
     echo "| \`$name$suffix\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
@@ -228,7 +214,7 @@ off_journey() { # same reporting as journey(), against the flag-off instance
   if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
   local t0=$SECONDS
   echo "-- $name (flag off)"
-  if E2E_BASE_URL="http://127.0.0.1:$OFF_PORT" "$@" > "$REPORT_DIR/$name.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name.log" | sed 's/^/   | /'; note_failure "$name" "$REPORT_DIR/$name.log"; fi
+  if E2E_BASE_URL="http://127.0.0.1:$OFF_PORT" "$@" > "$REPORT_DIR/$name.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name.log" | sed 's/^/   | /'; fi
   local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name.log" | tail -1)"
   echo "$name: $r ${tail_line:+($tail_line)}"
   echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"

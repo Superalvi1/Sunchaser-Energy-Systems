@@ -17,6 +17,11 @@ const psql = (q) => execFileSync("psql", process.env.E2E_PSQL.split(" ").concat(
 const runner = (...a) => { try { return execFileSync("node", ["scripts/migrations/run.mjs", ...a, "--yes"], { stdio: ["ignore", "pipe", "pipe"] }).toString(); } catch (e) { throw new Error(`runner ${a.join(" ")} failed: ${String(e.stderr || e.stdout || e.message).split("\n").filter(Boolean).slice(0, 6).join(" | ")}`); } };
 let pass = 0, fail = 0; const failures = [];
 const check = (n, ok, d = "") => { ok ? pass++ : (fail++, failures.push(n)); console.log(`${ok ? "PASS" : "FAIL"}: ${n}${!ok && d ? " - " + String(d).slice(0, 500) : ""}`); };
+// Two kinds of assertion, kept apart on purpose. [safety]: nothing is read or written for anyone who must not (503 from the process or from the database, no company data in a
+// body, no row or object changed). [status label]: what /health or /api/maintenance-status SAYS about the pause (its wording, and how fast it follows the facts). A late or
+// different label is reported as a label problem; it is never reported as, or mistaken for, a data leak. Both fail the run.
+const safety = (n, ok, d = "") => check("[safety] " + n, ok, d);
+const label = (n, ok, d = "") => check("[status label] " + n, ok, d);
 const json = async (r) => { try { return await r.json(); } catch { return {}; } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sha = (b) => createHash("sha256").update(b).digest("hex");
@@ -68,9 +73,9 @@ console.log("\nB. A process of this build with the flag OFF (no tenant key) on t
 const rows0 = counts(), obj0 = objectsFp();
 let x = await startApp(X_PORT, false, "isolation-flagoff-1.log");
 const h = await json(await fetch(`${X}/health`));
-check("it starts and answers /health, reporting that serving is paused", h.status === "ok" && h.tenantIsolation?.paused === true && h.tenantIsolation?.reason === "tenant_data_present", JSON.stringify(h));
+label("the process starts, answers /health and reports paused with the reason tenant_data_present", h.status === "ok" && h.tenantIsolation?.paused === true && h.tenantIsolation?.reason === "tenant_data_present", JSON.stringify(h));
 const ms = await json(await fetch(`${X}/api/maintenance-status`));
-check("/api/maintenance-status says paused, tenant_data_present", ms.paused === true && ms.reason === "tenant_data_present", JSON.stringify(ms));
+label("/api/maintenance-status says paused, tenant_data_present", ms.paused === true && ms.reason === "tenant_data_present", JSON.stringify(ms));
 check("the log says why, in plain words", /SERVING PAUSED|Serving is PAUSED/.test(fs.readFileSync(path.join(LOGDIR, "isolation-flagoff-1.log"), "utf8")));
 check("the static app shell is still delivered (it holds no company data)", (await fetch(`${X}/`)).status === 200);
 
@@ -102,16 +107,16 @@ for (const [who, token] of Object.entries(HOLDERS)) {
     if (!PAUSED(r, b) || leaked.length) sweptBad.push(`${who} / ${label}: ${r.status} ${text.slice(0, 80)}${leaked.length ? " LEAKED " + leaked : ""}`);
   }
 }
-check(`${swept} requests (reads, searches, exports incl. the whole-database backup, PDFs, file downloads, writes) by 4 kinds of caller: every one answered 503 tenant_isolation_unavailable and none contained any company's data`, sweptBad.length === 0, sweptBad.slice(0, 4).join(" || "));
+safety(`${swept} requests (reads, searches, exports incl. the whole-database backup, PDFs, file downloads, writes) by 4 kinds of caller: every one answered 503 tenant_isolation_unavailable and none contained any company's data`, sweptBad.length === 0, sweptBad.slice(0, 4).join(" || "));
 for (const u of ["t_admin", "alpha_admin", "alpha_portal"]) {
   const r = await fetch(`${X}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: u, password: PW }) });
   const b = await json(r);
-  check(`sign-in of ${u} on the paused process is refused with the maintenance error (no token issued)`, PAUSED(r, b) && !b.token, JSON.stringify(b).slice(0, 120));
+  safety(`sign-in of ${u} on the paused process is refused with the maintenance error (no token issued)`, PAUSED(r, b) && !b.token, JSON.stringify(b).slice(0, 120));
 }
-{ const r = await fetch(`${X}/api/whatsapp/webhook`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); const b = await json(r); check("the public WhatsApp webhook is paused too (the sender retries)", PAUSED(r, b), String(r.status)); }
+{ const r = await fetch(`${X}/api/whatsapp/webhook`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); const b = await json(r); safety("the public WhatsApp webhook is paused too (the sender retries)", PAUSED(r, b), String(r.status)); }
 await sleep(7000);   // a background interval (sales agent, backup) would have acted by now
-check("NOTHING was read or written: row counts of leads, invoices, customers, payments, documents, activity log, users and projects are identical, and so is every stored object", counts() === rows0 && objectsFp() === obj0, `${rows0} -> ${counts()}`);
-check("no write probe exists in the database", psql(`select count(*) from leads where name like 'WRITEPROBE%'`) === "0" && psql(`select count(*) from invoices where customer_name like 'WRITEPROBE%'`) === "0");
+safety("NOTHING was read or written: row counts of leads, invoices, customers, payments, documents, activity log, users and projects are identical, and so is every stored object", counts() === rows0 && objectsFp() === obj0, `${rows0} -> ${counts()}`);
+safety("no write probe exists in the database", psql(`select count(*) from leads where name like 'WRITEPROBE%'`) === "0" && psql(`select count(*) from invoices where customer_name like 'WRITEPROBE%'`) === "0");
 
 // ================================================================ C. restart, still flag OFF
 console.log("\nC. Restart of the flag-off process");
@@ -119,8 +124,8 @@ await stopApp(x); x = await startApp(X_PORT, false, "isolation-flagoff-2.log");
 {
   const r = await call(X, F.token)("/api/state"), b = await json(r);
   const r2 = await call(X, A.token)("/api/leads"), b2 = await json(r2);
-  check("after the restart the earlier founding and pilot sessions are still refused with the maintenance error, not served", PAUSED(r, b) && PAUSED(r2, b2), `${r.status} ${r2.status}`);
-  check("the restarted process reports paused at /health", (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === true);
+  safety("after the restart the earlier founding and pilot sessions are still refused with the maintenance error, not served", PAUSED(r, b) && PAUSED(r2, b2), `${r.status} ${r2.status}`);
+  label("the restarted process reports paused at /health", (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === true);
 }
 
 // ================================================================ D. flag ON again, sessions issued earlier
@@ -143,7 +148,8 @@ console.log("\nE. A flag-off process that cannot reach the database");
   const y = await startApp(X_PORT + 1, false, "isolation-unverified.log", "RAILWAY_POSTGREST_URL=http://127.0.0.1:1");
   const base = `http://127.0.0.1:${X_PORT + 1}`;
   const hh = await json(await fetch(`${base}/health`)), r = await call(base, F.token)("/api/state"), b = await json(r);
-  check("it reports paused / unverified and every data route answers 503 (no local-file fallback, no data)", hh.tenantIsolation?.paused === true && hh.tenantIsolation?.reason === "unverified" && PAUSED(r, b), JSON.stringify([hh, r.status, b]).slice(0, 300));
+  safety("the process that cannot reach the database answers 503 on a data route: no local-file fallback, no data", PAUSED(r, b), JSON.stringify([r.status, b]).slice(0, 200));
+  label("...and /health reports paused with the reason unverified", hh.tenantIsolation?.paused === true && hh.tenantIsolation?.reason === "unverified", JSON.stringify(hh));
   await stopApp(y);
 }
 
@@ -155,15 +161,16 @@ try {
   const tables = psql(`select to_regclass('public.companies') is not null and to_regprocedure('app.saas_pre_request()') is not null`);
   const z = await startApp(X_PORT, false, "isolation-after-rollback.log");
   const r = await call(X, F.token)("/api/state"), b = await json(r), hz = await json(await fetch(`${X}/health`));
-  check("after rolling back t8..t2 (companies table and barrier present) the flag-off process is still paused and serves nothing", tables === "t" && PAUSED(r, b) && hz.tenantIsolation?.reason === "tenant_data_present", JSON.stringify([tables, r.status, hz]).slice(0, 300));
+  safety("after rolling back t8..t2 (companies table and barrier present) the flag-off process serves nothing (503)", tables === "t" && PAUSED(r, b), JSON.stringify([tables, r.status]).slice(0, 200));
+  label("...and /health reports the reason tenant_data_present", hz.tenantIsolation?.reason === "tenant_data_present", JSON.stringify(hz));
   await stopApp(z);
   let refused = "";
   try { runner("rollback", "--to", "t1b-tenancy-barrier"); } catch (e) { refused = String(e); }
-  check("rolling back t1b (the barrier) is REFUSED while the marker is on or any pilot company exists", /Rollback refused/i.test(refused), refused.slice(0, 240));
+  safety("rolling back t1b (the barrier) is REFUSED while the marker is on or any pilot company exists", /Rollback refused/i.test(refused), refused.slice(0, 240));
   let refused1 = "";
   try { runner("rollback", "--to", "t1-company-foundation"); } catch (e) { refused1 = String(e); }
-  check("rolling back t1 (which would remove the companies table) is refused too", /Rollback refused/i.test(refused1), refused1.slice(0, 240));
-  check("both are still applied afterwards", psql(`select to_regprocedure('app.saas_pre_request()') is not null and to_regclass('public.companies') is not null`) === "t");
+  safety("rolling back t1 (which would remove the companies table) is refused too", /Rollback refused/i.test(refused1), refused1.slice(0, 240));
+  safety("both are still applied afterwards", psql(`select to_regprocedure('app.saas_pre_request()') is not null and to_regclass('public.companies') is not null`) === "t");
   await reload();
 } finally {
   try { runner("apply"); await reload(); } catch (e) { console.log("could not re-apply in cleanup: " + String(e).slice(0, 200)); }
@@ -178,7 +185,7 @@ console.log("\nH. Older backends, scripts and flag-off processes: refused by the
     const TABLES = ["leads", "invoices", "customers", "users", "customer_documents", "activity_logs", "invoice_payments", "projects", "quotations"];
     let bad = [];
     for (const t of TABLES) for (const mode of [undefined, "single", "global-only"]) { const r = await raw(`/${t}?limit=5`, mode); if (r.status !== 503 || CANARIES.some((c) => r.text.includes(c))) bad.push(`${t}/${mode || "none"}: ${r.status}`); }
-    check(`${TABLES.length * 3} direct requests with the SERVICE key and no header / header single / header global-only (an older backend, a script, a flag-off process) all answered 503 by the database; no body held company data`, bad.length === 0, bad.slice(0, 3).join("; "));
+    safety(`${TABLES.length * 3} direct requests with the SERVICE key and no header / header single / header global-only (an older backend, a script, a flag-off process) all answered 503 by the database; no body held company data`, bad.length === 0, bad.slice(0, 3).join("; "));
     const okMulti = await raw("/leads?limit=1", "multi");
     check("the same key with the multi-company declaration is served (the barrier is not a blanket refusal)", okMulti.status === 200, String(okMulti.status));
     const st = await raw("/rpc/saas_isolation_status", undefined);
@@ -191,7 +198,7 @@ console.log("\nH. Older backends, scripts and flag-off processes: refused by the
     let seen = false, statuses = [];
     if (fl.token) for (const p of ["/api/state", "/api/leads", `/api/admin/invoices/${PDF_ID}`]) { const r = await call(base, fl.token)(p); const t = await r.text(); statuses.push(r.status); if (CANARIES.some((c) => t.includes(c))) seen = true; }
     console.log(`OBSERVED: the repair build (no isolation code) against this tenant-populated database: sign-in ${fl.token ? "succeeded" : "was refused"}, statuses ${statuses.join(",") || "-"}, pilot or founding data seen: ${seen}`);
-    check("the REPAIR build (an older backend with no isolation code) cannot read or write any company data here: the database refuses it", seen === false && !statuses.includes(200), JSON.stringify({ token: Boolean(fl.token), statuses }));
+    safety("the REPAIR build (an older backend with no isolation code) cannot read or write any company data here: the database refuses it", seen === false && !statuses.includes(200), JSON.stringify({ token: Boolean(fl.token), statuses }));
     await stopApp(old);
   } else console.log("SKIP: E2E_REPAIR_BUNDLE not set (the repair build is not available here)");
 }
@@ -200,26 +207,37 @@ console.log("\nH. Older backends, scripts and flag-off processes: refused by the
 console.log("\nF. The companies rows are deleted by hand: access stays closed. Data removed: still closed until the marker is cleared deliberately");
 {
   const z = await startApp(X_PORT, false, "isolation-recovery.log");
-  check("(before) paused", (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === true);
+  label("(before) /health reports paused", (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === true);
   // someone deletes the companies rows by hand (foreign keys bypassed) while the tenant rows are still there
   psql(`set session_replication_role = replica; delete from companies where id <> 'sunchaser'; set session_replication_role = origin`);
   check("the companies rows are gone, the tenant rows are not", psql(`select count(*) from companies where id <> 'sunchaser'`) === "0" && Number(psql(`select count(*) from leads where company_id <> 'sunchaser'`)) > 0);
   await sleep(7000);   // longer than one check interval
   const hh = await json(await fetch(`${X}/health`)), r = await call(X, F.token)("/api/state"), b = await json(r);
-  check("the running flag-off process STAYS paused (the persistent marker; the deep check also sees the orphaned rows)", hh.tenantIsolation?.paused === true && PAUSED(r, b), JSON.stringify(hh));
+  safety("with the companies rows deleted by hand the running flag-off process STILL answers 503 (the persistent marker holds it)", PAUSED(r, b), JSON.stringify([r.status, b]).slice(0, 200));
+  label("...and /health still reports paused", hh.tenantIsolation?.paused === true, JSON.stringify(hh));
   const z2 = await startApp(X_PORT + 3, false, "isolation-restart-no-companies.log");
   const hz = await json(await fetch(`http://127.0.0.1:${X_PORT + 3}/health`));
-  check("a freshly STARTED flag-off process is paused too (the restart reads the marker, not the companies table)", hz.tenantIsolation?.paused === true, JSON.stringify(hz));
+  const rz2 = await call(`http://127.0.0.1:${X_PORT + 3}`, F.token)("/api/state"), bz2 = await json(rz2);
+  safety("a freshly STARTED flag-off process answers 503 too (the restart reads the marker, not the companies table)", PAUSED(rz2, bz2), String(rz2.status));
+  label("...and its /health reports paused", hz.tenantIsolation?.paused === true, JSON.stringify(hz));
   await stopApp(z2);
   const raw = await fetch(`${process.env.E2E_POSTGREST_URL}/leads?limit=1`, { headers: { apikey: process.env.E2E_SERVICE_KEY, authorization: `Bearer ${process.env.E2E_SERVICE_KEY}` } });
-  check("an unaware service-role request is still refused by the database", raw.status === 503, String(raw.status));
+  safety("an unaware service-role request is still refused by the database", raw.status === 503, String(raw.status));
   let dis = ""; try { psql("select app.tenancy_disable()"); } catch (e) { dis = String(e.stderr || e); }
-  check("clearing the marker is refused while another company's rows exist", /tenancy_disable refused/.test(dis), dis.slice(0, 200));
+  safety("clearing the marker is refused while another company's rows exist", /tenancy_disable refused/.test(dis), dis.slice(0, 200));
   execFileSync("node", ["--import", "tsx", "scripts/saas/e2e/seed-two-companies.mjs", "--cleanup"], { stdio: "ignore" });
-  // The reason follows the facts within one check interval (5 s); a slow runner gets up to 30 s. What must NEVER happen at any moment is "not paused".
-  let h3 = {}, everServed = false;
-  for (let i = 0; i < 30; i++) { await sleep(1000); h3 = await json(await fetch(`${X}/health`)); if (h3.tenantIsolation?.paused === false) everServed = true; if (h3.tenantIsolation?.reason === "tenancy_marker") break; }
-  check("the other companies' data is removed, the marker is still on: the process STAYS paused (nothing resumes by itself) and the reason becomes the marker", !everServed && h3.tenantIsolation?.paused === true && h3.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(h3));
+  // Safety first: during the whole wait every data request must be refused and /health must never say "not paused". The LABEL (the reason) follows the facts within one 5 s check; a slow
+  // runner gets up to 30 s for it. A late label is a label problem, never a data problem.
+  let h3 = {}, everServed = false, dataLeaked = false, dataStatuses = new Set();
+  for (let i = 0; i < 30; i++) {
+    await sleep(1000); h3 = await json(await fetch(`${X}/health`));
+    if (h3.tenantIsolation?.paused === false) everServed = true;
+    const rr = await call(X, F.token)("/api/state"); dataStatuses.add(rr.status); const tt = await rr.text();
+    if (rr.status === 200 || CANARIES.some((c) => tt.includes(c))) dataLeaked = true;
+    if (h3.tenantIsolation?.reason === "tenancy_marker") break;
+  }
+  safety("the other companies' data is removed, the marker is still on: every data request in the whole wait was refused (503) and none returned data; nothing resumed by itself", !dataLeaked && !everServed && [...dataStatuses].every((c) => c === 503), JSON.stringify({ statuses: [...dataStatuses], everServed, dataLeaked }));
+  label("...and the reason reported by /health becomes tenancy_marker", h3.tenantIsolation?.paused === true && h3.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(h3));
   check("clearing the marker with no other company and no other company's row succeeds", psql("select app.tenancy_disable()") === "single");
   let resumed = false; for (let i = 0; i < 20 && !resumed; i++) { await sleep(1000); resumed = (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === false; }
   check("the same running process resumes serving without a restart", resumed);
@@ -249,12 +267,14 @@ console.log("\nW. A flag-off process is SERVING (marker off). The marker is swit
       if (r.status === 200 && CANARIES.some((c) => t.includes(c))) leaked.push(p);
     }
   }
-  check(`in the first 3 seconds after the marker was switched on (before any check of the process): ${refusedN} requests refused, ${served} served, 0 with data`, refusedN > 0 && served === 0 && leaked.length === 0, JSON.stringify({ served, refusedN, leaked }));
-  await sleep(6000);
-  const hw = await json(await fetch(`${X}/health`));
-  check("and then the process itself reports paused (the marker)", hw.tenantIsolation?.paused === true && hw.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(hw));
+  safety(`in the first 3 seconds after the marker was switched on (before any check of the process): ${refusedN} requests refused, ${served} served, 0 with data`, refusedN > 0 && served === 0 && leaked.length === 0, JSON.stringify({ served, refusedN, leaked }));
+  let hw = {}; for (let i = 0; i < 30; i++) { await sleep(1000); hw = await json(await fetch(`${X}/health`)); if (hw.tenantIsolation?.reason === "tenancy_marker") break; }
+  const rw = await call(X, FT)("/api/state");
+  safety("and after the process has noticed the marker it answers 503 (the database refused it before)", PAUSED(rw, await json(rw)), String(rw.status));
+  label("...and its /health reports paused with the reason tenancy_marker", hw.tenantIsolation?.paused === true && hw.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(hw));
   check("the marker was cleared again by the explicit procedure for the next journey", psql("select app.tenancy_disable()") === "single");
   await stopApp(w);
 }
-console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
+const sf = failures.filter((n) => n.startsWith("[status label]")).length, sa = failures.length - sf;
+console.log(`\n${pass} passed, ${fail} failed (safety failures: ${sa}, status-label failures: ${sf})${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);
