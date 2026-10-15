@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createSalesAgentRuntime, absoluteCrmFileUrl } from "./server/whatsappAgent/agentRuntime.ts";
 import { createSalesAgentRouter } from "./server/whatsappAgent/agentRoutes.ts";
+import { createMoosRouter, type MoosCreateQuote } from "./server/moos/moosRouter.ts";
 import { calculateAgentQuote } from "./server/whatsappAgent/quoteTools.ts";
 import { buildSmartQuotationPdf } from "./src/lib/smartQuotationPdf.ts";
 import { toPublicLeadInput } from "./server/publicLeads/smartQuoteLead.ts";
@@ -636,7 +637,7 @@ let productionAutoLinkLead: ReturnType<
  */
 const messagingProductionWiring = createMessagingProductionWiring();
 const messagingRepository = messagingProductionWiring.repository;
-const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,messageId)=> {
+const createServerQuote: MoosCreateQuote = async (requirements, phone, messageId) => {
   const {result}=calculateAgentQuote(requirements,phone);
   const hash=createHash("sha256").update(messageId).digest("hex");
   const leadId=`lead-ai-${hash.slice(0,24)}`;
@@ -650,7 +651,8 @@ const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,mess
   const pdf=await buildSmartQuotationPdf({quoteNumber,system:`${requirements.systemCapacityKw} kW`,generatedAt,clientName:requirements.name,clientPhone:phone,clientCity:requirements.city,lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr,totalPkr:result.totalPkr,logoDataUrl});
   const archive=await archivePublicSmartQuotePdf(leadId,quoteNumber,Buffer.from(pdf.output("arraybuffer")));
   return {quoteNumber,totalPkr:result.totalPkr,url:absoluteCrmFileUrl(archive.fileUrl)};
-});
+};
+const salesAgentRuntime = createSalesAgentRuntime(createServerQuote);
 
 // Meta webhook must be public and mounted before JWT authorization middleware.
 if (!railwayPrivateSmokeMode) {
@@ -665,6 +667,13 @@ app.use(
     },
   })
 );
+}
+
+// Moos WhatsApp agent internal API — Bearer MOOS_SERVICE_TOKEN auth inside the
+// router. Mounted before JWT authorization like the Meta webhook. All sends
+// additionally require MOOS_ENABLED=true (default false: production inert).
+if (!railwayPrivateSmokeMode) {
+  app.use("/api/moos", createMoosRouter({ createQuote: createServerQuote }));
 }
 
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));

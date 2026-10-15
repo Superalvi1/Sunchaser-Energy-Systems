@@ -23,6 +23,7 @@ import {
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
 import { dirtyUnreadIndexForConversation } from "./whatsappInboxUnreadIndexCache.ts";
+import { relayInboundToMoos } from "../moos/moosRelay.ts";
 import { sha256Hex, verifyWhatsAppSignature } from "./whatsappSignature.ts";
 import { recordWebhookPing } from "./whatsappConnectionService.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
@@ -170,6 +171,48 @@ async function persistNormalizedEvents(
           },
         });
         if (enqueueSalesAgent && textBody && messageType === "text") await enqueueSalesAgent(conversation.id, inserted.row.id);
+        // Moos relay: forward the verified, recorded inbound text to the Moos
+        // worker via HMAC-signed POST. Fire-and-forget — relay failures are
+        // audited but never block the webhook 200.
+        if (textBody && messageType === "text") {
+          // Set synchronously by onSuppressed before the relay promise resolves,
+          // so the .then below can tell suppression apart from failure.
+          let relaySuppressed = false;
+          void relayInboundToMoos(
+            process.env,
+            {
+              conversationId: conversation.id,
+              messageId: event.waMessageId,
+              phone: contact.phoneE164,
+              phoneNumberId: channel.phoneNumberId,
+              type: "text",
+              text: textBody.slice(0, 4000),
+              sentAt: Date.parse(event.occurredAt) || Date.now(),
+            },
+            {
+              // Mutual exclusion: legacy AI enabled → relay suppressed (audited
+              // distinctly from failures; never blocks the webhook 200).
+              onSuppressed: (reason) => {
+                relaySuppressed = true;
+                return safeAudit(repo, {
+                  eventType: "MOOS_RELAY_SUPPRESSED",
+                  entityType: "message",
+                  entityId: inserted.row.id,
+                  metadata: { conversationId: conversation.id, reason },
+                });
+              },
+            }
+          ).then((relayed) => {
+            if (!relayed && !relaySuppressed) {
+              return safeAudit(repo, {
+                eventType: "MOOS_RELAY_FAILED",
+                entityType: "message",
+                entityId: inserted.row.id,
+                metadata: { conversationId: conversation.id },
+              });
+            }
+          });
+        }
         continue;
       }
 
