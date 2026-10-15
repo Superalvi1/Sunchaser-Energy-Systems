@@ -87,3 +87,13 @@ test("deleting the companies row does not lift it: rows of another company found
   assert.equal(g.current().blocked, false);
   assert.deepEqual(deepSeen.slice(0, 3), [true, false, true]);
 });
+
+test("after the operator clears the marker (which refuses while other rows exist) the remembered deep 'yes' is re-asked at once, not after the next scheduled deep check", async () => {
+  let marker: "single" | "multi" = "multi"; let foreign = true;
+  const { g, tick } = mk(async ({ deep }) => ({ otherCompanies: 0, marker, ...(deep ? { foreignRows: foreign } : {}) }));
+  await g.refresh(); g.arm();
+  assert.equal(g.current().blocked, true);
+  marker = "single"; foreign = false;              // data removed, then app.tenancy_disable()
+  tick(5001); g.current(); await g.refresh();      // ONE cheap interval later, far less than the 60 s deep interval
+  assert.equal(g.current().blocked, false, "resumed within one check interval");
+});

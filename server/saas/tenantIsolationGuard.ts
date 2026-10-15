@@ -73,12 +73,18 @@ export function createIsolationGuard(initial: Partial<Deps> = {}) {
 
   async function runCheck(): Promise<IsolationState> {
     let next: IsolationState;
-    const deep = deps.now() - lastDeepAt >= deps.deepEveryMs;
+    let deep = deps.now() - lastDeepAt >= deps.deepEveryMs;
+    let deepNow = false;
     try {
-      const r = await withTimeout(deps.probe({ deep }));
+      let r = await withTimeout(deps.probe({ deep }));
+      // A remembered "yes, other companies' rows exist" must not outlive the marker: the marker can only be cleared by app.tenancy_disable(), which refuses while such rows exist.
+      // So when a cheap answer says marker off and no other company while the last deep answer said "yes", ask the deep question again at once instead of waiting for the next
+      // scheduled deep check (up to a minute of needless pause after the operator has cleared the marker).
+      if (!("tablesMissing" in r) && !deep && lastForeignRows && r.marker === "single" && r.otherCompanies === 0) r = await withTimeout(deps.probe({ deep: true }));
+      if (!("tablesMissing" in r) && typeof r.foreignRows === "boolean") deepNow = true;
       if ("tablesMissing" in r) { next = { blocked: false, reason: "none", detail: "No company tables: a single-company database.", checkedAt: deps.now() }; lastForeignRows = false; }
       else {
-        if (deep && typeof r.foreignRows === "boolean") { lastForeignRows = r.foreignRows; lastDeepAt = deps.now(); }
+        if ((deep || deepNow) && typeof r.foreignRows === "boolean") { lastForeignRows = r.foreignRows; lastDeepAt = deps.now(); }
         if (r.otherCompanies > 0) next = { blocked: true, reason: "tenant_data_present", detail: `${r.otherCompanies}+ company(ies) other than "${FOUNDING_COMPANY_ID}" exist.`, checkedAt: deps.now() };
         else if (lastForeignRows) next = { blocked: true, reason: "tenant_data_present", detail: `tables hold rows of a company other than "${FOUNDING_COMPANY_ID}" (even though no such company row exists).`, checkedAt: deps.now() };
         else if (r.marker === "multi") next = { blocked: true, reason: "tenancy_marker", detail: "Clear it only with select app.tenancy_disable() after the other companies' data is exported and removed.", checkedAt: deps.now() };

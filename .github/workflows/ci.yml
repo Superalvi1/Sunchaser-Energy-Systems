@@ -149,6 +149,7 @@ jobs:
     env:
       PGPASSWORD: postgres
       CI_PG: "-h 127.0.0.1 -p 5432 -U postgres"
+      CI_REPORT_TO_PG: "1"   # failing journeys are also written to the database log, the only part of the job log the hosted log API returns (see run-pilot-journeys.sh)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
