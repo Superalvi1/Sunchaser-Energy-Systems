@@ -15,7 +15,11 @@ export function moosTestRecipientAllowed(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
   const scoped = String(env.MOOS_TEST_ONLY_RECIPIENT_E164 ?? "").trim();
-  if (!scoped) return true;
+  // Fail closed for production pilots: an accidentally missing variable must
+  // NEVER widen the audience from one test recipient to all customers.
+  const required = env.NODE_ENV === "production" ||
+    /^(true|1|yes)$/i.test(String(env.MOOS_PILOT_SCOPE_REQUIRED || ""));
+  if (!scoped) return !required;
   const approved = pakistanPhoneDigits(scoped);
   return approved !== null && pakistanPhoneDigits(phone) === approved;
 }
