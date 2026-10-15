@@ -78,6 +78,7 @@ import { hydrateActorFromUsername, type RequestActor } from "../middleware/actor
 import { canSendOutboundWhatsApp } from "../whatsappTransport/whatsappPermissions.ts";
 import { normalizePakistanMobile } from "../../src/lib/smartQuoteLead.ts";
 import { isLegacyAiEnabledFresh } from "./moosRelay.ts";
+import { moosTestRecipientAllowed } from "./moosTestScope.ts";
 
 const COMPANY_ID = "sunchaser";
 
@@ -528,6 +529,16 @@ export function createMoosRouter(deps: MoosRouterDeps) {
           .json({ error: "Conversation is human-owned or closed", state: ownership.state });
         return;
       }
+      // One approved recipient only in staging; derive number from CRM, never the worker.
+      const testBundle = await conversationRepo().getConversationBundle(conversationId, COMPANY_ID);
+      if (testBundle && !moosTestRecipientAllowed(testBundle.contact.phoneE164)) {
+        res.status(403).json({ error: "Recipient is outside the approved Moos test scope" });
+        return;
+      }
+      if (!testBundle) {
+        res.status(404).json({ error: "Conversation not found" });
+        return;
+      }
       if (!(await freeFormOpen(conversationId))) {
         res.status(422).json({ error: "Outside the 24h customer-service window" });
         return;
@@ -569,6 +580,14 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         res
           .status(409)
           .json({ error: "Legacy WhatsApp AI agent is active; Moos yields the conversation" });
+        return;
+      }
+      const checkedBundle = await conversationRepo().getConversationBundle(conversationId, COMPANY_ID);
+      if (!checkedBundle || !moosTestRecipientAllowed(checkedBundle.contact.phoneE164)) {
+        await repos.idempotency.markFailedKnown({
+          idempotencyKey: claimKey, conversationId, companyId: COMPANY_ID, error: "recipient_out_of_test_scope",
+        });
+        res.status(403).json({ error: "Recipient is outside the approved Moos test scope" });
         return;
       }
       const result: OutboundSendResult = await sendOutboundText(conversationId, text, {
@@ -714,6 +733,11 @@ export function createMoosRouter(deps: MoosRouterDeps) {
       if (!bundle) {
         await failKnown("conversation_not_found");
         res.status(404).json({ error: "Conversation not found" });
+        return;
+      }
+      if (!moosTestRecipientAllowed(bundle.contact.phoneE164)) {
+        await failKnown("recipient_out_of_test_scope");
+        res.status(403).json({ error: "Recipient is outside the approved Moos test scope" });
         return;
       }
       // 5b. Re-validate AFTER the (slow) PDF fetch: ownership or the legacy
@@ -865,6 +889,10 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         res.status(404).json({ error: "Conversation not found" });
         return;
       }
+      if (!moosTestRecipientAllowed(bundle.contact.phoneE164)) {
+        res.status(403).json({ error: "Recipient is outside the approved Moos test scope" });
+        return;
+      }
       // 2. Ownership gate: drafts only for Moos-eligible conversations.
       const ownership = await checkOwnership(conversationId);
       if (!ownership.eligible) {
@@ -995,6 +1023,11 @@ export function createMoosRouter(deps: MoosRouterDeps) {
       let current = await repos.conversations.getById(conversationId, COMPANY_ID);
       if (!current) {
         res.status(404).json({ error: "Conversation not found" });
+        return;
+      }
+      const scopeBundle = await repo.getConversationBundle(conversationId, COMPANY_ID);
+      if (!scopeBundle || !moosTestRecipientAllowed(scopeBundle.contact.phoneE164)) {
+        res.status(403).json({ error: "Recipient is outside the approved Moos test scope" });
         return;
       }
       if (current.aiOwnershipState === "HUMAN_HANDLING") {
