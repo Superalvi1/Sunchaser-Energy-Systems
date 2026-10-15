@@ -6,6 +6,7 @@ on:
       - moos-whatsapp-agent
     paths:
       - "server/moos/**"
+      - "moos-worker/**"
       - "server/whatsappAgent/**"
       - "server/whatsappTransport/**"
       - "scripts/moos-relay-outbox-schema.sql"
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - "server/moos/**"
+      - "moos-worker/**"
       - "server/whatsappAgent/**"
       - "server/whatsappTransport/**"
       - "scripts/moos-relay-outbox-schema.sql"
@@ -64,6 +66,20 @@ jobs:
     name: Worker source + relay HTTP integration (required)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: moos_ci
+          POSTGRES_PASSWORD: moos_test_ci_only
+          POSTGRES_DB: moos_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U moos_ci -d moos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -77,6 +93,21 @@ jobs:
       - name: Locked dependency install
         working-directory: moos-worker
         run: npm ci --ignore-scripts
+      - name: Verify worker schema migration in isolated Postgres 17
+        working-directory: moos-worker
+        env:
+          DATABASE_URL: postgresql://moos_ci:moos_test_ci_only@localhost:5432/moos_ci
+        run: |
+          node src/migrate.mjs
+          node src/migrate.mjs
+          node --input-type=module -e "
+            import pg from 'pg';
+            const c=new pg.Client({connectionString:process.env.DATABASE_URL});
+            await c.connect();
+            const r=await c.query(\"SELECT to_regclass('moos_worker.wa_inbound') AS isolated, to_regclass('public.wa_inbound') AS leaked\");
+            if(!r.rows[0].isolated||r.rows[0].leaked)process.exitCode=1;
+            await c.end();
+          "
       - name: Run entire worker unit and relay integration suite
         working-directory: moos-worker
         env:
