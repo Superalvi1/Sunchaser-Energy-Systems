@@ -1,6 +1,15 @@
 name: Moos WhatsApp AI staging verification
 
 on:
+  push:
+    branches:
+      - moos-whatsapp-agent
+    paths:
+      - "server/moos/**"
+      - "server/whatsappAgent/**"
+      - "server/whatsappTransport/**"
+      - "scripts/moos-relay-outbox-schema.sql"
+      - ".github/workflows/moos-staging-verification.yml"
   pull_request:
     paths:
       - "server/moos/**"
