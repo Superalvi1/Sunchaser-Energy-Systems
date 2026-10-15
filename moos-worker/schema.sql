@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS wa_inbound (
  error_code TEXT
 );
 CREATE INDEX IF NOT EXISTS wa_inbound_queue_idx ON wa_inbound(state,received_at);
+CREATE INDEX IF NOT EXISTS wa_inbound_phone_received_idx ON wa_inbound(phone, received_at DESC);
 CREATE TABLE IF NOT EXISTS wa_outbound (
  send_key TEXT PRIMARY KEY,
  message_id TEXT NOT NULL REFERENCES wa_inbound(message_id),
