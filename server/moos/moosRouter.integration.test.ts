@@ -78,6 +78,8 @@ type Ctx = {
 async function setup(quotes: any[] = []): Promise<Ctx> {
   const prevToken = process.env.MOOS_SERVICE_TOKEN;
   const prevEnabled = process.env.MOOS_ENABLED;
+  const prevRecipientScope = process.env.MOOS_TEST_ONLY_RECIPIENT_E164;
+  delete process.env.MOOS_TEST_ONLY_RECIPIENT_E164;
   process.env.MOOS_SERVICE_TOKEN = TOKEN;
   process.env.MOOS_ENABLED = "true";
 
@@ -90,6 +92,8 @@ async function setup(quotes: any[] = []): Promise<Ctx> {
       else process.env.MOOS_SERVICE_TOKEN = prevToken;
       if (prevEnabled === undefined) delete process.env.MOOS_ENABLED;
       else process.env.MOOS_ENABLED = prevEnabled;
+      if (prevRecipientScope === undefined) delete process.env.MOOS_TEST_ONLY_RECIPIENT_E164;
+      else process.env.MOOS_TEST_ONLY_RECIPIENT_E164 = prevRecipientScope;
     },
     calls,
     inbox,
@@ -867,3 +871,32 @@ if (failed > 0) {
 } else {
   console.log("\nAll Moos router integration tests passed.");
 }
+
+
+// Test-only scope applies to both text and approved PDF sends.
+// Never let a worker-supplied recipient override the CRM's verified contact.
+await test("test-only recipient scope blocks other customer texts and PDFs", async () => {
+  const ctx = await setup([validQuote("scope-q10")]);
+  ctx.seedConversation("scope-approved", { phone: "923218486752" });
+  ctx.seedConversation("scope-other", { phone: "923001234567" });
+  process.env.MOOS_TEST_ONLY_RECIPIENT_E164 = "+923218486752";
+  try {
+    const blockedText = await api(ctx, "POST", "/send-text", {
+      conversationId: "scope-other", text: "test", idempotencyKey: "scope-block-txt-001",
+    });
+    assert.equal(blockedText.status, 403);
+    const blockedPdf = await api(ctx, "POST", "/send-approved-pdf", {
+      conversationId: "scope-other", quoteId: "scope-q10", idempotencyKey: "scope-block-pdf-001",
+    });
+    assert.equal(blockedPdf.status, 403);
+    assert.equal(ctx.calls.sendText.length, 0);
+    assert.equal(ctx.calls.deliverDocument.length, 0);
+    const allowedText = await api(ctx, "POST", "/send-text", {
+      conversationId: "scope-approved", text: "test", idempotencyKey: "scope-allow-txt-001",
+    });
+    assert.equal(allowedText.status, 200);
+    assert.equal(ctx.calls.sendText.length, 1);
+  } finally {
+    await ctx.close();
+  }
+});
