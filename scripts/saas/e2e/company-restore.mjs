@@ -315,6 +315,11 @@ try {
   psql(`create schema if not exists app; create table if not exists app.config (key text primary key, value text not null); insert into app.config values ('document_floor.sunchaser.invoice.${new Date().getFullYear()}','8') on conflict do nothing`, TARGET);
   const ap = runner(["apply", "--yes"]);
   check("an empty target database gets the tenant migrations through the runner", ap.status === 0, ap.stderr + ap.stdout.slice(-300));
+  // A new database that is about to hold a company needs the same barrier steps as any other (t1b): marker on, barrier verified. (This target has no PostgREST, so the HTTP proof of
+  // scripts/saas/verify-barrier.mjs is replaced by recording it directly; against a real new database the operator runs verify-barrier.mjs --confirm.)
+  const refusedFirst = (() => { try { psql(`insert into companies (id, slug, name, status) values ('${A.id}','alpha-target','Alpha target','active')`, TARGET); return ""; } catch (e) { return String(e.stderr || e.message || e); } })();
+  check("a company cannot be created in the new database before its marker is on and its barrier verified (t1b)", /refused: the tenancy marker/.test(refusedFirst), refusedFirst.slice(0, 200));
+  psql(`select app.tenancy_enable(), app.tenancy_confirm_barrier()`, TARGET);
   psql(`insert into companies (id, slug, name, status) values ('${A.id}','alpha-target','Alpha target','active')`, TARGET);
   psql(`insert into users select * from users where id in (select user_id from company_memberships where company_id='${A.id}') on conflict do nothing`, PG.database); // no-op on the source
   const t0 = cli(["restore", "--dir", OUT, "--company", A.id, "--yes"], { PGDATABASE: TARGET });

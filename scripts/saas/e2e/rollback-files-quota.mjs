@@ -3,7 +3,7 @@
 //      pilot company's upload FAILS CLOSED (503, retryable, nothing written) and reads still work; the founding company's upload is unaffected; a reservation that was
 //      in flight at the time is simply gone; after t8 is applied again the boundary is exactly where it was (the stored files still count, a deleted file frees
 //      exactly its room, no reservation is left)
-//   2  rollback of the whole tenant series (t8 .. t1) while pilot companies exist: t1 REFUSES (a designed data-safety guard) after t8 .. t2 were rolled back; in that
+//   2  rollback of the whole tenant series (t8 .. t1) while pilot companies exist: t1b (the barrier, right after t1) REFUSES (a designed data-safety guard) after t8 .. t2 were rolled back; in that
 //      state every object, document row and invoice is still there, byte-identical; after everything is applied again the limit, the accounting and the downloads are as before
 //   Env: E2E_BASE_URL, E2E_PSQL, E2E_S3_DIR, RAILWAY_S3_ENDPOINT, TEST_PW, PGHOST/PGPORT/PGUSER/PGDATABASE (+PGPASSWORD) for the migration runner.   Seed first.
 import "./lib/fresh-connections.mjs";
@@ -102,9 +102,9 @@ try {
   const OBJ1 = objectMap("co_alpha"), FP2 = fingerprint(); const INVROW = () => Object.fromEntries(psql(`select id || '=' || to_jsonb(i)::text from invoices i where company_id='co_alpha' order by id`).split('\n').filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')), JSON.parse(l.slice(l.indexOf('=') + 1))])); const INV2 = INVROW();
   const countBefore = Object.keys(OBJ1).length;
   let refused = ""; try { runner("rollback", "--to", "t1-company-foundation"); } catch (e) { refused = String(e.message); }
-  check("t1 (the company foundation) REFUSES to roll back while companies other than the founding one exist; the message tells the operator to export or remove their data first", /Rollback refused: companies other than sunchaser exist/.test(refused), refused.slice(0, 300));
+  check("the rollback of t1 stops at t1b (the tenancy barrier, which sits right after t1): it REFUSES while the marker is on or companies other than the founding one exist; the message tells the operator to export or remove the pilot companies first", /Rollback refused: the tenancy marker is on\. Export or remove the pilot companies/.test(refused), refused.slice(0, 300));
   const ledger = psql(`select string_agg(migration_id || ':' || action || ':' || status, ' ' order by seq) from (select distinct on (migration_id) * from ops.migration_ledger where migration_id like 't%' order by migration_id, seq desc) l`);
-  check("the refusal came after t8 .. t2 were rolled back (newest first) and left t1 applied (its rollback is recorded as failed): the schema is in the state 'foundation only'", /t8-storage-reservations:rollback:ok/.test(ledger) && /t2-ownership:rollback:ok/.test(ledger) && /t1-company-foundation:rollback:failed/.test(ledger), ledger);
+  check("the refusal came after t8 .. t2 were rolled back (newest first) and left t1 and t1b applied (the rollback of t1b is recorded as failed): the schema is in the state 'foundation and barrier only'", /t8-storage-reservations:rollback:ok/.test(ledger) && /t2-ownership:rollback:ok/.test(ledger) && /t1b-tenancy-barrier:rollback:failed/.test(ledger), ledger);
   check(`in that state every stored object is still there, same keys, same bytes (${countBefore} objects)`, JSON.stringify(objectMap("co_alpha")) === JSON.stringify(OBJ1));
   const INV3 = INVROW();
   const sameButSnapshot = Object.keys(INV2).every((id) => INV3[id] && Object.keys(INV2[id]).filter((k) => k !== "issuance_snapshot").every((k) => JSON.stringify(INV2[id][k]) === JSON.stringify(INV3[id][k])));
