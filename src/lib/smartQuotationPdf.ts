@@ -1,3 +1,4 @@
+import { defaultSmartQuoteSettings, type SmartQuoteSettings } from "./smartQuoteSettings";
 import type { PublicQuoteLine } from "./publicQuotationBuilder";
 import type { jsPDF } from "jspdf";
 
@@ -6,6 +7,8 @@ export type SmartQuotationPdfData = {
   clientName: string; clientPhone: string; clientCity: string;
   lines: PublicQuoteLine[]; subtotalPkr: number; discountPkr: number; totalPkr: number;
   logoDataUrl?: string;
+  document?: SmartQuoteSettings["document"];
+  preparedBy?: string;
 };
 const navy = "#0f172a", gold = "#fbbf24", ink = "#172033", muted = "#64748b";
 const money = (n: number) => `PKR ${Math.round(n).toLocaleString("en-PK")}`;
@@ -18,6 +21,7 @@ export async function loadQuotationLogo() {
   });
 }
 export async function buildSmartQuotationPdf(data: SmartQuotationPdfData): Promise<jsPDF> {
+  const document = data.document || defaultSmartQuoteSettings().document;
   const { jsPDF } = await import("jspdf");
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
   pdf.setProperties({ title: `${data.system} Solar Proposal - ${data.quoteNumber}`, author: "Sunchaser Energy Systems", subject: "Client solar system quotation" });
@@ -38,7 +42,7 @@ export async function buildSmartQuotationPdf(data: SmartQuotationPdfData): Promi
   pdf.setFontSize(data.clientName.length > 65 ? 13 : 18); text(pdf.splitTextToSize(data.clientName || "Valued Client", 175), 16, 175, data.clientName.length > 65 ? 13 : 18, "#ffffff", true);
   pdf.setFontSize(10); text(pdf.splitTextToSize(`${data.clientPhone || ""}${data.clientCity ? `  |  ${data.clientCity}` : ""}`, 175), 16, 195, 10, "#cbd5e1");
   text("PREPARED BY", 16, 214, 9, gold, true);
-  text("Sunchaser Energy Systems", 16, 226, 17, "#ffffff", true);
+  pdf.setFontSize(14); text(pdf.splitTextToSize(data.preparedBy?.trim() || document.preparedBy, 175), 16, 226, 14, "#ffffff", true);
   text(`${data.quoteNumber}  |  ${date}`, 16, 242, 10, "#cbd5e1");
   text("www.sunchaserenergy.co", 16, 265, 11, gold);
   text("0330-7776444  |  0309-0236666", 16, 275, 10, "#ffffff");
@@ -76,9 +80,30 @@ export async function buildSmartQuotationPdf(data: SmartQuotationPdfData): Promi
   text(`Discount: ${money(data.discountPkr)}`, 115, y + 12, 10, "#047857");
   pdf.setFillColor(navy); pdf.roundedRect(14, y + 18, 182, 13, 2, 2, "F");
   text("FINAL ESTIMATED COST", 19, y + 26, 10, "#ffffff", true); text(money(data.totalPkr), 132, y + 26, 14, gold, true);
-  pdf.setFontSize(9);
-  text(pdf.splitTextToSize("Estimate valid for 3 days and subject to site survey, stock availability and final technical approval. Unlisted civil work is excluded.", 182), 14, y + 39, 9, muted);
-  text("Payment: Advance booking and milestone payments as agreed in the final sales contract.", 14, y + 50, 8, muted);
+  // Commercial terms always end the document on their own pages.
+  const termsPage = () => {
+    pdf.addPage(); pdf.setFillColor(navy); pdf.rect(0, 0, 210, 31, "F");
+    pdf.setFillColor(gold); pdf.rect(0, 31, 210, 2, "F");
+    text("PAYMENT PLAN & TERMS", 14, 14, 15, "#ffffff", true);
+    text(`${data.quoteNumber} | ${date}`, 14, 25, 9, "#cbd5e1");
+    y = 45;
+  };
+  termsPage();
+  const paragraph = (value: string, bold = false) => {
+    pdf.setFont("helvetica", bold ? "bold" : "normal"); pdf.setFontSize(10);
+    const lines: string[] = pdf.splitTextToSize(value, 178);
+    for (const line of lines) {
+      if (y > 265) termsPage();
+      text(line, 16, y, 10, ink, bold); y += 5;
+    }
+    y += 4;
+  };
+  paragraph(`Prepared for: ${data.clientName || "Valued Client"}`, true);
+  paragraph(`Quotation validity: ${document.validityDays} days from the quotation date.`);
+  paragraph("PAYMENT PLAN", true);
+  document.paymentPlan.forEach((line, i) => paragraph(`${i + 1}. ${line}`));
+  paragraph("TERMS AND CONDITIONS", true);
+  document.terms.forEach((line, i) => paragraph(`${i + 1}. ${line}`));
   for (let page = 2; page <= pdf.getNumberOfPages(); page++) {
     pdf.setPage(page); pdf.setFontSize(8); text(pdf.splitTextToSize(`Prepared for ${data.clientName || "Valued Client"}`, 145)[0], 14, 283, 8, muted); text(`${page} / ${pdf.getNumberOfPages()}`, 180, 283, 8, muted);
   }

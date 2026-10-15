@@ -1,3 +1,4 @@
+import { defaultSmartQuoteSettings, type SmartQuoteSettings } from "../lib/smartQuoteSettings";
 import React from "react";
 import type { PublicQuoteCalculation, PublicQuoteConfig, PublicQuoteLine } from "../lib/publicQuotationBuilder";
 import { inverterDisplayName } from "../lib/solarEquipmentCatalog";
@@ -89,6 +90,8 @@ export function ProfessionalQuotationDocument({
   clientPhone,
   clientCity,
   batteryQuantity,
+  documentSettings = defaultSmartQuoteSettings().document,
+  preparedBy,
 }: {
   calculation: PublicQuoteCalculation;
   config: PublicQuoteConfig;
@@ -97,6 +100,8 @@ export function ProfessionalQuotationDocument({
   clientPhone: string;
   clientCity: string;
   batteryQuantity: number;
+  documentSettings?: SmartQuoteSettings["document"];
+  preparedBy?: string;
 }) {
   const date = new Date().toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" });
   return (
@@ -115,6 +120,17 @@ export function ProfessionalQuotationDocument({
         boxShadow: "0 22px 60px rgba(15, 23, 42, 0.16)",
       }}
     >
+      <section aria-label="Quotation cover page" style={{ padding: "45px 35px", minHeight: 420, background: COLORS.navy, color: "white", pageBreakAfter: "always" }}>
+        <img src="/assets/sunchaser-logo.png" alt="Sunchaser Energy Systems" style={{ width: 72, height: 72, objectFit: "contain", background: "white", borderRadius: 12, padding: 6 }} />
+        <p style={{ marginTop: 25, color: COLORS.gold, fontSize: 12, fontWeight: 800 }}>TECHNICAL &amp; FINANCIAL PROPOSAL</p>
+        <h1 style={{ margin: "12px 0 28px", fontSize: 34, fontWeight: 900 }}>{calculation.systemCapacityKw} kW Solar System</h1>
+        <p style={{ color: COLORS.gold, fontSize: 10 }}>PREPARED FOR</p>
+        <h2 style={{ margin: "8px 0", fontSize: 24, overflowWrap: "anywhere" }}>{clientName || "Valued Client"}</h2>
+        <p style={{ fontSize: 12 }}>{clientPhone}{clientCity ? ` · ${clientCity}` : ""}</p>
+        <p style={{ marginTop: 28, color: COLORS.gold, fontSize: 10 }}>PREPARED BY</p>
+        <p style={{ fontSize: 17 }}>{preparedBy?.trim() || documentSettings.preparedBy}</p>
+        <p style={{ marginTop: 18, color: "#cbd5e1", fontSize: 11 }}>{quoteNumber} · {date}</p>
+      </section>
       <div style={{ height: 9, background: COLORS.gold }} />
       <header style={{ background: COLORS.navy, color: "#ffffff", padding: "24px 30px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 15, minWidth: 0 }}>
@@ -175,10 +191,17 @@ export function ProfessionalQuotationDocument({
           </div>
           <div style={{ border: `1px solid ${COLORS.line}`, background: COLORS.panel, borderRadius: 11, padding: "10px 12px" }}>
             <div style={{ color: COLORS.navy, fontSize: 10, fontWeight: 900, letterSpacing: "0.06em", textTransform: "uppercase" }}>Commercial notes</div>
-            <div style={{ color: COLORS.muted, fontSize: 9.5, lineHeight: 1.45, marginTop: 5 }}>Estimate valid for 3 days and subject to site survey, stock availability and final technical approval. Unlisted civil work is excluded.</div>
+            <div style={{ color: COLORS.muted, fontSize: 9.5, lineHeight: 1.45, marginTop: 5 }}>Estimate valid for {documentSettings.validityDays} days. See the payment plan and terms below.</div>
           </div>
         </div>
 
+        <section aria-label="Payment plan and terms" style={{ marginTop: 25, borderTop: `2px solid ${COLORS.gold}`, paddingTop: 18, pageBreakBefore: "always" }}>
+          <h2 style={{ color: COLORS.navy, fontSize: 18, fontWeight: 900 }}>Payment Plan &amp; Terms</h2>
+          <h3 style={{ marginTop: 18, fontSize: 12, fontWeight: 800 }}>Payment plan</h3>
+          <ol style={{ paddingLeft: 20, fontSize: 11, lineHeight: 1.7 }}>{documentSettings.paymentPlan.map((line, i) => <li key={i} style={{ overflowWrap: "anywhere", marginTop: 5 }}>{line}</li>)}</ol>
+          <h3 style={{ marginTop: 18, fontSize: 12, fontWeight: 800 }}>Terms and conditions</h3>
+          <ol style={{ paddingLeft: 20, fontSize: 11, lineHeight: 1.7 }}>{documentSettings.terms.map((line, i) => <li key={i} style={{ overflowWrap: "anywhere", marginTop: 5 }}>{line}</li>)}</ol>
+        </section>
         <footer style={{ marginTop: 15, borderTop: `1px solid ${COLORS.line}`, paddingTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20 }}>
           <div style={{ color: COLORS.muted, fontSize: 9 }}>Professional solar design, installation and after-sales support.</div>
           <div style={{ color: COLORS.navy, fontSize: 9, fontWeight: 900 }}>SUNCHASER ENERGY SYSTEMS</div>

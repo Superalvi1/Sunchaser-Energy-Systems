@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import { defaultSmartQuoteSettings, validateSmartQuoteSettings, smartQuoteCatalog } from './smartQuoteSettings';
+import { calculatePublicQuotation, defaultPublicQuoteConfig } from './publicQuotationBuilder';
+
+const original = defaultSmartQuoteSettings();
+const config = defaultPublicQuoteConfig(8);
+const before = calculatePublicQuotation(config);
+const settings = structuredClone(original);
+settings.panels[config.panelId] += 5;
+settings.inverters[config.inverterId] += 15000;
+settings.batteries[config.batteryId] += 20000;
+settings.rates.installationPerWatt = 6;
+settings.rates.l2Stand = 5000;
+settings.rates.civilPadPerLeg = 700;
+settings.rates.acCable = 400;
+const changed = calculatePublicQuotation(config, { pricing: validateSmartQuoteSettings(settings) });
+const line = (text: string) => changed.lines.find(l => l.description.includes(text))!;
+assert.equal(line('solar panels').unitPricePkr, changed.panel.watts * settings.panels[config.panelId]);
+assert.equal(line('hybrid inverter').unitPricePkr, settings.inverters[config.inverterId]);
+assert.equal(line('lithium battery').unitPricePkr, settings.batteries[config.batteryId]);
+assert.equal(line('Installation').unitPricePkr, changed.panel.watts * 6);
+assert.equal(line('L2').unitPricePkr, 5000);
+assert.equal(line('AC cable').unitPricePkr, 400);
+assert.equal(changed.totalPkr, changed.lines.reduce((sum, l) => sum + l.totalPkr, 0));
+assert.deepEqual(before, calculatePublicQuotation(config), 'issued/default calculations are not mutated');
+assert.deepEqual(original, defaultSmartQuoteSettings(), 'overrides never modify approved source catalogue');
+const elevated = calculatePublicQuotation({ ...config, structureType: 'elevated' }, { pricing: { ...settings, rates: { ...settings.rates, elevatedPerWatt: 19 } } });
+assert.equal(elevated.lines.find(l => l.description.startsWith('Elevated'))!.unitPricePkr, elevated.panel.watts * 19);
+const mixed = calculatePublicQuotation({ ...config, structureType: 'mixed', mixedL2StandQuantity: 2, mixedL3StandQuantity: 3, mixedElevatedPanelQuantity: 1 }, { pricing: settings });
+assert.equal(mixed.lines.find(l => l.description.startsWith('L3'))!.totalPkr, settings.rates.l3Stand * 3);
+const withPads = calculatePublicQuotation({ ...config, included: { ...config.included, civilPad: true } }, { pricing: settings });
+assert.equal(withPads.lines.find(l => l.description.startsWith('Civil pads'))!.unitPricePkr, 700);
+const bundle = smartQuoteCatalog(settings).inverters.find(p => p.bundle)!;
+settings.inverters[bundle.id] = 1000000;
+const bundleQuote = calculatePublicQuotation({ ...config, inverterId: bundle.id, inverterQuantity: 2 }, { pricing: settings });
+assert.equal(bundleQuote.lines.find(l => l.description.includes('hybrid inverter'))!.totalPkr, 2000000);
+assert.equal(bundleQuote.lines.find(l => l.description.includes('lithium battery'))!.totalPkr, 0);
+for (const value of [-1, Infinity, NaN, '40', 0.001, 10001]) {
+  const invalid = structuredClone(original); (invalid.panels as any)[config.panelId] = value;
+  assert.throws(() => validateSmartQuoteSettings(invalid));
+}
+assert.throws(() => validateSmartQuoteSettings({ ...original, rates: { ...original.rates, unknownPrice: 1 } }));
+assert.throws(() => validateSmartQuoteSettings({ ...original, document: { ...original.document, paymentPlan: [] } }));
+assert.throws(() => validateSmartQuoteSettings({ ...original, document: { ...original.document, validityDays: 0 } }));
+console.log('PASS pricing overrides: equipment, services, elevated/mixed stands, pads, bundles, immutable snapshots and invalid input');
