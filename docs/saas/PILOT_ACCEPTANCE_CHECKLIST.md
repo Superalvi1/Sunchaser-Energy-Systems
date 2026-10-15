@@ -1,11 +1,11 @@
-# Pilot acceptance checklist (frozen, v1.1)
+# Pilot acceptance checklist (frozen, v1.2)
 
-**Version 1.1, FROZEN 2026-10-15 after the verification below completed.** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). Version 1.0 is kept unchanged in `PILOT_ACCEPTANCE_CHECKLIST_v1.0.md`; a later change to code or to this file creates version 1.2 with a dated change list. The change list from 1.0 is at the end of this file.
+**Version 1.2, FROZEN 2026-10-15 after the verification below completed; it replaces 1.1 (kept unchanged in `PILOT_ACCEPTANCE_CHECKLIST_v1.1.md`).** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). Version 1.0 is kept unchanged in `PILOT_ACCEPTANCE_CHECKLIST_v1.0.md`; a later change to code or to this file creates version 1.3 with a dated change list. The change list from 1.0 is at the end of this file.
 
 | | |
 |---|---|
 | Branch / PR | `claude/saas-pilot-multi-company`, draft PR #113 (stacked on #111) |
-| Code tested | `f6aff156c0cc9a86170c8e30938cbd941e1d153e`, verified **from a fresh clone with no uncommitted files**: `npm ci --ignore-scripts` from the lockfile, then built there. `dist/server.cjs` sha256 `61ed3c6f609bb8dd7ed19ed4b1312bdefca4bdb6c28c0d38444ec1bada9bb05f` (identical to the bundle of the working tree used earlier; the frontend bundle embeds a build timestamp and is not byte-reproducible). Every journey, repeat and unit result below is at this commit. Later commits: `b521ad0` changes one database test script only (`test-storage-reservations.sh`, a negative control made deterministic; the DB tests were re-run from a fresh clone at that commit: PostgreSQL 16 3 of 3 and 17 3 of 3, exit 0), then documents and evidence only (checked with `git diff --name-only`) |
+| Code tested | `20897e47266a40f35449c95b9a0b9cce85a46699` (fresh clone, lockfile install; `dist/server.cjs` sha256 `2e7376397c17bd1996d761d939970dfd38d35eec977f69ac7ff83239f2b33268`). Commits after it change scripts, documents and evidence only (`git diff --name-only 20897e4 HEAD`); the server bundle is byte-identical at `11a6059` |
 | Frozen at | the commit that contains this file (its SHA is in the PR description) |
 | Frozen on | 2026-10-15 (v1.0: 2026-10-14) |
 | Scope | the existing limited pilot only; no new module was added. Round 5 closed five reliability gaps (see the change list) |
@@ -140,37 +140,50 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | 8.9 | Operator onboarding, manual subscriptions, plan limits, operator audit | PASSED | `platform-onboarding` |
 | 8.10 | Company export/restore leaves every other company and the founding company byte-identical | PASSED | `company-restore` |
 
-### 9. Isolation independent of the feature flag (round 6; `docs/saas/evidence/round5/final-rc/`)
+### 9. Isolation independent of the feature flag, and the database barrier (round 6; `docs/saas/evidence/round6/`)
 
-Found by round 5's own measurement: with the flag off and pilot data present, the single-company code path (no company filter) let founding staff read the pilot's data. Closed by `server/saas/tenantIsolationGuard.ts`: a process that is not in multi-company mode asks the database at start and every 5 s whether any company other than the founding one exists; if one does, or if it cannot find out, it serves nothing (503 `tenant_isolation_unavailable`) and the unfiltered database client is not handed out.
+With the flag off and pilot data present, the single-company code path (no company filter) used to let founding staff read the pilot's data. Closed in two layers. **In the database** (migration `t1b-tenancy-barrier`): a persistent marker, switched on by the operator before the first pilot company, makes the database itself refuse (HTTP 503) every service-role request that does not declare multi-company mode, and refuse to create a pilot company until `scripts/saas/verify-barrier.mjs` has proven that over HTTP. **In the new build** (`tenantIsolationGuard.ts`): a flag-off process reads the marker, the companies and (every minute) the tenant rows, and serves nothing while any says "more than one company" or while it cannot find out.
+
+Assertions are kept in two kinds on purpose. **[safety]**: nothing is read or written for anyone who must not (503, no company data in a body, no row or object changed). **[status label]**: what `/health` says about the pause and how fast it follows the facts. A late label is reported as a label problem, never as a leak; both fail the run.
 
 | # | Check | Status | Evidence |
 |---|---|---|---|
-| 9.1 | Flag off + pilot data present: 100+ requests by a founding administrator, a pilot administrator, a pilot portal customer and no session (sessions issued earlier by the flag-on process included): reads, searches, exports incl. the whole-database backup, PDFs, file downloads (signed link, authorised route, /uploads), writes, sign-in, the WhatsApp webhook: **every one answered 503, no body contained any company's data** | PASSED | `tenant-isolation-guard` (30/30), `feature-disable-reenable` (8/8) |
-| 9.2 | Nothing was read or written while paused: row counts of eight tables and a hash of every stored object are identical afterwards; no write probe exists | PASSED | same |
-| 9.3 | Application restart with the flag still off: earlier founding and pilot sessions are still refused | PASSED | same, step C |
-| 9.4 | Flag on again: sessions issued before the pause work; each company sees only its own leads; writes land in the right company; PDF and file download work; cross-company read refused | PASSED | same, step D |
-| 9.5 | Cannot verify (database unreachable) => paused, `reason: unverified`; no unfiltered query, no local-file fallback | PASSED | same, step E; `tenantIsolationGuard.test.ts` (throwing, hanging, stale probe) |
-| 9.6 | Schema rollback t8..t3 with pilot data present: a flag-off process is still paused; rolling back t1 is refused | PASSED | same, step G; `rollback-files-quota` |
-| 9.7 | Removing the pilot companies: the same running flag-off process resumes by itself; the founding administrator's earlier session works and shows founding data only; the removed company's session does not | PASSED | same, step F |
+| 9.1 | [safety] Flag off + pilot data present: 100+ requests by a founding administrator, a pilot administrator, a pilot portal customer and no session (sessions issued earlier included): reads, searches, exports incl. the whole-database backup, PDFs, file downloads, writes, sign-in, the WhatsApp webhook: **every one answered 503, no body contained any company's data**; row counts of eight tables and a hash of every stored object identical afterwards | PASSED | `tenant-isolation-guard` 47/47 (20 safety, 10 label checks), `feature-disable-reenable` 8/8 |
+| 9.2 | [safety] Restart with the flag still off: earlier sessions still refused; unreachable database: 503, no local-file fallback; schema rollback t8..t2 with pilot data: still 503; rollback of `t1b` and of `t1` **refused** | PASSED | same, steps C, E, G; `rollback-files-quota` |
+| 9.3 | [safety] Flag on again: sessions issued before the pause work; each company sees only its own data; cross-company read refused | PASSED | same, step D |
+| 9.4 | [safety] **No exposure window**: a flag-off process is serving, the marker is switched on, and in the next 3 seconds (before the process has checked anything) 135 requests were refused, 0 served, 0 with data | PASSED | same, step W (database barrier) |
+| 9.5 | [safety] **Deleting a `companies` row clears nothing**: with the rows deleted by hand (foreign keys bypassed) the running process, a freshly started process and an unaware service-role request are all still refused; `app.tenancy_disable()` is refused while any other company's rows exist; with the data removed and the marker on, requests stay refused for the whole wait; the marker clears only through `app.tenancy_disable()`, after which the process resumes without a restart | PASSED | same, step F; `test-tenancy-barrier.sh` 48/48 (PG16, PG17) |
+| 9.6 | [safety] **Older backends, scripts and flag-off processes are refused by the database**: 27 direct service-key requests (no header / `single` / `global-only` on nine tenant tables) all 503; `multi` is served; the repair build cannot sign in; the matrix row "marker on": NEW refused 503, REPAIR refused | PASSED | same, step H; `matrix` rows (PG16, PG17) |
+| 9.7 | A pilot company cannot be created before the marker is on and the barrier verified (also in a new database: `company-restore` step 7; DB tests) | PASSED | `test-tenancy-barrier.sh`, `company-restore`, `test-company-restore.sh` |
 | 9.8 | **Missing company context never falls back to unrestricted queries**: flag on without a company context throws; flag off with a closed guard throws even for a founding-company context; "database configured" stays true so nothing falls back to the local JSON file | PASSED | `dbClientSelection.test.ts` (6/6) |
-| 9.9 | **An older backend against a tenant-populated database: MEASURED, no isolation** (the repair build showed the pilot company's lead to a founding administrator). Not a supported state; not recommended | PASSED (as a measurement) | `tenant-isolation-guard` step H, `OBSERVED:` line |
-| 9.10 | **Limits, not covered**: processes without the guard (older backends, scripts, the marketplace cron service, SQL clients); a pilot whose `companies` row was deleted by hand; up to 5 s (20 s if checks fail) between a first pilot company appearing and a running flag-off process noticing; no dedicated maintenance screen in the web app | KNOWN LIMIT | `docs/ops/COMBINED_DEPLOYMENT_AND_ROLLBACK.md` section 4 |
-| 9.11 | t5 audit sequence: rollback, re-apply, new audit insert; again a second time; **negative control** (migration without the repair collides with `duplicate key`) | PASSED | `test-subscriptions.sh` 51/51 on PostgreSQL 17 and 16; `rollback-files-quota` onboards a company after the full cycle |
+| 9.9 | [status label] `/health` and `/api/maintenance-status` report paused and the reason (`tenant_data_present`, `tenancy_marker`, `unverified`); the reason follows the facts within one 5 s check | PASSED | `tenant-isolation-guard` label checks; `tenantIsolationGuard.test.ts` (9/9) |
+| 9.10 | t5 audit sequence: rollback, re-apply, new audit insert; twice; negative control | PASSED | `test-subscriptions.sh` 51/51 (PG16, PG17) |
+| 9.11 | **Limits, stated**: the barrier is in PostgREST (a direct PostgreSQL connection is outside it; the scripts that use one check the marker themselves); the `x-isolation-mode` header is an assertion, not a credential; it needs PostgREST to read in-database configuration (proved by `verify-barrier.mjs`, to be proved again on staging); no dedicated maintenance screen; **no supported company-removal command (code fix F3)**, so once a pilot company holds data the environment cannot return to single-company mode in place | KNOWN LIMITS | `docs/ops/DATABASE_WRITERS_INVENTORY.md`, `docs/saas/FREEZE_AND_READINESS_LISTS.md` |
 
-### Final verification (fresh clone of `f6aff15`)
+### 10. Database writers, restore deficit, staging runbook
+
+| # | Check | Status | Evidence |
+|---|---|---|---|
+| 10.1 | Every database writer, script and cron service inventoried, with its control; unproven paths restricted: the two one-off `production-*-20260606` routes were reachable by a pilot Super Admin and now answer 404 in multi-company mode (founding-only scope); direct-`pg` scripts refuse a marked database; the marketplace cron declares `global-only` and the database lets it reach `mp_*`/`learning_*` paths only | PASSED (inventory by reading code and running the checks named there) | `docs/ops/DATABASE_WRITERS_INVENTORY.md` |
+| 10.2 | The original restore deficit (run 8) investigated from the preserved evidence | **UNRESOLVED**, narrowed to one lost activity-log or document row (a clock-id collision whose insert error was ignored); mechanism reproduced and fixed on the pilot paths; not proven for that run; production code still has the defect; restore of a real backup untested until staging | `docs/saas/RESTORE_DEFICIT_INVESTIGATION.md` |
+| 10.3 | One staging runbook (restored backup, real storage checks, migration order incl. `t1b`, marker and barrier proof, drills, recovery that never runs an older backend against pilot data) | WRITTEN, **not executed** (no staging exists) | `docs/ops/STAGING_REHEARSAL_RUNBOOK.md`; `scripts/saas/staging/storage-check.mjs` (checked against the stand-in: C1-C4, C6 pass, C5 fails there on purpose) |
+
+### Final verification
+
+Tested code commit **`20897e47266a40f35449c95b9a0b9cce85a46699`**, from a fresh clone with no uncommitted tracked file other than the application-written `database.json`, installed from the lockfile (`npm ci --ignore-scripts`) and built there. `dist/server.cjs` sha256 **`2e7376397c17bd1996d761d939970dfd38d35eec977f69ac7ff83239f2b33268`**, byte-identical to the bundle of the working tree and to the bundle of the later commit `11a6059` (which changes scripts and documents only).
 
 | Run | Result |
 |---|---|
-| Focused flag-off isolation journeys (PG17) | `feature-disable-reenable` 8/8, `tenant-isolation-guard` 30/30, `single-company-smoke` 12/12, `flag-off-round3` 18/18 |
-| Unit tests (`test:saas`) / server typecheck | 169/169 / no new errors |
-| Full journeys PostgreSQL 17 / 16 | 22 of 22 pass / 22 of 22 pass |
-| Deployment matrix, 13 states x 2 backends (invoice-numbering regression included) | PG17 and PG16 pass; every cell 9/9; the informational gap row: NEW 9/9, REPAIR 4/9 (the old counting rule; documented) |
-| DB tests (migrations, numbering, snapshot, subscriptions, reservations, runner) | PG17 and PG16 exit 0 (runner test 44/44) |
-| Repeats on PG17 | company-restore 15/15, concurrent-contracts 15/15, customer-code-collisions 15/15, storage-two-instances 15/15, rollback-files-quota 5/5, tenant-isolation-guard 5/5 |
-| The original unexplained restore deficit (run 8) | **Listed separately and unchanged: UNRESOLVED.** Explained by a reproduced mechanism (clock-based ids), not proven to be the cause of that run; the 15/15 repeat above is not evidence about run 8 |
+| Unit tests (`test:saas`) / server typecheck | 175/175 / no new errors |
+| Focused flag-off isolation journeys (PG17) | `feature-disable-reenable` 8/8, `tenant-isolation-guard` 47/47, `single-company-smoke` 12/12, `flag-off-round3` 18/18 |
+| Full journeys PostgreSQL 17 / 16 | 22 of 22 / 22 of 22 |
+| Deployment matrix, 14 states (t1b included) x 2 backends, plus the "marker on" row | PG17 and PG16: every cell 9/9; marker on: NEW refused 503, REPAIR refused; the informational gap row: NEW 9/9, REPAIR 4/9 (the old counting rule) |
+| DB tests (incl. the tenancy barrier 48/48, runner 44/44, company restore 15/15, subscriptions 51/51) | PG17 and PG16 exit 0 |
+| Repeats on PG17 | company-restore 15/15, concurrent-contracts 15/15, customer-code-collisions 15/15, storage-two-instances 15/15, rollback-files-quota 5/5, tenant-isolation-guard 10/10 |
+| CI | green (9 of 9 checks) on `20897e4` and on `11a6059`; the exact final head is in the PR description |
+| Scripts changed after the tested commit (`11a6059`: safety/label split in the isolation journey, CI diagnostics removed) | re-run from a fresh clone at `11a6059` (server bundle hash unchanged, `2e737639…`): focused isolation journeys 8/8, 53/53 (safety failures 0, status-label failures 0), 12/12, 18/18; full journeys on PostgreSQL 17 22/22; `tenant-isolation-guard` x10 10/10; CI green 9/9 (evidence: `evidence/round6/status-11a6059.txt`) |
 
-A defect found on the way, in tests only: an interim full run (on `adb2337`) failed in `rollback-files-quota` because the seed cleanup left payment-ledger rows naming removed companies, and the t5 re-apply then failed on the foreign key. Cleanup fixed (`f6aff15`); the run above is after the fix. CI at the exact head is recorded in the PR description.
+Defects found on the way in this round, all fixed with their evidence: the CI typecheck failure on `1d2acd4`; a flaky no-lock negative control (PG16 CI); the seed cleanup that left ledger rows; the DB restore test and two journeys that created companies without the barrier; a guard that kept a stale reason for up to a minute. A CI diagnostic that wrote journey output into the database log was added and then **removed again** because test output must not go there.
 
 ## Part B. Code gaps (could still be done in this repository)
 
@@ -248,3 +261,8 @@ Not on the path, deliberately: a company price book, the delivery flows, the des
 * Section 9 (isolation independent of the flag) added; **the feature flag is a switch, not a rollback**, and with pilot data present switching it off pauses the founding company too (`COMBINED_DEPLOYMENT_AND_ROLLBACK.md` section 4 rewritten). An older backend on a tenant-populated database is not a supported state.
 * Fixed: CI typecheck failure on `1d2acd4` (a narrowing error in `storageQuota.ts`); quota double-count re-measure; t5 audit-sequence proof with negative control; seed cleanup of platform ledger rows.
 * CI on `b1b37fd` failed one job (`docker-suites (PostgreSQL 16)`, suite `test:saas-db`) while PostgreSQL 17 passed on the same code. Cause, reproduced locally (1 run in 3 on PostgreSQL 16): the negative control of `test-storage-reservations.sh` ("without the lock the same race admits more than the limit") depended on process start-up timing and sometimes saw no race. It tested nothing about the function under test, which is unchanged. The control now sleeps between check and insert so the race is certain (40 of 40 admitted in every run). Not a product defect; it had passed in earlier CI runs by luck.
+
+### Round 6, second half (version 1.1 to 1.2, 2026-10-15)
+* Added the persistent tenancy marker and database barrier (`t1b-tenancy-barrier`), the guard reading it, sections 9 and 10, the writers inventory, the restore-deficit investigation, the staging runbook and the three lists (code fixes / owner actions / operational requirements).
+* Restricted: the two one-off 2026-06-06 maintenance routes (404 in multi-company mode, founding-only); direct-`pg` scripts check the marker; the marketplace cron declares `global-only`.
+* Unchanged and listed separately: restore-journey run 8 is UNRESOLVED; company removal has no supported command and is outside this round (F3).
