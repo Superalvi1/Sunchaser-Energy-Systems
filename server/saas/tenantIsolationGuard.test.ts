@@ -97,3 +97,14 @@ test("after the operator clears the marker (which refuses while other rows exist
   tick(5001); g.current(); await g.refresh();      // ONE cheap interval later, far less than the 60 s deep interval
   assert.equal(g.current().blocked, false, "resumed within one check interval");
 });
+
+test("the reason follows the facts within one check: rows removed while the marker is still on => tenancy_marker, not a stale tenant_data_present", async () => {
+  let foreign = true;
+  const { g, tick } = mk(async ({ deep }) => ({ otherCompanies: 0, marker: "multi", ...(deep ? { foreignRows: foreign } : {}) }));
+  await g.refresh(); g.arm();
+  assert.equal(g.current().reason, "tenant_data_present");
+  foreign = false;                                  // the other companies' data is removed; the marker stays on
+  tick(5001); g.current(); await g.refresh();
+  assert.equal(g.current().blocked, true, "still paused: the marker is on");
+  assert.equal(g.current().reason, "tenancy_marker");
+});

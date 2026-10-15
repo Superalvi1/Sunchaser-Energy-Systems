@@ -216,9 +216,10 @@ console.log("\nF. The companies rows are deleted by hand: access stays closed. D
   let dis = ""; try { psql("select app.tenancy_disable()"); } catch (e) { dis = String(e.stderr || e); }
   check("clearing the marker is refused while another company's rows exist", /tenancy_disable refused/.test(dis), dis.slice(0, 200));
   execFileSync("node", ["--import", "tsx", "scripts/saas/e2e/seed-two-companies.mjs", "--cleanup"], { stdio: "ignore" });
-  await sleep(7000);
-  const h3 = await json(await fetch(`${X}/health`));
-  check("the other companies' data is removed, the marker is still on: the process STAYS paused (nothing resumes by itself)", h3.tenantIsolation?.paused === true && h3.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(h3));
+  // The reason follows the facts within one check interval (5 s); a slow runner gets up to 30 s. What must NEVER happen at any moment is "not paused".
+  let h3 = {}, everServed = false;
+  for (let i = 0; i < 30; i++) { await sleep(1000); h3 = await json(await fetch(`${X}/health`)); if (h3.tenantIsolation?.paused === false) everServed = true; if (h3.tenantIsolation?.reason === "tenancy_marker") break; }
+  check("the other companies' data is removed, the marker is still on: the process STAYS paused (nothing resumes by itself) and the reason becomes the marker", !everServed && h3.tenantIsolation?.paused === true && h3.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(h3));
   check("clearing the marker with no other company and no other company's row succeeds", psql("select app.tenancy_disable()") === "single");
   let resumed = false; for (let i = 0; i < 20 && !resumed; i++) { await sleep(1000); resumed = (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === false; }
   check("the same running process resumes serving without a restart", resumed);

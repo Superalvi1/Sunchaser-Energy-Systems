@@ -77,10 +77,10 @@ export function createIsolationGuard(initial: Partial<Deps> = {}) {
     let deepNow = false;
     try {
       let r = await withTimeout(deps.probe({ deep }));
-      // A remembered "yes, other companies' rows exist" must not outlive the marker: the marker can only be cleared by app.tenancy_disable(), which refuses while such rows exist.
-      // So when a cheap answer says marker off and no other company while the last deep answer said "yes", ask the deep question again at once instead of waiting for the next
-      // scheduled deep check (up to a minute of needless pause after the operator has cleared the marker).
-      if (!("tablesMissing" in r) && !deep && lastForeignRows && r.marker === "single" && r.otherCompanies === 0) r = await withTimeout(deps.probe({ deep: true }));
+      // A remembered "yes, other companies' rows exist" must not outlive the rows: when a cheap answer finds no other company while the last deep answer said "yes" (the companies
+      // rows were deleted, or the data was removed and the marker cleared), ask the deep question again at once instead of waiting for the next scheduled deep check (up to a minute
+      // of a stale reason, or of needless pause after the operator has cleared the marker with app.tenancy_disable(), which itself refuses while such rows exist).
+      if (!("tablesMissing" in r) && !deep && lastForeignRows && r.otherCompanies === 0) r = await withTimeout(deps.probe({ deep: true }));
       if (!("tablesMissing" in r) && typeof r.foreignRows === "boolean") deepNow = true;
       if ("tablesMissing" in r) { next = { blocked: false, reason: "none", detail: "No company tables: a single-company database.", checkedAt: deps.now() }; lastForeignRows = false; }
       else {
