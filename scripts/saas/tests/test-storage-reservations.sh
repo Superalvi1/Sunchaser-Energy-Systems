@@ -83,7 +83,10 @@ for round in 1 2 3 4 5; do
 done
 
 # --- negative control: the SAME function without its advisory lock admits far more than the limit when sessions race (so the test above can fail)
-$Q -c "select replace(replace(pg_get_functiondef('public.saas_storage_reserve(text,bigint,bigint,bigint,bigint,integer,integer)'::regprocedure), 'saas_storage_reserve', 'saas_storage_reserve_nolock'), 'perform pg_advisory_xact_lock(hashtextextended(''saas_storage:'' || p_company, 0));', 'null;')" > /tmp/nolock-$$.sql
+# The control also sleeps between the check and the insert, so that every racing session has passed the check before any of them inserts: the race is then certain instead of
+# depending on process start-up timing (the previous version of this control failed now and then on a slow runner, which proved nothing about the real function).
+$Q -c "select replace(replace(replace(pg_get_functiondef('public.saas_storage_reserve(text,bigint,bigint,bigint,bigint,integer,integer)'::regprocedure), 'saas_storage_reserve', 'saas_storage_reserve_nolock'), 'perform pg_advisory_xact_lock(hashtextextended(''saas_storage:'' || p_company, 0));', 'null;'), 'insert into public.saas_storage_reservations', 'perform pg_sleep(1.5); insert into public.saas_storage_reservations')" > /tmp/nolock-$$.sql
+grep -q "pg_sleep" /tmp/nolock-$$.sql || { echo "FAIL: could not add the delay to the control function"; bad=$((bad+1)); }
 grep -q "advisory" /tmp/nolock-$$.sql && { echo "FAIL: could not strip the lock from the control function"; bad=$((bad+1)); } || true
 $P -f /tmp/nolock-$$.sql > /dev/null 2>&1; rm -f /tmp/nolock-$$.sql
 most=0
