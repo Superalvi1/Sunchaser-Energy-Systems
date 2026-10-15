@@ -1,3 +1,4 @@
+import { openInvoicePrintPreview } from "../lib/quotePdfExport";
 import AppModal from "./ui/AppModal";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -20,7 +21,6 @@ import {
   fetchAdminInvoices,
   fetchContractedLeadsReadyForInvoice,
   fetchCustomerAccounts,
-  invoicePdfUrl,
   recordAdminInvoicePayment,
   updateAdminInvoice,
 } from "../services/api";
@@ -619,9 +619,13 @@ export default function InvoiceStaff({
     }
   };
 
-  const openPdf = () => {
+  const openPdf = async () => {
     if (!selectedId) return;
-    window.open(invoicePdfUrl(selectedId, staffUser), "_blank");
+    try {
+      await openInvoicePrintPreview(selectedId);
+    } catch (e: any) {
+      setMsg(e.message || "Unable to open invoice PDF.");
+    }
   };
 
   const selected = invoices.find((i) => i.id === selectedId);

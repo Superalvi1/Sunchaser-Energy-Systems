@@ -1,3 +1,4 @@
+import { openInvoicePrintPreview } from "../lib/quotePdfExport";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
@@ -24,7 +25,6 @@ import {
   fetchAdminParties,
   fetchAdminPartyLedger,
   hardDeleteAdminParty,
-  invoicePdfUrl,
   recordAdminInvoicePayment,
   restoreAdminParty,
 } from "../services/api";
@@ -94,6 +94,13 @@ export default function PartyLedgerStaff({
   onInitialPartyConsumed?: () => void;
 }) {
   const allowed = canCreateInvoice(staffUser.username, staffUser.role);
+  const openInvoicePdf = async (invoiceId: string) => {
+    try {
+      await openInvoicePrintPreview(invoiceId);
+    } catch (e: any) {
+      setDetailError(e.message || "Unable to open invoice PDF.");
+    }
+  };
   const [parties, setParties] = useState<PartyLedgerSummary[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<{
@@ -620,7 +627,7 @@ export default function PartyLedgerStaff({
                   <div className="flex justify-between gap-3"><strong>Sale · {tx.invoiceNumber}</strong><span className="text-sm text-slate-500">{tx.invoiceDate}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-sm"><div>Total<p className="font-bold">Rs {Number(tx.grandTotal).toLocaleString()}</p></div><div>Balance<p className="font-bold text-amber-600">Rs {Number(tx.balanceDue).toLocaleString()}</p></div></div>
                   <p className="mt-2 text-sm text-emerald-600">Received: Rs {Number(tx.paidAmount).toLocaleString()} · {tx.paymentStatus}</p>
-                  <div className="mt-3 flex flex-wrap gap-3 text-sm"><a className="min-h-11 inline-flex items-center text-blue-600" href={invoicePdfUrl(tx.invoiceId,staffUser)} target="_blank" rel="noreferrer">View PDF</a>{onEditInvoice&&<button className="min-h-11 text-blue-600" onClick={()=>onEditInvoice(tx.invoiceId)}>Edit Sale</button>}{Number(tx.balanceDue)>0&&<button className="min-h-11 rounded-full bg-rose-600 px-4 font-bold text-white" onClick={()=>openPaymentModal(tx)}>Take Payment</button>}</div>
+                  <div className="mt-3 flex flex-wrap gap-3 text-sm"><button type="button" className="min-h-11 inline-flex items-center text-blue-600" onClick={() => void openInvoicePdf(tx.invoiceId)}>View PDF</button>{onEditInvoice&&<button className="min-h-11 text-blue-600" onClick={()=>onEditInvoice(tx.invoiceId)}>Edit Sale</button>}{Number(tx.balanceDue)>0&&<button className="min-h-11 rounded-full bg-rose-600 px-4 font-bold text-white" onClick={()=>openPaymentModal(tx)}>Take Payment</button>}</div>
                 </article>)}</div>}
                 <div className={`overflow-x-auto rounded-xl border border-neutral-800 ${fullPage ? "hidden sm:block" : ""}`}>
                   <table className="w-full text-[10px]">
@@ -662,15 +669,15 @@ export default function PartyLedgerStaff({
                             )}
                           </td>
                           <td className="text-right px-2 whitespace-nowrap">
-                            <a
-                              href={invoicePdfUrl(tx.invoiceId, staffUser)}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => void openInvoicePdf(tx.invoiceId)}
+                              aria-label="View invoice PDF"
                               className="inline-flex items-center gap-0.5 px-1.5 py-1 rounded bg-slate-700 text-[8px] font-bold mr-0.5"
                               title="View PDF"
                             >
                               <Download className="h-3 w-3" />
-                            </a>
+                            </button>
                             {onEditInvoice && (
                               <button
                                 type="button"

@@ -233,6 +233,11 @@ export async function downloadTemplateTestPdf(
   await triggerBlobDownload(res);
 }
 
+/** Fetch the protected invoice with the current JWT before opening print/save as PDF. */
+export async function openInvoicePrintPreview(invoiceId: string): Promise<void> {
+  await fetchAndWriteQuotePreview(`${API_BASE_URL}/api/export/pdf/invoice/${encodeURIComponent(invoiceId)}`);
+}
+
 /** Open printable HTML preview in a new window and trigger print after fonts load. */
 export async function openManualQuotePrintPreview(leadId: string, quoteId?: string): Promise<void> {
   await fetchAndWriteQuotePreview(manualQuotePdfPreviewUrl(leadId, quoteId));
