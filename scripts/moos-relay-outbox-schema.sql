@@ -31,3 +31,9 @@ create index if not exists moos_relay_outbox_due_idx
 
 create index if not exists moos_relay_outbox_conversation_idx
   on moos_relay_outbox (company_id, conversation_id);
+
+-- Customer messages and phone numbers are confidential. Supabase service-role
+-- access for the CRM backend is preserved; browser anon/auth roles get none.
+-- RLS protects the table if default grants or policies change later.
+alter table public.moos_relay_outbox enable row level security;
+revoke all on table public.moos_relay_outbox from anon, authenticated;
