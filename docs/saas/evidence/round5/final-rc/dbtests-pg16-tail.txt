@@ -1,0 +1,8 @@
+PASS: verify is clean with all nine applied
+PASS: rollback t8, t7, t6, t5, t4, t3, t2, t1 in reverse order
+PASS: the company foundation is gone and the release migrations remain
+PASS: everything applies again after the rollback (the floor is still set)
+PASS: final verify is clean
+PASS: rollback of an early migration lists the dependents first (dry run)
+
+44 passed, 0 failed

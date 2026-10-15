@@ -1,11 +1,11 @@
-# Pilot acceptance checklist (frozen)
+# Pilot acceptance checklist (frozen, v1.1)
 
-**Version 1.1, DRAFT: NOT YET FROZEN (final PostgreSQL 16/17 runs, repeats and CI at the exact head are still running; numbers marked «…» are filled in then).** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). Version 1.0 is kept unchanged in `PILOT_ACCEPTANCE_CHECKLIST_v1.0.md`; a later change to code or to this file creates version 1.2 with a dated change list. The change list from 1.0 is at the end of this file.
+**Version 1.1, FROZEN 2026-10-15 after the verification below completed.** This is the single checklist for the limited multi-company pilot. It replaces the status tables of `PILOT_ROUND3_REPORT.md` (kept as history). Version 1.0 is kept unchanged in `PILOT_ACCEPTANCE_CHECKLIST_v1.0.md`; a later change to code or to this file creates version 1.2 with a dated change list. The change list from 1.0 is at the end of this file.
 
 | | |
 |---|---|
 | Branch / PR | `claude/saas-pilot-multi-company`, draft PR #113 (stacked on #111) |
-| Code tested | `«CODE_SHA»` (every journey, repeat and unit result below is at this commit; later commits change documents and evidence only, checked with `git diff --name-only`) |
+| Code tested | `f6aff156c0cc9a86170c8e30938cbd941e1d153e`, verified **from a fresh clone with no uncommitted files**: `npm ci --ignore-scripts` from the lockfile, then built there. `dist/server.cjs` sha256 `61ed3c6f609bb8dd7ed19ed4b1312bdefca4bdb6c28c0d38444ec1bada9bb05f` (identical to the bundle of the working tree used earlier; the frontend bundle embeds a build timestamp and is not byte-reproducible). Every journey, repeat and unit result below is at this commit; later commits change documents and evidence only, checked with `git diff --name-only` |
 | Frozen at | the commit that contains this file (its SHA is in the PR description) |
 | Frozen on | 2026-10-15 (v1.0: 2026-10-14) |
 | Scope | the existing limited pilot only; no new module was added. Round 5 closed five reliability gaps (see the change list) |
@@ -106,7 +106,7 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 
 | # | Check | Status | Evidence |
 |---|---|---|---|
-| 6.1 | With `MULTI_COMPANY_ENABLED` unset, on a database that has the migrations applied, the application behaves as before: login, lead, quotation, contract, invoice, payment, PDF; no company fields; no module flags; AutoSizer, after-sales, inbox, design tools and AI reachable; the image upload still writes to the public folder; no storage refusal | PASSED | `single-company-smoke` (12/12), `flag-off-round3` (18/18); run by the CI job `pilot-journeys` on a second instance of the same build |
+| 6.1 | With `MULTI_COMPANY_ENABLED` unset, on a database that has the migrations applied **and holds the founding company only** (with any other company present the process pauses, section 9), the application behaves as before: login, lead, quotation, contract, invoice, payment, PDF; no company fields; no module flags; AutoSizer, after-sales, inbox, design tools and AI reachable; the image upload still writes to the public folder; no storage refusal | PASSED | `single-company-smoke` (12/12), `flag-off-round3` (18/18); run by the CI job `pilot-journeys` on a second instance of the same build |
 | 6.2 | The same in GitHub's CI | PASSED | job `pilot-journeys` on the exact head `f2fffb7` (also green at `6a71cb9`), on PostgreSQL 16 and 17: `single-company-smoke` and `flag-off-round3` pass |
 
 ### 7. Intermittent restore-journey failure (`docs/saas/evidence/round4/restore-repeat/SUMMARY.md`)
@@ -139,6 +139,38 @@ These are defaults for the pilot. No price, plan, contract or commercial limit i
 | 8.8 | Real-schema / SaaS migration rehearsal on a restored production backup | **UNTESTED** | no restored backup (Part C, PA1). Synthetic rehearsal of t1 to t7: 0 failures |
 | 8.9 | Operator onboarding, manual subscriptions, plan limits, operator audit | PASSED | `platform-onboarding` |
 | 8.10 | Company export/restore leaves every other company and the founding company byte-identical | PASSED | `company-restore` |
+
+### 9. Isolation independent of the feature flag (round 6; `docs/saas/evidence/round5/final-rc/`)
+
+Found by round 5's own measurement: with the flag off and pilot data present, the single-company code path (no company filter) let founding staff read the pilot's data. Closed by `server/saas/tenantIsolationGuard.ts`: a process that is not in multi-company mode asks the database at start and every 5 s whether any company other than the founding one exists; if one does, or if it cannot find out, it serves nothing (503 `tenant_isolation_unavailable`) and the unfiltered database client is not handed out.
+
+| # | Check | Status | Evidence |
+|---|---|---|---|
+| 9.1 | Flag off + pilot data present: 100+ requests by a founding administrator, a pilot administrator, a pilot portal customer and no session (sessions issued earlier by the flag-on process included): reads, searches, exports incl. the whole-database backup, PDFs, file downloads (signed link, authorised route, /uploads), writes, sign-in, the WhatsApp webhook: **every one answered 503, no body contained any company's data** | PASSED | `tenant-isolation-guard` (30/30), `feature-disable-reenable` (8/8) |
+| 9.2 | Nothing was read or written while paused: row counts of eight tables and a hash of every stored object are identical afterwards; no write probe exists | PASSED | same |
+| 9.3 | Application restart with the flag still off: earlier founding and pilot sessions are still refused | PASSED | same, step C |
+| 9.4 | Flag on again: sessions issued before the pause work; each company sees only its own leads; writes land in the right company; PDF and file download work; cross-company read refused | PASSED | same, step D |
+| 9.5 | Cannot verify (database unreachable) => paused, `reason: unverified`; no unfiltered query, no local-file fallback | PASSED | same, step E; `tenantIsolationGuard.test.ts` (throwing, hanging, stale probe) |
+| 9.6 | Schema rollback t8..t3 with pilot data present: a flag-off process is still paused; rolling back t1 is refused | PASSED | same, step G; `rollback-files-quota` |
+| 9.7 | Removing the pilot companies: the same running flag-off process resumes by itself; the founding administrator's earlier session works and shows founding data only; the removed company's session does not | PASSED | same, step F |
+| 9.8 | **Missing company context never falls back to unrestricted queries**: flag on without a company context throws; flag off with a closed guard throws even for a founding-company context; "database configured" stays true so nothing falls back to the local JSON file | PASSED | `dbClientSelection.test.ts` (6/6) |
+| 9.9 | **An older backend against a tenant-populated database: MEASURED, no isolation** (the repair build showed the pilot company's lead to a founding administrator). Not a supported state; not recommended | PASSED (as a measurement) | `tenant-isolation-guard` step H, `OBSERVED:` line |
+| 9.10 | **Limits, not covered**: processes without the guard (older backends, scripts, the marketplace cron service, SQL clients); a pilot whose `companies` row was deleted by hand; up to 5 s (20 s if checks fail) between a first pilot company appearing and a running flag-off process noticing; no dedicated maintenance screen in the web app | KNOWN LIMIT | `docs/ops/COMBINED_DEPLOYMENT_AND_ROLLBACK.md` section 4 |
+| 9.11 | t5 audit sequence: rollback, re-apply, new audit insert; again a second time; **negative control** (migration without the repair collides with `duplicate key`) | PASSED | `test-subscriptions.sh` 51/51 on PostgreSQL 17 and 16; `rollback-files-quota` onboards a company after the full cycle |
+
+### Final verification (fresh clone of `f6aff15`)
+
+| Run | Result |
+|---|---|
+| Focused flag-off isolation journeys (PG17) | `feature-disable-reenable` 8/8, `tenant-isolation-guard` 30/30, `single-company-smoke` 12/12, `flag-off-round3` 18/18 |
+| Unit tests (`test:saas`) / server typecheck | 169/169 / no new errors |
+| Full journeys PostgreSQL 17 / 16 | 22 of 22 pass / 22 of 22 pass |
+| Deployment matrix, 13 states x 2 backends (invoice-numbering regression included) | PG17 and PG16 pass; every cell 9/9; the informational gap row: NEW 9/9, REPAIR 4/9 (the old counting rule; documented) |
+| DB tests (migrations, numbering, snapshot, subscriptions, reservations, runner) | PG17 and PG16 exit 0 (runner test 44/44) |
+| Repeats on PG17 | company-restore 15/15, concurrent-contracts 15/15, customer-code-collisions 15/15, storage-two-instances 15/15, rollback-files-quota 5/5, tenant-isolation-guard 5/5 |
+| The original unexplained restore deficit (run 8) | **Listed separately and unchanged: UNRESOLVED.** Explained by a reproduced mechanism (clock-based ids), not proven to be the cause of that run; the 15/15 repeat above is not evidence about run 8 |
+
+A defect found on the way, in tests only: an interim full run (on `adb2337`) failed in `rollback-files-quota` because the seed cleanup left payment-ledger rows naming removed companies, and the t5 re-apply then failed on the foreign key. Cleanup fixed (`f6aff15`); the run above is after the fix. CI at the exact head is recorded in the PR description.
 
 ## Part B. Code gaps (could still be done in this repository)
 
@@ -211,3 +243,7 @@ Not on the path, deliberately: a company price book, the delivery flows, the des
 | PA3, PA3a, PA3b (new) | listing consistency assumption; t8 before backend and PostgREST reload; backport PRs #114 and #115 |
 | CG5, CG17, CG18 (new/extended) | wording found, retry button on a refusal, crawl depth |
 | Version 1.0 | kept unchanged as `PILOT_ACCEPTANCE_CHECKLIST_v1.0.md` |
+
+### Round 6 additions (same version 1.1, before the freeze)
+* Section 9 (isolation independent of the flag) added; **the feature flag is a switch, not a rollback**, and with pilot data present switching it off pauses the founding company too (`COMBINED_DEPLOYMENT_AND_ROLLBACK.md` section 4 rewritten). An older backend on a tenant-populated database is not a supported state.
+* Fixed: CI typecheck failure on `1d2acd4` (a narrowing error in `storageQuota.ts`); quota double-count re-measure; t5 audit-sequence proof with negative control; seed cleanup of platform ledger rows.
