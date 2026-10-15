@@ -1,17 +1,22 @@
 /**
- * Moos relay tests — HMAC signing and mutual exclusion with the legacy CRM
- * AI sales agent.
+ * Moos relay tests — HMAC signing, typed delivery results, and mutual
+ * exclusion with the legacy CRM AI sales agent.
  *
  * Rule: when the legacy agent's settings.enabled is true, the Moos relay
- * stays silent (onSuppressed fires) so the two agents can never answer the
- * same conversation. When settings cannot be read, the relay fails closed
- * (treats the legacy agent as enabled).
+ * stays silent (suppressed, not failed) so the two agents can never answer
+ * the same conversation. When settings cannot be read, the relay fails
+ * closed (treats the legacy agent as enabled). Disabled relay (MOOS_RELAY_ENABLED
+ * unset) reports {status:'disabled'} — the webhook guards the call so this is
+ * never audit noise.
  *
  * Run:  PLAYWRIGHT_BROWSERS_PATH=0 tsx server/moos/moosRelay.test.ts
  */
 import assert from "node:assert/strict";
 import {
+  deliverRelayEvent,
   isLegacyAiEnabled,
+  isLegacyAiEnabledFresh,
+  moosRelayEnabled,
   moosRelaySignature,
   relayInboundToMoos,
   resetMoosRelayCacheForTests,
@@ -48,7 +53,9 @@ function env(extra: Record<string, string> = {}) {
   } as NodeJS.ProcessEnv;
 }
 
-await test("relay disabled when MOOS_RELAY_ENABLED is unset", async () => {
+await test("relay disabled when MOOS_RELAY_ENABLED is unset → typed disabled, no POST", async () => {
+  assert.equal(moosRelayEnabled(env({ MOOS_RELAY_ENABLED: "" })), false);
+  assert.equal(moosRelayEnabled(env()), true);
   let fetched = 0;
   const r = await relayInboundToMoos(env({ MOOS_RELAY_ENABLED: "" }), event, {
     fetchImpl: (async () => {
@@ -56,30 +63,25 @@ await test("relay disabled when MOOS_RELAY_ENABLED is unset", async () => {
       return new Response("{}", { status: 200 });
     }) as any,
   });
-  assert.equal(r, false);
+  assert.deepEqual(r, { status: "disabled", reason: "relay_disabled" });
   assert.equal(fetched, 0);
 });
 
-await test("legacy AI enabled → relay suppressed, onSuppressed fires, no POST", async () => {
+await test("legacy AI enabled → suppressed (not failed), no POST", async () => {
   resetMoosRelayCacheForTests();
   let fetched = 0;
-  let suppressed: string | null = null;
   const r = await relayInboundToMoos(env(), event, {
     loadSettings: async () => ({ settings: { enabled: true } }),
     fetchImpl: (async () => {
       fetched++;
       return new Response("{}", { status: 200 });
     }) as any,
-    onSuppressed: (reason) => {
-      suppressed = reason;
-    },
   });
-  assert.equal(r, false);
+  assert.deepEqual(r, { status: "suppressed", reason: "legacy_ai_enabled" });
   assert.equal(fetched, 0);
-  assert.equal(suppressed, "legacy_ai_enabled");
 });
 
-await test("legacy AI disabled → signed POST to the worker", async () => {
+await test("legacy AI disabled → signed POST to the worker → delivered", async () => {
   resetMoosRelayCacheForTests();
   let seen: { url: string; sig: string; body: string } | null = null;
   const r = await relayInboundToMoos(env(), event, {
@@ -89,7 +91,7 @@ await test("legacy AI disabled → signed POST to the worker", async () => {
       return new Response("{}", { status: 200 });
     }) as any,
   });
-  assert.equal(r, true);
+  assert.deepEqual(r, { status: "delivered" });
   assert.ok(seen);
   assert.equal(seen!.url, "http://worker.example/webhooks/crm");
   const expected = moosRelaySignature(seen!.body, "s3cret");
@@ -111,14 +113,14 @@ await test("settings unreadable → fail closed (treated as legacy enabled)", as
       return new Response("{}", { status: 200 });
     }) as any,
   });
-  assert.equal(r, false);
+  assert.deepEqual(r, { status: "suppressed", reason: "legacy_ai_enabled" });
   assert.equal(fetched, 0);
-  assert.equal(await isLegacyAiEnabled(async () => {
+  assert.equal(await isLegacyAiEnabledFresh(async () => {
     throw new Error("x");
   }), true);
 });
 
-await test("legacy-ai check is cached (one settings read per 30s)", async () => {
+await test("legacy-ai check is cached (one settings read per 30s); fresh read bypasses cache", async () => {
   resetMoosRelayCacheForTests();
   let reads = 0;
   const loader = async () => {
@@ -128,27 +130,30 @@ await test("legacy-ai check is cached (one settings read per 30s)", async () => 
   await isLegacyAiEnabled(loader);
   await isLegacyAiEnabled(loader);
   assert.equal(reads, 1);
+  await isLegacyAiEnabledFresh(loader);
+  assert.equal(reads, 2);
 });
 
-await test("worker non-2xx → relay reports failure (caller audits, webhook still 200s)", async () => {
+await test("worker non-2xx → typed failed (outbox retries; webhook still 200s)", async () => {
   resetMoosRelayCacheForTests();
   const r = await relayInboundToMoos(env(), event, {
     loadSettings: async () => ({ settings: { enabled: false } }),
     fetchImpl: (async () => new Response("boom", { status: 500 })) as any,
   });
-  assert.equal(r, false);
+  assert.equal(r.status, "failed");
+  assert.match(String((r as any).reason), /worker_status_500/);
 });
 
-await test("missing worker URL or secret → no relay", async () => {
+await test("missing worker URL or secret → typed failed, no POST", async () => {
   resetMoosRelayCacheForTests();
-  const r1 = await relayInboundToMoos(env({ MOOS_WORKER_URL: "" }), event, {
+  const r1 = await deliverRelayEvent(env({ MOOS_WORKER_URL: "" }), event, {
     loadSettings: async () => ({ settings: { enabled: false } }),
   });
-  const r2 = await relayInboundToMoos(env({ RELAY_SECRET: "" }), event, {
+  const r2 = await deliverRelayEvent(env({ RELAY_SECRET: "" }), event, {
     loadSettings: async () => ({ settings: { enabled: false } }),
   });
-  assert.equal(r1, false);
-  assert.equal(r2, false);
+  assert.equal(r1.status, "failed");
+  assert.equal(r2.status, "failed");
 });
 
 if (failed > 0) {

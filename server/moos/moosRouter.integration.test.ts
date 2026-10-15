@@ -65,7 +65,14 @@ type Ctx = {
   inbox: ReturnType<typeof createInMemoryWhatsAppInboxRepositories>;
   deliverBehavior: { kind: "ok" | "timeout" | "provider" };
   pdfBytes: Buffer | null;
+  /** Artificial delay (ms) for the stubbed PDF fetch — race-condition tests. */
+  fetchDelayMs: number;
+  /** Fresh legacy-agent switch for send-boundary mutual-exclusion tests. */
+  legacyAiOn: boolean;
+  /** wamid → { conversationId, direction } index for draft-binding tests. */
+  wamidIndex: Map<string, { conversationId: string; direction: string }>;
   seedConversation: (id: string, opts?: { state?: string; assigned?: string | null; status?: string; inboundHoursAgo?: number | null; phone?: string }) => void;
+  seedInboundWamid: (conversationId: string, wamid: string, direction?: string) => void;
 };
 
 async function setup(quotes: any[] = []): Promise<Ctx> {
@@ -88,6 +95,9 @@ async function setup(quotes: any[] = []): Promise<Ctx> {
     inbox,
     deliverBehavior: { kind: "ok" },
     pdfBytes: Buffer.from("%PDF-1.4 fake-bytes-for-tests"),
+    fetchDelayMs: 0,
+    legacyAiOn: false,
+    wamidIndex: new Map(),
     seedConversation(id, opts = {}) {
       const {
         state = "AI_ACTIVE",
@@ -128,9 +138,13 @@ async function setup(quotes: any[] = []): Promise<Ctx> {
       }
       (ctx as any).phones = { ...(ctx as any).phones, [id]: phone };
     },
+    seedInboundWamid(conversationId, wamid, direction = "inbound") {
+      ctx.wamidIndex.set(wamid, { conversationId, direction });
+    },
   };
 
   const conversationRepoFake = {
+    isActive: () => true,
     getConversationBundle: async (conversationId: string) => {
       const convo = inbox.store.conversations.get(conversationId);
       if (!convo) return null;
@@ -139,6 +153,17 @@ async function setup(quotes: any[] = []): Promise<Ctx> {
         conversation: {},
         contact: { phoneE164: phones[conversationId] || "923001234567" },
         channel: { phoneNumberId: "243825222156651" },
+      };
+    },
+    getMessageByWaMessageId: async (wamid: string) => {
+      const hit = ctx.wamidIndex.get(String(wamid || ""));
+      if (!hit) return null;
+      return {
+        id: `wmsg-${wamid}`,
+        companyId: "sunchaser",
+        conversationId: hit.conversationId,
+        direction: hit.direction,
+        waMessageId: wamid,
       };
     },
     insertHistoricalOutboundMessage: async (row: any) => {
@@ -167,7 +192,10 @@ async function setup(quotes: any[] = []): Promise<Ctx> {
       inboxRepos: () => inbox,
       conversationRepo: () => conversationRepoFake as any,
       loadSettings: async () => ({ settings: { quotations: quotes } as any }),
-      fetchQuotePdf: async () => ctx.pdfBytes,
+      fetchQuotePdf: async () => {
+        if (ctx.fetchDelayMs) await new Promise((r) => setTimeout(r, ctx.fetchDelayMs));
+        return ctx.pdfBytes;
+      },
       resolveActor: async () => ({ username: "moos-service" }) as any,
       sendOutboundText: async (conversationId: string, text: string, opts: any) => {
         calls.sendText.push({ conversationId, text, opts });
@@ -183,6 +211,8 @@ async function setup(quotes: any[] = []): Promise<Ctx> {
         }
         return { ok: true, providerMessageId: "wamid.doc1" };
       },
+      // Fresh legacy-agent read at the send boundary (tests toggle ctx.legacyAiOn).
+      checkLegacyAi: async () => ctx.legacyAiOn,
     })
   );
   const server = await new Promise<any>((resolve) => {
@@ -237,7 +267,7 @@ await test("mutating endpoints 503 with moos_disabled when MOOS_ENABLED=false", 
     for (const [method, path, body] of [
       ["POST", "/send-text", { conversationId: "c", text: "t", idempotencyKey: "k12345678" }],
       ["POST", "/send-approved-pdf", { conversationId: "c", quoteId: "q", idempotencyKey: "k12345678" }],
-      ["POST", "/custom-quote-draft", { phone: "03001234567", requirements: {}, messageId: "m1" }],
+      ["POST", "/custom-quote-draft", { conversationId: "c", inboundMessageId: "wamid.x", requirements: {} }],
       ["POST", "/handoff", { conversationId: "c", reason: "r" }],
     ] as const) {
       const r = await api(ctx, method, path, body);
@@ -484,17 +514,21 @@ await test("send-approved-pdf: provider rejection → 502", async () => {
 
 await test("custom-quote-draft creates draft; replay returns existing draft (no duplicate)", async () => {
   const ctx = await setup();
+  ctx.seedConversation("conv-d1", { phone: "923001234567" });
+  ctx.seedInboundWamid("conv-d1", "wamid.draft1");
   try {
     const req = {
-      phone: "03001234567",
+      conversationId: "conv-d1",
+      inboundMessageId: "wamid.draft1",
       requirements: { name: "Ali", city: "Lahore", systemCapacityKw: 10 },
-      messageId: "wamid.draft1",
     };
     const r1 = await api(ctx, "POST", "/custom-quote-draft", req);
     assert.equal(r1.status, 200);
     assert.equal(r1.data.status, "draft_pending_staff_approval");
     assert.ok(r1.data.draftId);
     assert.equal(ctx.calls.createQuote.length, 1);
+    // The recipient phone is derived from the CRM bundle, not the request.
+    assert.equal(ctx.calls.createQuote[0].phone, "923001234567");
     // replay the same worker request → same draft, no second creation
     const r2 = await api(ctx, "POST", "/custom-quote-draft", req);
     assert.equal(r2.status, 200);
@@ -508,14 +542,271 @@ await test("custom-quote-draft creates draft; replay returns existing draft (no 
 
 await test("custom-quote-draft validation failure → 422 needs_human_review", async () => {
   const ctx = await setup();
+  ctx.seedConversation("conv-d2");
+  ctx.seedInboundWamid("conv-d2", "wamid.draft2");
   try {
     const r = await api(ctx, "POST", "/custom-quote-draft", {
-      phone: "03001234567",
+      conversationId: "conv-d2",
+      inboundMessageId: "wamid.draft2",
       requirements: { name: "Ali", __fail: true },
-      messageId: "wamid.draft2",
     });
     assert.equal(r.status, 422);
     assert.equal(r.data.status, "needs_human_review");
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ---------- P0: draft binding ----------
+
+await test("custom-quote-draft requires conversationId + inboundMessageId", async () => {
+  const ctx = await setup();
+  try {
+    const r1 = await api(ctx, "POST", "/custom-quote-draft", {
+      requirements: { name: "Ali" },
+    });
+    assert.equal(r1.status, 400);
+    const r2 = await api(ctx, "POST", "/custom-quote-draft", {
+      conversationId: "conv-x",
+      requirements: { name: "Ali" },
+    });
+    assert.equal(r2.status, 400);
+    assert.equal(ctx.calls.createQuote.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("custom-quote-draft rejects unknown conversation (404)", async () => {
+  const ctx = await setup();
+  try {
+    const r = await api(ctx, "POST", "/custom-quote-draft", {
+      conversationId: "conv-nope",
+      inboundMessageId: "wamid.zzz",
+      requirements: { name: "Ali" },
+    });
+    assert.equal(r.status, 404);
+    assert.equal(ctx.calls.createQuote.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("custom-quote-draft rejects unverified inbound wamid (422, no quote)", async () => {
+  const ctx = await setup();
+  ctx.seedConversation("conv-d3");
+  ctx.seedInboundWamid("conv-d3", "wamid.real");
+  try {
+    const r = await api(ctx, "POST", "/custom-quote-draft", {
+      conversationId: "conv-d3",
+      inboundMessageId: "wamid.unknown",
+      requirements: { name: "Ali" },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(ctx.calls.createQuote.length, 0);
+    const audits = (ctx as any).audits || [];
+    assert.ok(audits.some((a: any) => a.eventType === "moos_draft_rejected"));
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("custom-quote-draft rejects wamid from another conversation (contact B via conversation A fails)", async () => {
+  const ctx = await setup();
+  ctx.seedConversation("conv-A", { phone: "923001111111" });
+  ctx.seedConversation("conv-B", { phone: "923002222222" });
+  ctx.seedInboundWamid("conv-B", "wamid.from-b");
+  try {
+    // Attacker/worker bug: conversation A claimed, but the wamid belongs to B.
+    const r = await api(ctx, "POST", "/custom-quote-draft", {
+      conversationId: "conv-A",
+      inboundMessageId: "wamid.from-b",
+      requirements: { name: "Ali" },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(ctx.calls.createQuote.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("custom-quote-draft rejects outbound wamid (direction must be inbound)", async () => {
+  const ctx = await setup();
+  ctx.seedConversation("conv-d4");
+  ctx.seedInboundWamid("conv-d4", "wamid.out1", "outbound");
+  try {
+    const r = await api(ctx, "POST", "/custom-quote-draft", {
+      conversationId: "conv-d4",
+      inboundMessageId: "wamid.out1",
+      requirements: { name: "Ali" },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(ctx.calls.createQuote.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("custom-quote-draft blocked on human-owned conversation (409)", async () => {
+  const ctx = await setup();
+  ctx.seedConversation("conv-d5", { state: "HUMAN_HANDLING" });
+  ctx.seedInboundWamid("conv-d5", "wamid.h1");
+  try {
+    const r = await api(ctx, "POST", "/custom-quote-draft", {
+      conversationId: "conv-d5",
+      inboundMessageId: "wamid.h1",
+      requirements: { name: "Ali" },
+    });
+    assert.equal(r.status, 409);
+    assert.equal(ctx.calls.createQuote.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ---------- P0: send-time mutual exclusion ----------
+
+await test("send-text blocked when legacy AI turns on after relay (send-boundary check)", async () => {
+  const ctx = await setup();
+  ctx.seedConversation("conv-race1");
+  try {
+    // Relay-time state: legacy AI off → event flows to the worker.
+    ctx.legacyAiOn = false;
+    // ...then the legacy AI is enabled before the worker's send lands.
+    ctx.legacyAiOn = true;
+    const r = await api(ctx, "POST", "/send-text", {
+      conversationId: "conv-race1",
+      text: "hello",
+      idempotencyKey: "key-race-001",
+    });
+    assert.equal(r.status, 409);
+    assert.match(String(r.data.error), /Legacy WhatsApp AI agent is active/);
+    assert.equal(ctx.calls.sendText.length, 0);
+    const audits = (ctx as any).audits || [];
+    assert.ok(audits.some((a: any) => a.eventType === "MOOS_SEND_SUPPRESSED_LEGACY_AI"));
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("send-approved-pdf cancelled when legacy AI activates during PDF fetch", async () => {
+  const ctx = await setup([validQuote("q-race")]);
+  ctx.seedConversation("conv-race2");
+  try {
+    // Legacy AI is OFF when the request starts; it turns ON while the PDF
+    // bytes are being fetched (slow storage read). The post-fetch
+    // send-boundary check must still block the dispatch.
+    ctx.legacyAiOn = false;
+    ctx.fetchDelayMs = 60;
+    setTimeout(() => {
+      ctx.legacyAiOn = true;
+    }, 15);
+    const r = await api(ctx, "POST", "/send-approved-pdf", {
+      conversationId: "conv-race2",
+      quoteId: "q-race",
+      idempotencyKey: "key-race-002",
+    });
+    assert.equal(r.status, 409);
+    assert.match(String(r.data.error), /Legacy WhatsApp AI agent became active/);
+    assert.equal(ctx.calls.deliverDocument.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("send-approved-pdf cancelled when ownership changes during PDF fetch", async () => {
+  const ctx = await setup([validQuote("q-race2")]);
+  ctx.seedConversation("conv-race3");
+  try {
+    // Staff takes over mid-fetch (pre-fetch ownership check passes).
+    ctx.fetchDelayMs = 60;
+    setTimeout(() => {
+      ctx.inbox.store.conversations.get("conv-race3")!.aiOwnershipState =
+        "HUMAN_HANDLING" as any;
+    }, 15);
+    const r = await api(ctx, "POST", "/send-approved-pdf", {
+      conversationId: "conv-race3",
+      quoteId: "q-race2",
+      idempotencyKey: "key-race-003",
+    });
+    assert.equal(r.status, 409);
+    assert.match(String(r.data.error), /ownership changed/i);
+    assert.equal(ctx.calls.deliverDocument.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ---------- P1: handoff CAS ----------
+
+await test("handoff CAS conflict → 409, no success reported, audit only on success", async () => {
+  const ctx = await setup();
+  ctx.seedConversation("conv-cas");
+  try {
+    // Simulate a concurrent writer bumping lockVersion between our read and CAS.
+    const conversations = ctx.inbox.conversations as any;
+    const origCas = conversations.compareAndSet.bind(conversations);
+    let calls = 0;
+    conversations.compareAndSet = async (...args: any[]) => {
+      calls++;
+      return { ok: false, reason: "conflict", current: await conversations.getById(args[0], "sunchaser") };
+    };
+    const r = await api(ctx, "POST", "/handoff", {
+      conversationId: "conv-cas",
+      reason: "race",
+    });
+    conversations.compareAndSet = origCas;
+    assert.equal(r.status, 409);
+    assert.match(String(r.data.error), /changed during handoff/);
+    assert.equal(calls, 3, "bounded reload-and-retry (3 attempts)");
+    const audits = (ctx as any).audits || [];
+    assert.ok(!audits.some((a: any) => a.eventType === "moos_handoff"), "no handoff audit on conflict");
+    // Conversation must NOT be in HUMAN_HANDLING after a failed handoff.
+    const convo = ctx.inbox.store.conversations.get("conv-cas")!;
+    assert.notEqual(convo.aiOwnershipState, "HUMAN_HANDLING");
+  } finally {
+    await ctx.close();
+  }
+});
+
+await test("handoff is idempotent when already HUMAN_HANDLING", async () => {
+  const ctx = await setup();
+  ctx.seedConversation("conv-cas2", { state: "HUMAN_HANDLING" });
+  try {
+    const r = await api(ctx, "POST", "/handoff", {
+      conversationId: "conv-cas2",
+      reason: "again",
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.state, "HUMAN_HANDLING");
+    assert.equal(r.data.updated, false);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ---------- outcome-unknown never retried ----------
+
+await test("provider timeout → 202 outcome-unknown; retry with same key is suppressed (409)", async () => {
+  const ctx = await setup([validQuote("q-tmo")]);
+  ctx.seedConversation("conv-tmo");
+  try {
+    ctx.deliverBehavior.kind = "timeout";
+    const r1 = await api(ctx, "POST", "/send-approved-pdf", {
+      conversationId: "conv-tmo",
+      quoteId: "q-tmo",
+      idempotencyKey: "key-tmo-001",
+    });
+    assert.equal(r1.status, 202);
+    assert.equal(ctx.calls.deliverDocument.length, 1);
+    // Retry with the same key must NOT re-attempt the Meta send.
+    const r2 = await api(ctx, "POST", "/send-approved-pdf", {
+      conversationId: "conv-tmo",
+      quoteId: "q-tmo",
+      idempotencyKey: "key-tmo-001",
+    });
+    assert.equal(r2.status, 409);
+    assert.equal(ctx.calls.deliverDocument.length, 1);
   } finally {
     await ctx.close();
   }

@@ -23,7 +23,10 @@ import {
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
 import { dirtyUnreadIndexForConversation } from "./whatsappInboxUnreadIndexCache.ts";
-import { relayInboundToMoos } from "../moos/moosRelay.ts";
+import { moosRelayEnabled } from "../moos/moosRelay.ts";
+import {
+  getDefaultMoosRelayOutboxStore,
+} from "../moos/moosRelayOutbox.ts";
 import { sha256Hex, verifyWhatsAppSignature } from "./whatsappSignature.ts";
 import { recordWebhookPing } from "./whatsappConnectionService.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
@@ -171,47 +174,36 @@ async function persistNormalizedEvents(
           },
         });
         if (enqueueSalesAgent && textBody && messageType === "text") await enqueueSalesAgent(conversation.id, inserted.row.id);
-        // Moos relay: forward the verified, recorded inbound text to the Moos
-        // worker via HMAC-signed POST. Fire-and-forget — relay failures are
-        // audited but never block the webhook 200.
-        if (textBody && messageType === "text") {
-          // Set synchronously by onSuppressed before the relay promise resolves,
-          // so the .then below can tell suppression apart from failure.
-          let relaySuppressed = false;
-          void relayInboundToMoos(
-            process.env,
-            {
-              conversationId: conversation.id,
-              messageId: event.waMessageId,
-              phone: contact.phoneE164,
-              phoneNumberId: channel.phoneNumberId,
-              type: "text",
-              text: textBody.slice(0, 4000),
-              sentAt: Date.parse(event.occurredAt) || Date.now(),
-            },
-            {
-              // Mutual exclusion: legacy AI enabled → relay suppressed (audited
-              // distinctly from failures; never blocks the webhook 200).
-              onSuppressed: (reason) => {
-                relaySuppressed = true;
-                return safeAudit(repo, {
-                  eventType: "MOOS_RELAY_SUPPRESSED",
-                  entityType: "message",
-                  entityId: inserted.row.id,
-                  metadata: { conversationId: conversation.id, reason },
-                });
-              },
-            }
-          ).then((relayed) => {
-            if (!relayed && !relaySuppressed) {
-              return safeAudit(repo, {
-                eventType: "MOOS_RELAY_FAILED",
+        // Moos relay: enqueue the verified, recorded inbound text into the
+        // durable relay outbox (unique wamid). A periodic drain delivers it
+        // to the Moos worker with bounded retry/backoff, so a worker outage
+        // cannot silently lose the event while the webhook returns 200.
+        // Relay disabled (MOOS_RELAY_ENABLED unset) → skip entirely: no
+        // enqueue, no audit noise. Mutual exclusion with the legacy AI agent
+        // is enforced fresh at drain/delivery time (see moosRelayOutbox.ts).
+        if (textBody && messageType === "text" && moosRelayEnabled(process.env)) {
+          const relayEvent = {
+            conversationId: conversation.id,
+            messageId: event.waMessageId,
+            phone: contact.phoneE164,
+            phoneNumberId: channel.phoneNumberId,
+            type: "text" as const,
+            text: textBody.slice(0, 4000),
+            sentAt: Date.parse(event.occurredAt) || Date.now(),
+          };
+          void getDefaultMoosRelayOutboxStore()
+            .enqueue(relayEvent)
+            .catch((err) =>
+              safeAudit(repo, {
+                eventType: "MOOS_RELAY_ENQUEUE_FAILED",
                 entityType: "message",
                 entityId: inserted.row.id,
-                metadata: { conversationId: conversation.id },
-              });
-            }
-          });
+                metadata: {
+                  conversationId: conversation.id,
+                  error: String(err instanceof Error ? err.message : err).slice(0, 200),
+                },
+              })
+            );
         }
         continue;
       }

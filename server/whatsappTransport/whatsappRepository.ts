@@ -187,6 +187,12 @@ export interface WhatsAppRepository {
   ): Promise<ConversationBundle | null>;
   /** Resolve legacy whatsapp_messages.id by Meta wa_message_id (for normalized binding recovery). */
   findMessageIdByWaMessageId(waMessageId: string): Promise<string | null>;
+  /**
+   * Resolve a persisted message row by Meta wa_message_id. Used by the Moos
+   * custom-quote-draft binding to verify the inbound wamid belongs to the
+   * claimed conversation (direction + conversationId are checked by callers).
+   */
+  getMessageByWaMessageId(waMessageId: string): Promise<WhatsAppMessage | null>;
   findContactByPhoneE164?(
     phoneE164: string,
     companyId?: string
@@ -615,6 +621,20 @@ export class InMemoryWhatsAppRepository implements WhatsAppRepository {
         message.waMessageId === needle
       ) {
         return message.id;
+      }
+    }
+    return null;
+  }
+
+  async getMessageByWaMessageId(waMessageId: string): Promise<WhatsAppMessage | null> {
+    const needle = String(waMessageId || "").trim();
+    if (!needle) return null;
+    for (const message of this.messages.values()) {
+      if (
+        message.companyId === DEFAULT_COMPANY_ID &&
+        message.waMessageId === needle
+      ) {
+        return message;
       }
     }
     return null;
@@ -1510,6 +1530,20 @@ export class SupabaseWhatsAppRepository implements WhatsAppRepository {
       .maybeSingle();
     if (error) throw new Error(error.message);
     return data?.id ? String(data.id) : null;
+  }
+
+  async getMessageByWaMessageId(waMessageId: string): Promise<WhatsAppMessage | null> {
+    const needle = String(waMessageId || "").trim();
+    if (!needle) return null;
+    const { data, error } = await this.client()
+      .from("whatsapp_messages")
+      .select("*")
+      .eq("wa_message_id", needle)
+      .eq("company_id", DEFAULT_COMPANY_ID)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data ? mapMessage(data as Record<string, unknown>) : null;
   }
 
   async insertOutboundMessage(input: {

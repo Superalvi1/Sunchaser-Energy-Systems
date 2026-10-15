@@ -22,6 +22,7 @@ export type InverterCatalogItem = {
     batteryId: string;
     batteryLabel: string;
     totalBundlePricePkr: number;
+    batteryQuantity?: number;
   };
 };
 

@@ -77,6 +77,7 @@ import { getWhatsAppConnectionRepository } from "../whatsappTransport/whatsappCo
 import { hydrateActorFromUsername, type RequestActor } from "../middleware/actor.ts";
 import { canSendOutboundWhatsApp } from "../whatsappTransport/whatsappPermissions.ts";
 import { normalizePakistanMobile } from "../../src/lib/smartQuoteLead.ts";
+import { isLegacyAiEnabledFresh } from "./moosRelay.ts";
 
 const COMPANY_ID = "sunchaser";
 
@@ -147,6 +148,12 @@ export type MoosRouterDeps = {
   deliverDocument?: (
     input: MoosDeliverDocumentInput
   ) => Promise<MoosDeliverDocumentResult>;
+  /**
+   * Fresh, fail-closed legacy-agent check used at the send boundary.
+   * Defaults to isLegacyAiEnabledFresh (no cache) — a queued event must not
+   * send after the legacy AI becomes enabled.
+   */
+  checkLegacyAi?: () => Promise<boolean>;
 };
 
 function serviceToken(): string {
@@ -292,7 +299,7 @@ async function defaultDeliverDocument(
     filename: input.filename,
     fetchImpl: metaFetch,
   });
-  if (!upload.ok) {
+  if (upload.ok === false) {
     // provider_error / invalid_response / invalid_config are terminal provider
     // failures (failed-known); only timeout/network are outcome-unknown.
     const kind = upload.kind === "timeout" || upload.kind === "network" ? upload.kind : "provider";
@@ -308,7 +315,7 @@ async function defaultDeliverDocument(
     graphApiVersion: config.graphApiVersion,
     fetchImpl: metaFetch,
   });
-  if (!send.ok) {
+  if (send.ok === false) {
     const kind = send.kind === "timeout" || send.kind === "network" ? send.kind : "provider";
     return { ok: false, kind, error: send.sanitizedError };
   }
@@ -362,6 +369,18 @@ export function createMoosRouter(deps: MoosRouterDeps) {
   const deliverDocument =
     deps.deliverDocument ??
     ((input: MoosDeliverDocumentInput) => defaultDeliverDocument(input, metaFetch));
+  const checkLegacyAi = deps.checkLegacyAi ?? (() => isLegacyAiEnabledFresh());
+
+  /**
+   * Send-boundary mutual exclusion: a fresh, fail-closed legacy-agent read
+   * immediately before Meta dispatch. A queued Moos event must never send
+   * after the legacy AI becomes enabled — the relay-time check alone cannot
+   * guarantee this.
+   */
+  async function assertLegacyAiOff(): Promise<{ blocked: boolean }> {
+    if (await checkLegacyAi()) return { blocked: true };
+    return { blocked: false };
+  }
 
   /** Ownership gate for Moos: eligible state, open conversation, no staff owner. */
   async function checkOwnership(conversationId: string): Promise<OwnershipCheck> {
@@ -530,7 +549,28 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         res.status(409).json({ error: "Duplicate send suppressed" });
         return;
       }
+      // Send-boundary mutual exclusion: re-read the legacy-agent switch fresh
+      // (fail closed) immediately before Meta dispatch. A queued event must
+      // not send after the legacy AI becomes enabled.
       const repo = conversationRepo();
+      if ((await assertLegacyAiOff()).blocked) {
+        await repos.idempotency.markFailedKnown({
+          idempotencyKey: claimKey,
+          conversationId,
+          companyId: COMPANY_ID,
+          error: "legacy_ai_active",
+        });
+        await safeAudit(repo, {
+          eventType: "MOOS_SEND_SUPPRESSED_LEGACY_AI",
+          entityType: "conversation",
+          entityId: conversationId,
+          metadata: { idempotencyKey: claimKey },
+        });
+        res
+          .status(409)
+          .json({ error: "Legacy WhatsApp AI agent is active; Moos yields the conversation" });
+        return;
+      }
       const result: OutboundSendResult = await sendOutboundText(conversationId, text, {
         repo,
         actor,
@@ -546,28 +586,41 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         res.json({ ok: true, providerMessageId: result.providerMessageId });
         return;
       }
-      if (
-        result.httpStatus === 202 ||
-        result.httpStatus === 504 ||
-        result.providerOutcome === "accepted"
-      ) {
-        await repos.idempotency.markOutcomeUnknown({
+      if (result.httpStatus !== 201) {
+        if (
+          result.httpStatus === 202 ||
+          result.httpStatus === 504 ||
+          result.providerOutcome === "accepted"
+        ) {
+          await repos.idempotency.markOutcomeUnknown({
+            idempotencyKey: claimKey,
+            conversationId,
+            companyId: COMPANY_ID,
+          });
+          res
+            .status(202)
+            .json({ error: "Provider outcome unknown; not retried", status: result.status });
+          return;
+        }
+        await repos.idempotency.markFailedKnown({
           idempotencyKey: claimKey,
           conversationId,
           companyId: COMPANY_ID,
+          error: result.error || "send failed",
         });
-        res
-          .status(202)
-          .json({ error: "Provider outcome unknown; not retried", status: result.status });
+        res.status(result.httpStatus).json({ error: result.error || "Send failed" });
         return;
       }
-      await repos.idempotency.markFailedKnown({
+      // httpStatus 201 without a provider message id: accepted but
+      // untrackable — outcome unknown, never retried.
+      await repos.idempotency.markOutcomeUnknown({
         idempotencyKey: claimKey,
         conversationId,
         companyId: COMPANY_ID,
-        error: result.error || "send failed",
       });
-      res.status(result.httpStatus).json({ error: result.error || "Send failed" });
+      res
+        .status(202)
+        .json({ error: "Provider outcome unknown; not retried", status: result.status });
     } catch (err) {
       console.error(
         "[moos] send-text failed:",
@@ -663,6 +716,31 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         res.status(404).json({ error: "Conversation not found" });
         return;
       }
+      // 5b. Re-validate AFTER the (slow) PDF fetch: ownership or the legacy
+      //     agent switch may have changed while bytes were being fetched.
+      //     Either change blocks the send — no stale dispatch.
+      const ownershipAfterFetch = await checkOwnership(conversationId);
+      if (!ownershipAfterFetch.eligible) {
+        await failKnown("ownership_changed_during_fetch");
+        res.status(409).json({
+          error: "Conversation ownership changed during send; dispatch cancelled",
+          state: ownershipAfterFetch.state,
+        });
+        return;
+      }
+      if ((await assertLegacyAiOff()).blocked) {
+        await failKnown("legacy_ai_active");
+        await safeAudit(repo, {
+          eventType: "MOOS_SEND_SUPPRESSED_LEGACY_AI",
+          entityType: "conversation",
+          entityId: conversationId,
+          metadata: { idempotencyKey: claimKey, quoteId },
+        });
+        res.status(409).json({
+          error: "Legacy WhatsApp AI agent became active during send; Moos yields the conversation",
+        });
+        return;
+      }
       // 6. Upload media, then send the native document.
       const filename = `Sunchaser-${quote.capacityKw}kW-Quotation.pdf`;
       const caption = pdfCaption(quote.title, quote.capacityKw, quote.expiresAt);
@@ -675,7 +753,7 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         caption,
         quoteId,
       });
-      if (!delivery.ok) {
+      if (delivery.ok === false) {
         if (delivery.kind === "timeout" || delivery.kind === "network") {
           await repos.idempotency.markOutcomeUnknown({
             idempotencyKey: claimKey,
@@ -753,32 +831,88 @@ export function createMoosRouter(deps: MoosRouterDeps) {
    * (calculateAgentQuote → lead → PDF → archive). The draft is NEVER auto-sent:
    * the worker replies with a holding message and hands off for staff review.
    *
-   * Replay protection: the draft claim key derives from the worker's
-   * messageId; a replayed request returns the already-created draft instead
-   * of generating a second one.
+   * Binding (P0): the draft is bound to a VERIFIED CRM conversation —
+   * `conversationId` is required, the recipient phone is derived from the
+   * CRM's conversation bundle (the worker can never name an arbitrary
+   * recipient), and `inboundMessageId` must be a persisted inbound message of
+   * that conversation. Ownership must permit Moos action. The idempotency
+   * claim is bound to the verified conversation + wamid, so a replayed
+   * request returns the already-created draft instead of generating a second.
    */
   router.post("/custom-quote-draft", async (req: Request, res: Response) => {
     if (!authorized(req, res)) return;
     if (!requireEnabled(res)) return;
     const body = jsonBody(req);
-    const phoneRaw = String(body.phone || "");
+    const conversationId = String(body.conversationId || "");
+    const inboundMessageId = String(body.inboundMessageId || "");
     const requirements = body.requirements as QuoteRequirements | undefined;
-    const messageId = String(body.messageId || `moos-${Date.now()}`);
-    const phone = normalizePakistanMobile(phoneRaw);
-    if (!phone) {
-      res.status(400).json({ error: "A valid Pakistani mobile number is required" });
+    if (!conversationId || !inboundMessageId) {
+      res
+        .status(400)
+        .json({ error: "conversationId and inboundMessageId are required" });
       return;
     }
     if (!requirements || typeof requirements !== "object") {
       res.status(400).json({ error: "requirements are required" });
       return;
     }
-    const draftKey = `moos:draft:${messageId.replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 100)}`;
     try {
+      const repo = conversationRepo();
+      // 1. Verified conversation — the contact (recipient) comes from the CRM
+      //    bundle, never from the worker's request body.
+      const bundle = await repo.getConversationBundle(conversationId, COMPANY_ID);
+      if (!bundle) {
+        res.status(404).json({ error: "Conversation not found" });
+        return;
+      }
+      // 2. Ownership gate: drafts only for Moos-eligible conversations.
+      const ownership = await checkOwnership(conversationId);
+      if (!ownership.eligible) {
+        res.status(409).json({
+          error: "Conversation is human-owned or closed",
+          state: ownership.state,
+        });
+        return;
+      }
+      // 3. The inbound wamid must be a persisted inbound message belonging to
+      //    THIS conversation. Rejects unknown wamids and cross-conversation
+      //    wamids (contact B smuggled via conversation A fails here).
+      const inbound = await repo.getMessageByWaMessageId(inboundMessageId);
+      if (
+        !inbound ||
+        inbound.companyId !== COMPANY_ID ||
+        inbound.conversationId !== conversationId ||
+        inbound.direction !== "inbound"
+      ) {
+        await safeAudit(repo, {
+          eventType: "moos_draft_rejected",
+          entityType: "conversation",
+          entityId: conversationId,
+          metadata: {
+            reason: "unverified_inbound_message",
+            inboundMessageId: inboundMessageId.slice(0, 80),
+          },
+        });
+        res.status(422).json({
+          error: "Inbound message could not be verified for this conversation",
+        });
+        return;
+      }
+      const phone = normalizePakistanMobile(bundle.contact.phoneE164);
+      if (!phone) {
+        res
+          .status(422)
+          .json({ error: "Conversation contact has no valid phone number" });
+        return;
+      }
+      // 4. Idempotency bound to the verified conversation + wamid.
+      const draftKey =
+        `moos:draft:${conversationId}:` +
+        inboundMessageId.replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 80);
       const repos = inboxRepos();
       const claim = await repos.idempotency.claim({
         idempotencyKey: draftKey,
-        conversationId: `draft:${phone}`,
+        conversationId,
         companyId: COMPANY_ID,
       });
       if (claim.kind !== "claimed") {
@@ -796,19 +930,20 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         res.status(409).json({ error: "Draft already in progress for this request" });
         return;
       }
-      const created = await deps.createQuote(requirements, phone, messageId);
+      const created = await deps.createQuote(requirements, phone, inboundMessageId);
       await repos.idempotency.markCompleted({
         idempotencyKey: draftKey,
-        conversationId: `draft:${phone}`,
+        conversationId,
         companyId: COMPANY_ID,
         messageId: created.quoteNumber,
       });
-      const repo = conversationRepo();
       await repo.insertAuditEvent({
         eventType: "moos_custom_quote_draft",
         entityType: "quotation",
         entityId: created.quoteNumber,
         metadata: {
+          conversationId,
+          inboundMessageId,
           phone,
           totalPkr: created.totalPkr,
           source: "moos-wa-agent",
@@ -833,7 +968,16 @@ export function createMoosRouter(deps: MoosRouterDeps) {
     }
   });
 
-  /** Move a conversation to HUMAN_HANDLING and audit the handoff. */
+  /**
+   * Move a conversation to HUMAN_HANDLING.
+   *
+   * The ownership transition is compare-and-set on the conversation's
+   * lockVersion with bounded reload-and-retry: a CAS conflict (another actor
+   * moved the conversation concurrently) returns 409 instead of reporting a
+   * failed transition as success. The handoff audit is emitted only after a
+   * successful transition; an already-HUMAN_HANDLING conversation is an
+   * idempotent success with updated:false.
+   */
   router.post("/handoff", async (req: Request, res: Response) => {
     if (!authorized(req, res)) return;
     if (!requireEnabled(res)) return;
@@ -848,16 +992,47 @@ export function createMoosRouter(deps: MoosRouterDeps) {
     try {
       const repos = inboxRepos();
       const repo = conversationRepo();
-      const convo = await repos.conversations.getById(conversationId, COMPANY_ID);
-      if (!convo) {
+      let current = await repos.conversations.getById(conversationId, COMPANY_ID);
+      if (!current) {
         res.status(404).json({ error: "Conversation not found" });
         return;
       }
-      const cas = await repos.conversations.compareAndSet(
-        convo.id,
-        convo.lockVersion,
-        { companyId: COMPANY_ID, aiOwnershipState: "HUMAN_HANDLING" }
-      );
+      if (current.aiOwnershipState === "HUMAN_HANDLING") {
+        res.json({ ok: true, state: "HUMAN_HANDLING", updated: false, already: true });
+        return;
+      }
+      let transitioned = false;
+      let previousState: string = String(current.aiOwnershipState || "");
+      for (let attempt = 0; attempt < 3 && !transitioned; attempt++) {
+        previousState = String(current.aiOwnershipState || "");
+        const cas = await repos.conversations.compareAndSet(
+          current.id,
+          current.lockVersion,
+          { companyId: COMPANY_ID, aiOwnershipState: "HUMAN_HANDLING" }
+        );
+        if (cas.ok === true) {
+          transitioned = true;
+          break;
+        }
+        if (cas.reason === "not_found" || !cas.current) {
+          res.status(404).json({ error: "Conversation not found" });
+          return;
+        }
+        // Version conflict: another actor moved the conversation. Reload and
+        // retry with the fresh lockVersion (bounded).
+        current = cas.current;
+        if (current.aiOwnershipState === "HUMAN_HANDLING") {
+          res.json({ ok: true, state: "HUMAN_HANDLING", updated: false, already: true });
+          return;
+        }
+      }
+      if (!transitioned) {
+        res.status(409).json({
+          error: "Conversation changed during handoff; please retry",
+          state: String(current.aiOwnershipState || ""),
+        });
+        return;
+      }
       await repo.insertAuditEvent({
         eventType: "moos_handoff",
         entityType: "conversation",
@@ -865,10 +1040,10 @@ export function createMoosRouter(deps: MoosRouterDeps) {
         metadata: {
           reason,
           summary: summary || undefined,
-          previousState: convo.aiOwnershipState,
+          previousState,
         },
       });
-      res.json({ ok: true, state: "HUMAN_HANDLING", updated: cas.ok });
+      res.json({ ok: true, state: "HUMAN_HANDLING", updated: true });
     } catch (err) {
       console.error(
         "[moos] handoff failed:",

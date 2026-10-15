@@ -4,6 +4,14 @@ import fs from "fs";
 import { createSalesAgentRuntime, absoluteCrmFileUrl } from "./server/whatsappAgent/agentRuntime.ts";
 import { createSalesAgentRouter } from "./server/whatsappAgent/agentRoutes.ts";
 import { createMoosRouter, type MoosCreateQuote } from "./server/moos/moosRouter.ts";
+import {
+  drainMoosRelayOutbox,
+  getDefaultMoosRelayOutboxStore,
+} from "./server/moos/moosRelayOutbox.ts";
+import {
+  createDefaultWhatsAppRepository,
+  safeAudit,
+} from "./server/whatsappTransport/whatsappRepository.ts";
 import { calculateAgentQuote } from "./server/whatsappAgent/quoteTools.ts";
 import { buildSmartQuotationPdf } from "./src/lib/smartQuotationPdf.ts";
 import { toPublicLeadInput } from "./server/publicLeads/smartQuoteLead.ts";
@@ -679,6 +687,31 @@ if (!railwayPrivateSmokeMode) {
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
 if (!railwayPrivateSmokeMode) setInterval(()=>{void salesAgentRuntime.drain();},5000).unref();
+
+// Moos relay outbox drain: deliver queued inbound events to the Moos worker
+// with bounded retry/backoff and dead-letter alerting. No-op while
+// MOOS_RELAY_ENABLED is unset (the webhook does not enqueue then either).
+if (!railwayPrivateSmokeMode) {
+  setInterval(() => {
+    void drainMoosRelayOutbox({
+      store: getDefaultMoosRelayOutboxStore(),
+      env: process.env,
+      audit: async (eventType, entityId, metadata) => {
+        await safeAudit(createDefaultWhatsAppRepository(), {
+          eventType,
+          entityType: "conversation",
+          entityId,
+          metadata,
+        });
+      },
+    }).catch((err) =>
+      console.error(
+        "[moos-relay-outbox] drain failed:",
+        err instanceof Error ? err.message : String(err)
+      )
+    );
+  }, 30000).unref();
+}
 
 // Sunchaser Learning Studio: protected CRM SSO handoff and learning APIs.
 // The router is feature-gated and remains inert until LEARNING_STUDIO_ENABLED=true.
