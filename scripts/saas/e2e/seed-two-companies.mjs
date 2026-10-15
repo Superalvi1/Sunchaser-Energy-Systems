@@ -27,6 +27,9 @@ if (process.argv.includes("--cleanup")) {
     const has = await db.query("select 1 from information_schema.columns where table_schema='public' and table_name=$1 and column_name='company_id'", [t]);
     if (has.rowCount) await db.query(`delete from public."${t}" where company_id = any($1)`, [ids]);
   }
+  // Platform rows of the removed companies too: a payment that still names a removed company makes the next re-apply of t5 (which restores the ledger from its rollback copy) fail on the foreign key.
+  await db.query("delete from saas_payments where company_id = any($1)", [ids]);
+  if ((await db.query("select to_regclass('public.saas_storage_reservations') as t")).rows[0].t) await db.query("delete from saas_storage_reservations where company_id = any($1)", [ids]);
   await db.query("delete from saas_subscriptions where company_id = any($1)", [ids]);
   await db.query("delete from company_memberships where company_id = any($1)", [ids]);
   await db.query("delete from users where id like 'u-alpha%' or id like 'u-beta%' or id in ('u-both','u-nobody','u-platform')");
