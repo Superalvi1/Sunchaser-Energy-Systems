@@ -10,7 +10,8 @@
   "private": true,
   "scripts": {
     "start": "node src/index.mjs",
-    "test": "node --test tests/*.mjs"
+    "test": "node --test tests/*.mjs",
+    "migrate": "node src/migrate.mjs"
   },
   "type": "module",
   "version": "0.1.0"
