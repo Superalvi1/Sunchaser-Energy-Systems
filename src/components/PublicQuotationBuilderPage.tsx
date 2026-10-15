@@ -1,3 +1,5 @@
+import { defaultSmartQuoteSettings, smartQuoteCatalog, type SmartQuoteSettings } from "../lib/smartQuoteSettings";
+import { fetchSmartQuoteSettings } from "../services/smartQuoteSettingsApi";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
@@ -15,13 +17,10 @@ import {
   Zap,
 } from "lucide-react";
 import {
-  BATTERY_ACCESSORY_CATALOG,
-  PANEL_CATALOG,
   inverterDisplayName,
 } from "../lib/solarEquipmentCatalog";
 import {
   PUBLIC_QUOTE_CAPACITIES,
-  QUOTE_ITEM_PRICES,
   calculateCivilPadBreakdown,
   calculatePublicQuotation,
   defaultPublicQuoteConfig,
@@ -336,6 +335,26 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   const [savingLead, setSavingLead] = useState(false);
   const [leadMessage, setLeadMessage] = useState("");
   const [leadError, setLeadError] = useState("");
+  const [pricing, setPricing] = useState<SmartQuoteSettings | null>(null);
+  const [pricingError, setPricingError] = useState("");
+  const [priceLoading, setPriceLoading] = useState(true);
+  const [preparedBy, setPreparedBy] = useState("");
+  const catalog = useMemo(() => smartQuoteCatalog(pricing || defaultSmartQuoteSettings()), [pricing]);
+  const rates = (pricing || defaultSmartQuoteSettings()).rates;
+  const reloadPrices = async () => {
+    setPriceLoading(true); setPricingError("");
+    try {
+      const next = await fetchSmartQuoteSettings();
+      setPricing(next); setGenerated(false); setSavedLead(null);
+    } catch (e) { setPricingError((e as Error).message); }
+    finally { setPriceLoading(false); }
+  };
+  useEffect(() => {
+    let active = true;
+    fetchSmartQuoteSettings().then(next => { if (active) setPricing(next); }).catch(e => { if (active) setPricingError(e.message); }).finally(() => { if (active) setPriceLoading(false); });
+    return () => { active = false; };
+  }, []);
+
 
   useEffect(() => {
     const previous = document.title;
@@ -349,22 +368,23 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
 
   const calculationState = useMemo(() => {
     try {
-      return { calculation: calculatePublicQuotation(config, { allowDiscount: isStaffMode, allowCustomTransport: isStaffMode }), error: "" };
+      if (!pricing || priceLoading || pricingError) return { calculation: null, error: pricingError || "Loading current quotation prices…" };
+      return { calculation: calculatePublicQuotation(config, { allowDiscount: isStaffMode, allowCustomTransport: isStaffMode, pricing }), error: "" };
     } catch (error) {
       return { calculation: null, error: error instanceof Error ? error.message : "This combination needs manual review." };
     }
-  }, [config, isStaffMode]);
+  }, [config, isStaffMode, pricing, priceLoading, pricingError]);
   const calculation = calculationState.calculation;
-  const inverters = publicQuoteInverters(config.systemCapacityKw);
+  const inverters = publicQuoteInverters(config.systemCapacityKw).map(item => catalog.inverters.find(p => p.id === item.id)!);
   const selectedInverter = inverters.find((item) => item.id === config.inverterId);
-  const batteries = publicQuoteBatteries(config.systemCapacityKw);
+  const batteries = publicQuoteBatteries(config.systemCapacityKw).map(item => catalog.batteries.find(p => p.id === item.id)!);
   const selectedBattery = batteries.find((item) => item.id === config.batteryId);
   const compatibleBatteryAccessories = selectedBattery?.id === "battery-knox-hv-5"
-    ? BATTERY_ACCESSORY_CATALOG.filter((item) => item.model.includes("52Ah"))
+    ? catalog.accessories.filter((item) => item.model.includes("52Ah"))
     : selectedBattery?.id === "battery-knox-hv-10"
-      ? BATTERY_ACCESSORY_CATALOG.filter((item) => item.model.includes("100Ah"))
+      ? catalog.accessories.filter((item) => item.model.includes("100Ah"))
       : [];
-  const civilPad = calculateCivilPadBreakdown(config);
+  const civilPad = calculateCivilPadBreakdown(config, rates.civilPadPerLeg);
   const inverterSearchOptions = inverters.map((inverter) => ({
     value: inverter.id,
     label: `${inverterDisplayName(inverter)}${inverter.phase === "three" ? " 3P" : ""}${inverter.protection ? ` ${inverter.protection}` : ""} — ${formatPkr(inverter.pricePkr)}`,
@@ -415,7 +435,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
 
   const selectCapacity = (capacity: (typeof PUBLIC_QUOTE_CAPACITIES)[number]) => {
     const next = defaultPublicQuoteConfig(capacity);
-    const panel = PANEL_CATALOG.find((item) => item.id === config.panelId) || PANEL_CATALOG[0];
+    const panel = catalog.panels.find((item) => item.id === config.panelId) || catalog.panels[0];
     setGenerated(false);
     const panelQuantity = recommendedPanelQuantity(capacity, panel.watts);
     setConfig({
@@ -441,7 +461,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
   };
 
   const selectPanel = (panelId: string) => {
-    const panel = PANEL_CATALOG.find((item) => item.id === panelId);
+    const panel = catalog.panels.find((item) => item.id === panelId);
     if (!panel) return;
     const panelQuantity = recommendedPanelQuantity(config.systemCapacityKw, panel.watts);
     updateConfig({
@@ -478,6 +498,11 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
     setSavedLead(null);
     setGeneratedAt(capturedAt);
 
+    if (isStaffMode && !clientName.trim()) {
+      setLeadError("Enter the customer's name for the quotation cover page.");
+      document.getElementById("smart-quote-client-name")?.focus();
+      return;
+    }
     if (isStaffMode) {
       setQuoteNumber(nextQuoteNumber);
       setGenerated(true);
@@ -527,7 +552,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
       try {
         if (!submission.pdfUploadToken) throw new Error("PDF archive permission is missing.");
         const logoDataUrl = await loadQuotationLogo();
-        const pdf = await buildSmartQuotationPdf({ quoteNumber: nextQuoteNumber, system: `${calculation.systemCapacityKw} kW`, generatedAt: capturedAt, clientName: name, clientPhone: phone, clientCity, lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr, totalPkr: calculation.totalPkr, logoDataUrl });
+        const pdf = await buildSmartQuotationPdf({ quoteNumber: nextQuoteNumber, system: `${calculation.systemCapacityKw} kW`, generatedAt: capturedAt, clientName: name, clientPhone: phone, clientCity, lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr, totalPkr: calculation.totalPkr, logoDataUrl, document: pricing!.document, preparedBy });
         await archivePublicSmartQuotePdf(submission.leadId, nextQuoteNumber, submission.pdfUploadToken, pdf.output("blob"));
         setLeadMessage("Quotation and PDF saved to Sunchaser CRM. You can now download your copy.");
       } catch {
@@ -567,7 +592,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
     try {
       if (!calculation) throw new Error("Generate your quotation first.");
       const logoDataUrl = await loadQuotationLogo();
-      const pdf = await buildSmartQuotationPdf({ quoteNumber, system: `${calculation.systemCapacityKw} kW`, generatedAt, clientName, clientPhone, clientCity, lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr, totalPkr: calculation.totalPkr, logoDataUrl });
+      const pdf = await buildSmartQuotationPdf({ quoteNumber, system: `${calculation.systemCapacityKw} kW`, generatedAt, clientName, clientPhone, clientCity, lines: calculation.lines, subtotalPkr: calculation.subtotalPkr, discountPkr: calculation.discountPkr, totalPkr: calculation.totalPkr, logoDataUrl, document: pricing!.document, preparedBy });
       const blob = pdf.output("blob");
       if (!isStaffMode) {
         if (!savedLead?.pdfUploadToken) throw new Error("Generate your quotation again to save both the client and CRM PDF copies.");
@@ -632,7 +657,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
             </div>
             <div className="min-w-0">
               <h1 className="truncate text-base font-black tracking-tight sm:text-lg">{isStaffMode ? "Sunchaser Staff Quote" : "Sunchaser Solar Quote"}</h1>
-              <p className="text-xs text-slate-500">{isStaffMode ? "Private quotation builder · client details optional" : "Choose your system. See your price instantly."}</p>
+              <p className="text-xs text-slate-500">{isStaffMode ? "Private quotation builder · named customer cover page" : "Choose your system. See your price instantly."}</p>
             </div>
           </div>
           {calculation ? (
@@ -680,7 +705,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
             <div className="grid gap-5 sm:grid-cols-2">
               <div className="sm:col-span-2">{itemToggle("panels", "Include solar panels")}</div>
               {config.included.panels ? <><SelectField label="Solar panel" value={config.panelId} onChange={selectPanel}>
-                {PANEL_CATALOG.map((panel) => (
+                {catalog.panels.map((panel) => (
                   <option key={panel.id} value={panel.id}>
                     {panel.brand} {panel.watts}W — Rs. {panel.pricePerWattPkr}/W
                   </option>
@@ -772,9 +797,9 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
             {config.included.structure ? <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {([
-                ["standard-l2", "L2 standard", "2 panels per stand · Rs. 4,500"],
-                ["standard-l3", "L3 standard", "3 panels per stand · Rs. 7,200"],
-                ["elevated", "Elevated", "Panels × watts × Rs. 16"],
+                ["standard-l2", "L2 standard", `2 panels per stand · ${formatPkr(rates.l2Stand)}`],
+                ["standard-l3", "L3 standard", `3 panels per stand · ${formatPkr(rates.l3Stand)}`],
+                ["elevated", "Elevated", `Panels × watts × Rs. ${rates.elevatedPerWatt}`],
                 ["mixed", "Mix structures", "Combine L2, L3 and elevated"],
               ] as Array<[PublicQuoteStructure, string, string]>).map(([value, label, detail]) => (
                 <button
@@ -829,7 +854,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 p-4">
-                {itemToggle("acCable", `AC cable · Rs. ${QUOTE_ITEM_PRICES.acCable}/meter`)}
+                {itemToggle("acCable", `AC cable · Rs. ${rates.acCable}/meter`)}
                 {config.included.acCable ? <div className="mt-2 grid gap-3">
                   <SelectField label="AC cable brand" value={config.acCableBrand} onChange={(acCableBrand) => updateConfig({ acCableBrand: acCableBrand as PublicQuoteConfig["acCableBrand"] })}>
                     <option value="Pakistan Cables">Pakistan Cables</option><option value="Industrial Innovative">Industrial Innovative</option>
@@ -838,7 +863,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
                 </div> : null}
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
-                {itemToggle("dcCable", `DC cable · Rs. ${QUOTE_ITEM_PRICES.dcCable}/meter`)}
+                {itemToggle("dcCable", `DC cable · Rs. ${rates.dcCable}/meter`)}
                 {config.included.dcCable ? <div className="mt-2 grid gap-3">
                   <SelectField label="DC cable brand" value={config.dcCableBrand} onChange={(dcCableBrand) => updateConfig({ dcCableBrand: dcCableBrand as PublicQuoteConfig["dcCableBrand"] })}>
                     <option value="Pakistan Cables">Pakistan Cables</option><option value="Industrial Innovative">Industrial Innovative</option>
@@ -849,43 +874,43 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
               <div className="rounded-2xl border border-slate-200 p-4">
                 {itemToggle("breakers", "Breakers and protection")}
                 <div className="mt-2"><SelectField label="Wiring phase" value={config.wiringPhase} onChange={(wiringPhase) => updateConfig({ wiringPhase: wiringPhase as PublicQuoteConfig["wiringPhase"] })}>
-                  <option value="single">Single phase · Rs. 20,000</option><option value="three">Three phase · Rs. 25,000</option>
+                  <option value="single">Single phase · {formatPkr(rates.singlePhaseBreakers)}</option><option value="three">Three phase · {formatPkr(rates.threePhaseBreakers)}</option>
                 </SelectField></div>
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
-                {itemToggle("miscellaneous", `Miscellaneous · Rs. ${QUOTE_ITEM_PRICES.miscellaneous.toLocaleString("en-PK")}`)}
+                {itemToggle("miscellaneous", `Miscellaneous · Rs. ${rates.miscellaneous.toLocaleString("en-PK")}`)}
                 <p className="mt-1 text-xs text-slate-500">Duct pipes, fittings and electrical accessories for the selected phase.</p>
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
-                {itemToggle("earthingCable", `Earthing cable · Rs. ${QUOTE_ITEM_PRICES.earthingCable}/meter`)}
+                {itemToggle("earthingCable", `Earthing cable · Rs. ${rates.earthingCable}/meter`)}
                 {config.included.earthingCable ? <div className="mt-2"><QuantityField label="Earthing cable length (meters)" value={config.earthingCableMeters} min={1} max={10_000} onChange={(earthingCableMeters) => updateConfig({ earthingCableMeters })} /></div> : null}
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
-                {itemToggle("earthingBore", "Earthing bore · Rs. 9,000 each")}
+                {itemToggle("earthingBore", `Earthing bore · ${formatPkr(rates.bore)} each`)}
                 {config.included.earthingBore ? <div className="mt-2"><SelectField label="Number of bores" value={String(config.earthingBoreCount)} onChange={(value) => updateConfig({ earthingBoreCount: Number(value) as 1 | 2 })}>
-                  <option value="1">One bore · Rs. 9,000</option><option value="2">Two bores · Rs. 18,000</option>
+                  <option value="1">One bore · {formatPkr(rates.bore)}</option><option value="2">Two bores · {formatPkr(rates.bore * 2)}</option>
                 </SelectField></div> : null}
               </div>
               <div className="rounded-2xl border border-slate-200 p-4">
-                {itemToggle("civilPad", `Civil pads · Rs. ${QUOTE_ITEM_PRICES.civilPadPerLeg}/leg`)}
+                {itemToggle("civilPad", `Civil pads · Rs. ${rates.civilPadPerLeg}/leg`)}
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   {civilPad.totalLegs > 0
                     ? `${civilPad.l2Stands ? `${civilPad.l2Stands} L2 stand${civilPad.l2Stands === 1 ? "" : "s"} × 4 legs${civilPad.l3Stands ? " + " : ""}` : ""}${civilPad.l3Stands ? `${civilPad.l3Stands} L3 stand${civilPad.l3Stands === 1 ? "" : "s"} × 6 legs` : ""} = ${civilPad.totalLegs} pads · ${formatPkr(civilPad.totalPkr)}`
                     : "Civil pads apply to L2/L3 stands. Elevated-only structure has no civil-pad charge."}
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("lightningArrester", "Lightning arrester · Rs. 6,000")}</div>
-              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("installation", "Installation and wiring · Rs. 4/W")}</div>
+              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("lightningArrester", `Lightning arrester · ${formatPkr(rates.lightningArrester)}`)}</div>
+              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("installation", `Installation and wiring · Rs. ${rates.installationPerWatt}/W`)}</div>
               <div className="rounded-2xl border border-slate-200 p-4">
                 {itemToggle("transport", "Transportation")}
-                {config.included.transport ? <div className="mt-2 text-xs text-slate-500">Within city: Rs. 10,000.
+                {config.included.transport ? <div className="mt-2 text-xs text-slate-500">Within city: {formatPkr(rates.transport)}.
                   {isStaffMode ? <><label className="mt-2 flex items-center gap-2 text-sm font-bold text-slate-700"><input type="checkbox" checked={config.transportOutOfCity} onChange={(event) => updateConfig({ transportOutOfCity: event.target.checked })} className="h-5 w-5 accent-amber-500" />Out-of-city travel</label>
                     {config.transportOutOfCity ? <label className="mt-2 block text-sm font-bold text-slate-700">Out-of-city transport charge (Rs.)
                       <input type="number" min="0" max="1000000" step="1" value={config.transportationPkr} onChange={(event) => updateConfig({ transportationPkr: Number(event.target.value) })} className="mt-2 min-h-12 w-full rounded-xl border border-slate-200 px-3 text-base" />
                     </label> : null}</> : null}
                 </div> : null}
               </div>
-              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("survey", "Survey and design · Rs. 5,000")}</div>
+              <div className="rounded-2xl border border-slate-200 p-4">{itemToggle("survey", `Survey and design · ${formatPkr(rates.survey)}`)}</div>
             </div>
           </div>
 
@@ -915,12 +940,12 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
               <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-100 text-sm font-black text-amber-900">5</span>
               <div>
                 <h2 className="text-lg font-black">{isStaffMode ? "Client details (optional)" : "Your contact details"}</h2>
-                <p className="text-sm text-slate-500">{isStaffMode ? "Leave these blank when you need a quick internal quotation. No CRM lead will be created." : "Name and mobile number are required so our sales team can follow up on this quote."}</p>
+                <p className="text-sm text-slate-500">{isStaffMode ? "Enter the customer name for the cover page. Mobile and city are optional. No CRM lead will be created." : "Name and mobile number are required so our sales team can follow up on this quote."}</p>
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
               {[
-                [isStaffMode ? "Client name" : "Your name *", clientName, setClientName, "e.g. Hassan", "smart-quote-client-name", "text"],
+                [isStaffMode ? "Client name *" : "Your name *", clientName, setClientName, "e.g. Hassan", "smart-quote-client-name", "text"],
                 [isStaffMode ? "Mobile number" : "Mobile number *", clientPhone, setClientPhone, "03XX-XXXXXXX", "smart-quote-client-phone", "tel"],
                 ["City", clientCity, setClientCity, "e.g. Lahore", "smart-quote-client-city", "text"],
               ].map(([label, value, setter, placeholder, id, type]) => (
@@ -929,6 +954,13 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
                   <input id={id as string} type={type as string} value={value as string} onChange={(event) => { (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value); setGenerated(false); setLeadMessage(""); setLeadError(""); }} placeholder={placeholder as string} className="min-h-14 w-full rounded-2xl border border-slate-200 px-4 text-base outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100" />
                 </label>
               ))}
+            </div>
+            {isStaffMode && <label className="mt-4 block text-sm font-bold text-slate-800">Prepared by
+              <input maxLength={100} value={preparedBy} placeholder={pricing?.document.preparedBy || "Sunchaser Energy Systems"} onChange={e => { setPreparedBy(e.target.value); setGenerated(false); }} className="mt-2 min-h-14 w-full rounded-2xl border border-slate-200 px-4 text-base" />
+            </label>}
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-slate-500">
+              <span>{priceLoading ? "Loading current prices…" : pricingError || `Price version ${pricing?.revision ?? "—"} · PDF includes customer cover, BOQ and payment terms`}</span>
+              <button type="button" disabled={priceLoading || savingLead || !!exporting} onClick={() => void reloadPrices()} className="min-h-11 rounded-xl border px-3 font-bold disabled:opacity-50">Refresh prices</button>
             </div>
             {leadError ? <div role="alert" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-800">{leadError}</div> : null}
             {leadMessage ? <div role="status" className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">{leadMessage}</div> : null}
@@ -961,7 +993,7 @@ export default function PublicQuotationBuilderPage({ mode = "public" }: { mode?:
 
       {generated && calculation ? (
         <section className="mx-auto mb-28 max-w-5xl px-4 sm:mb-12">
-          <ProfessionalQuotationDocument
+          <ProfessionalQuotationDocument documentSettings={pricing?.document} preparedBy={preparedBy}
             calculation={calculation}
             config={config}
             quoteNumber={quoteNumber}

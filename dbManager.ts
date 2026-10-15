@@ -224,6 +224,7 @@ export function isSupabaseActive(): boolean {
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */
 export interface Database {
+  smartQuoteSettings?: import("./src/lib/smartQuoteSettings").SmartQuoteSettings;
   users: any[];
   leads: any[];
   tickets: any[];

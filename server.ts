@@ -1,3 +1,5 @@
+import { createSmartQuoteSettingsStore } from "./server/smartQuote/settingsStore";
+import { createSmartQuoteSettingsRouter } from "./server/smartQuote/settingsRouter";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -637,7 +639,8 @@ let productionAutoLinkLead: ReturnType<
 const messagingProductionWiring = createMessagingProductionWiring();
 const messagingRepository = messagingProductionWiring.repository;
 const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,messageId)=> {
-  const {result}=calculateAgentQuote(requirements,phone);
+  const smartQuotePricing = await smartQuoteSettingsStore.read();
+  const {result}=calculateAgentQuote(requirements,phone,smartQuotePricing);
   const hash=createHash("sha256").update(messageId).digest("hex");
   const leadId=`lead-ai-${hash.slice(0,24)}`;
   const generatedAt=new Date().toISOString();
@@ -647,7 +650,7 @@ const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,mess
   await persistPublicMarketingLead(record,{sendWelcome:false});
   const logoPath=path.resolve("public/assets/sunchaser-logo.png");
   const logoDataUrl=fs.existsSync(logoPath) ? `data:image/png;base64,${fs.readFileSync(logoPath).toString("base64")}` : undefined;
-  const pdf=await buildSmartQuotationPdf({quoteNumber,system:`${requirements.systemCapacityKw} kW`,generatedAt,clientName:requirements.name,clientPhone:phone,clientCity:requirements.city,lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr,totalPkr:result.totalPkr,logoDataUrl});
+  const pdf=await buildSmartQuotationPdf({quoteNumber,system:`${requirements.systemCapacityKw} kW`,generatedAt,clientName:requirements.name,clientPhone:phone,clientCity:requirements.city,lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr,totalPkr:result.totalPkr,logoDataUrl,document:smartQuotePricing.document});
   const archive=await archivePublicSmartQuotePdf(leadId,quoteNumber,Buffer.from(pdf.output("arraybuffer")));
   return {quoteNumber,totalPkr:result.totalPkr,url:absoluteCrmFileUrl(archive.fileUrl)};
 });
@@ -668,6 +671,11 @@ app.use(
 }
 
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
+const smartQuoteSettingsStore = createSmartQuoteSettingsStore({
+  read: () => { loadDb(); return db.smartQuoteSettings; },
+  write: (settings) => { db.smartQuoteSettings = settings; saveDb(); },
+});
+app.use(createSmartQuoteSettingsRouter(smartQuoteSettingsStore));
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
 if (!railwayPrivateSmokeMode) setInterval(()=>{void salesAgentRuntime.drain();},5000).unref();
 
