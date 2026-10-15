@@ -5444,6 +5444,8 @@ app.get("/api/diagnostics/db", async (req, res) => {
 });
 
 app.post("/api/admin/maintenance/production-backup-20260606", async (req, res) => {
+  // A one-off operation of 2026-06-06 that reaches the database directly (all companies, no row-level security). Not available where companies are kept apart.
+  if (isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
   try {
     assertSuperAdminCleanup(req);
     const confirm = String(req.body?.confirm || "");
@@ -5462,6 +5464,8 @@ app.post("/api/admin/maintenance/production-backup-20260606", async (req, res) =
 });
 
 app.post("/api/admin/maintenance/production-cleanup-20260606", async (req, res) => {
+  // A one-off operation of 2026-06-06 that reaches the database directly (all companies, no row-level security). Not available where companies are kept apart.
+  if (isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
   try {
     assertSuperAdminCleanup(req);
     const confirm = String(req.body?.confirm || "");
@@ -11108,19 +11112,30 @@ async function startServer() {
 
   logServerBuildIdentity();
 
-  // Company isolation does not depend on the flag: ask the database before serving anything, and keep asking (see tenantIsolationGuard.ts).
+  // Company isolation does not depend on the flag. Flag off: ask the database (the persistent marker, the companies, and every few minutes the tenant rows themselves)
+  // before serving anything, and keep asking (tenantIsolationGuard.ts). Flag on: the database's row-level policies isolate; the migration t1b must be there so that
+  // pilot companies can only be created behind the database barrier.
+  const statusRpc = async (deep: boolean) => {
+    const client = getUnguardedSystemSupabase();
+    if (!client) return { client: null as null, data: null as any, error: null as any };
+    const { data, error } = await client.rpc("saas_isolation_status", { p_deep: deep });
+    return { client, data: data as any, error: error as any };
+  };
+  const rpcMissing = (error: any) => /PGRST202|PGRST205|42883|Could not find the function|does not exist/i.test(`${error?.code || ""} ${error?.message || ""}`);
   if (!isMultiCompanyEnabled()) {
     isolationGuard.setDeps({
-      probe: async () => {
-        const client = getUnguardedSystemSupabase();
+      probe: async ({ deep }) => {
+        const { client, data, error } = await statusRpc(deep);
         if (!client) return { tablesMissing: true };   // local JSON mode: one company by construction
-        const { data, error } = await client.from("companies").select("id").neq("id", FOUNDING_COMPANY_ID).limit(1);
-        if (error) {
-          // The companies table does not exist (before migration t1): a single-company database. Anything else cannot be verified: fail closed.
-          if (/PGRST205|42P01|Could not find the table|does not exist/i.test(`${(error as any).code || ""} ${error.message || ""}`)) return { tablesMissing: true };
-          throw new Error(`companies could not be read: ${error.message}`);
+        if (!error && data) return { marker: data.mode === "multi" ? "multi" : "single", otherCompanies: Number(data.other_companies || 0), ...(deep ? { foreignRows: Boolean(data.foreign_rows) } : {}) };
+        if (error && !rpcMissing(error)) throw new Error(`the isolation status could not be read: ${error.message}`);
+        // t1b is not applied: no marker and no database barrier. Fall back to the companies table; a single-company database has none.
+        const r = await client.from("companies").select("id").neq("id", FOUNDING_COMPANY_ID).limit(1);
+        if (r.error) {
+          if (/PGRST205|42P01|Could not find the table|does not exist/i.test(`${(r.error as any).code || ""} ${r.error.message || ""}`)) return { tablesMissing: true };
+          throw new Error(`companies could not be read: ${r.error.message}`);
         }
-        return { otherCompanies: (data || []).length };
+        return { otherCompanies: (r.data || []).length };
       },
     });
     await isolationGuard.refresh();
@@ -11128,6 +11143,14 @@ async function startServer() {
     isolationGuard.start();
     const st = isolationGuard.current();
     if (st.blocked) console.error(`\x1b[31m%s\x1b[0m`, `🚨 [TENANT ISOLATION] Serving is PAUSED (${st.reason}): ${st.detail} Enable MULTI_COMPANY_ENABLED with the tenant key, or export and remove the other companies' data.`);
+  } else {
+    const { client, data, error } = await statusRpc(false);
+    if (client && error && rpcMissing(error)) {
+      console.error("\x1b[31m%s\x1b[0m", "🚨 [CRITICAL] MULTI_COMPANY_ENABLED=true needs migration t1b-tenancy-barrier (the database barrier that keeps older backends and scripts away from pilot data). Apply it first: node scripts/migrations/run.mjs apply --to t1b-tenancy-barrier");
+      process.exit(1);
+    }
+    if (client && error) { console.error("\x1b[31m%s\x1b[0m", `🚨 [CRITICAL] the isolation status could not be read: ${error.message}`); process.exit(1); }
+    if (client && data?.mode !== "multi") console.warn(`[tenant-isolation] the tenancy marker is OFF: pilot companies cannot be created until the operator runs select app.tenancy_enable() and node scripts/saas/verify-barrier.mjs (docs/ops/STAGING_REHEARSAL_RUNBOOK.md).`);
   }
 
   // Optional deployment gate for hosts that must prove Playwright/Chromium

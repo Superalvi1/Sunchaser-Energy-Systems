@@ -25,6 +25,7 @@ import { rewriteLegacyStorageUrl } from "./server/storage/railwayObjectStorage.t
 import { CompanyContextMissingError, getCompanyContext } from "./server/saas/companyContext.ts";
 import { isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
 import { isolationGuard } from "./server/saas/tenantIsolationGuard.ts";
+import { getIsolationMode } from "./server/saas/isolationMode.ts";
 import { scopedSettingKey, unscopeSettingRows, usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
 import { ensureSettingsSnapshot } from "./server/saas/settingsSnapshot.ts";
 import { getTenantClient } from "./server/saas/tenantClient.ts";
@@ -165,9 +166,18 @@ export function toSupabaseStorageRole(role: string): string {
   return role;
 }
 
+/** Adds the header that tells the database whether this process keeps companies apart (server/saas/isolationMode.ts). Read at request time. */
+function withIsolationHeader(inner: typeof fetch): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers || (typeof input === "object" && "headers" in input ? (input as Request).headers : undefined));
+    headers.set("x-isolation-mode", getIsolationMode());
+    return inner(input, { ...init, headers });
+  }) as typeof fetch;
+}
+
 function railwayPostgrestFetch(baseUrl: string): typeof fetch {
   const targetBase = baseUrl.replace(/\/$/, "");
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+  return withIsolationHeader((async (input: RequestInfo | URL, init?: RequestInit) => {
     const original =
       typeof input === "string"
         ? input
@@ -183,7 +193,7 @@ function railwayPostgrestFetch(baseUrl: string): typeof fetch {
     const target = new URL(targetBase + suffix);
     target.search = parsed.search;
     return fetch(target, init);
-  }) as typeof fetch;
+  }) as typeof fetch);
 }
 
 /**
@@ -241,9 +251,7 @@ export function getUnguardedSystemSupabase(): SupabaseClient | null {
   try {
     clientInstance = createClient(url, key, {
       auth: { persistSession: false },
-      ...(railwayPostgrestUrl
-        ? { global: { fetch: railwayPostgrestFetch(railwayPostgrestUrl) } }
-        : {}),
+      global: { fetch: railwayPostgrestUrl ? railwayPostgrestFetch(railwayPostgrestUrl) : withIsolationHeader(fetch) },
     });
     isConfigured = true;
     console.log(

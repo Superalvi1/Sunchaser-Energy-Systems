@@ -94,6 +94,15 @@ CONF
 fi
 for i in $(seq 1 40); do curl -s --noproxy '*' -o /dev/null "http://127.0.0.1:$PGRST_PORT/" && break; sleep 1; [ "$i" = 40 ] && { [ -n "$PGRST_CONTAINER" ] && docker logs "$PGRST_CONTAINER" 2>&1 | tail -5; die "PostgREST did not come up"; }; done
 
+# ---------------------------------------------------------------------------------------------------------------------- tenancy barrier
+# The database refuses every service-role request that does not declare multi-company mode as soon as the marker is on (migration t1b). Turn it on and PROVE it over HTTP
+# before any pilot company exists; the companies table refuses pilot companies until this proof is recorded.
+say "tenancy barrier"
+psql $CI_PG -d "$DB" -qc "select app.tenancy_enable()" > /dev/null || die "could not enable the tenancy marker"
+RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY" CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" VERIFY_PSQL="$CI_PG -d $DB" \
+  node scripts/saas/verify-barrier.mjs --confirm > "$REPORT_DIR/verify-barrier.log" 2>&1 || { cat "$REPORT_DIR/verify-barrier.log"; die "the database barrier is not active"; }
+export E2E_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" E2E_SERVICE_KEY="$SERVICE_KEY" E2E_TENANT_KEY="$TENANT_KEY"
+
 # ----------------------------------------------------------------------------------------------------------------------- object store (HTTPS)
 say "object store"
 mkdir -p "$WORK/s3/objects"
@@ -218,7 +227,7 @@ DESC="the switch OFF while pilot companies exist (a flag-off process of the same
 DESC="isolation independent of the flag: with pilot data present a flag-off process serves nothing (reads, searches, exports, PDFs, file downloads, writes, sign-in, webhook; founding, pilot and earlier sessions), across a restart, after schema rollback t8..t3, and when the database cannot be reached; flag-on sessions issued before still work isolated; resumes by itself once the pilot data is removed" journey tenant-isolation-guard node scripts/saas/e2e/tenant-isolation-guard.mjs
 # The single-company deployment as it is today is only legitimate on a database with the founding company alone: remove the pilot companies, wait for the flag-off process to notice.
 if [ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -qE ",(single-company-smoke|flag-off-round3),"; then
-  node --import tsx scripts/saas/e2e/seed-two-companies.mjs --cleanup > /dev/null 2>&1
+  node --import tsx scripts/saas/e2e/seed-two-companies.mjs --cleanup --clear-marker > "$REPORT_DIR/cleanup-before-single-company.log" 2>&1 || { tail -3 "$REPORT_DIR/cleanup-before-single-company.log"; die "could not return the database to single-company state"; }
   for i in $(seq 1 30); do curl -s --noproxy '*' "http://127.0.0.1:$OFF_PORT/health" | grep -q '"paused":false' && break; sleep 1; done
   node --import tsx scripts/saas/e2e/reset-founding-test-passwords.mjs > /dev/null 2>&1 || true
 fi

@@ -36,9 +36,17 @@ if (process.argv.includes("--cleanup")) {
   await db.query("delete from companies where id = any($1)", [ids]);
   await db.query("set session_replication_role = origin");
   console.log("Removed the synthetic companies, their users and rows.");
+  // The tenancy marker is NOT cleared by removing data: only app.tenancy_disable() clears it (and it refuses while any other company's row exists).
+  if (process.argv.includes("--clear-marker")) {
+    const has = await db.query("select to_regprocedure('app.tenancy_disable()') as f");
+    if (has.rows[0].f) { const r = await db.query("select app.tenancy_disable() as m"); console.log(`Tenancy marker: ${r.rows[0].m}`); }
+  }
   await db.end();
   process.exit(0);
 }
+// Pilot companies can only be created behind the database barrier (t1b): the marker on and the barrier verified. The runner verifies the barrier over HTTP once;
+// after a journey cleared the marker, this puts it back (the proof of the barrier itself is scripts/saas/verify-barrier.mjs).
+if ((await db.query("select to_regprocedure('app.tenancy_enable()') as f")).rows[0].f) await db.query("select app.tenancy_enable(), app.tenancy_confirm_barrier()");
 const pw = () => hashPassword(process.env.TEST_PW);
 const COMPANIES = [["co_alpha", "alpha", "Alpha Solar"], ["co_beta", "beta", "Beta Energy"]];
 for (const [id, slug, name] of COMPANIES) await db.query("insert into companies (id, slug, name, status) values ($1,$2,$3,'active') on conflict (id) do update set status='active'", [id, slug, name]);

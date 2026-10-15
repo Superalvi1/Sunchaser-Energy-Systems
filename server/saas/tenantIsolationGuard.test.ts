@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createIsolationGuard, isTenantIsolationError, TenantIsolationError, type ProbeResult } from "./tenantIsolationGuard.ts";
 
-const mk = (probe: () => Promise<ProbeResult>, extra: Record<string, unknown> = {}) => {
+const mk = (probe: (req: { deep: boolean }) => Promise<ProbeResult>, extra: Record<string, unknown> = {}) => {
   let t = 1000; let flag = false;
   const g = createIsolationGuard({ probe, flagOn: () => flag, now: () => t, ttlMs: 5000, probeTimeoutMs: 50, log: () => {}, ...extra });
   return { g, tick: (ms: number) => { t += ms; }, setFlag: (v: boolean) => { flag = v; } };
@@ -67,4 +67,23 @@ test("it recovers by itself when the other companies' data is removed, and a fla
   n = 3; await g.refresh(); assert.equal(g.current().blocked, true);
   setFlag(true);
   assert.equal(g.current().blocked, false, "multi-company mode: the database's row-level policies isolate the companies");
+});
+
+test("the persistent marker pauses a flag-off process even when no company row exists and no tenant row is left", async () => {
+  const { g } = mk(async () => ({ otherCompanies: 0, marker: "multi" }));
+  await g.refresh(); g.arm();
+  assert.equal(g.current().blocked, true); assert.equal(g.current().reason, "tenancy_marker");
+  assert.throws(() => g.assertAllowed(), (e: any) => /marked as multi-company/.test(e.message));
+});
+
+test("deleting the companies row does not lift it: rows of another company found by the deep check keep the process paused until a later deep check says otherwise", async () => {
+  let foreign = true; const deepSeen: boolean[] = [];
+  const { g, tick } = mk(async ({ deep }) => { deepSeen.push(deep); return { otherCompanies: 0, marker: "single", ...(deep ? { foreignRows: foreign } : {}) }; });
+  await g.refresh(); g.arm();
+  assert.equal(g.current().blocked, true); assert.equal(g.current().reason, "tenant_data_present");
+  tick(5001); g.current(); await g.refresh();            // a cheap check (no deep answer): the earlier "yes" is remembered
+  assert.equal(g.current().blocked, true, "a cheap check does not forget the deep answer");
+  foreign = false; tick(61_000); g.current(); await g.refresh();   // the next deep check
+  assert.equal(g.current().blocked, false);
+  assert.deepEqual(deepSeen.slice(0, 3), [true, false, true]);
 });

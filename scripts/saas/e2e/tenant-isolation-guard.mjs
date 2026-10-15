@@ -148,49 +148,112 @@ console.log("\nE. A flag-off process that cannot reach the database");
 }
 
 // ================================================================ G. schema rollback states with pilot data present
-console.log("\nG. Schema rollback while pilot companies exist: t8..t3 rolled back, t1 (the companies table) stays");
+console.log("\nG. Schema rollback while pilot companies exist: t8..t2 rolled back; t1 and t1b (the companies table and the barrier) stay");
 const reload = async () => { psql("notify pgrst, 'reload schema'"); await sleep(3500); };
 try {
   runner("rollback", "--to", "t2-ownership"); await reload();
-  const tables = psql(`select to_regclass('public.companies') is not null`);
+  const tables = psql(`select to_regclass('public.companies') is not null and to_regprocedure('app.saas_pre_request()') is not null`);
   const z = await startApp(X_PORT, false, "isolation-after-rollback.log");
   const r = await call(X, F.token)("/api/state"), b = await json(r), hz = await json(await fetch(`${X}/health`));
-  check("after rolling back t8..t3 (companies table present: t1/t2 stay) the flag-off process is still paused and serves nothing", tables === "t" && PAUSED(r, b) && hz.tenantIsolation?.reason === "tenant_data_present", JSON.stringify([tables, r.status, hz]).slice(0, 300));
+  check("after rolling back t8..t2 (companies table and barrier present) the flag-off process is still paused and serves nothing", tables === "t" && PAUSED(r, b) && hz.tenantIsolation?.reason === "tenant_data_present", JSON.stringify([tables, r.status, hz]).slice(0, 300));
   await stopApp(z);
   let refused = "";
-  try { runner("rollback", "--to", "t1-company-foundation"); } catch (e) { refused = String(e); }
-  check("rolling back t1 (which would remove the companies table, and with it the guard's signal) is refused while pilot companies exist", /refused|Rollback refused/i.test(refused), refused.slice(0, 200));
+  try { runner("rollback", "--to", "t1b-tenancy-barrier"); } catch (e) { refused = String(e); }
+  check("rolling back t1b (the barrier) is REFUSED while the marker is on or any pilot company exists", /Rollback refused/i.test(refused), refused.slice(0, 240));
+  let refused1 = "";
+  try { runner("rollback", "--to", "t1-company-foundation"); } catch (e) { refused1 = String(e); }
+  check("rolling back t1 (which would remove the companies table) is refused too", /Rollback refused/i.test(refused1), refused1.slice(0, 240));
+  check("both are still applied afterwards", psql(`select to_regprocedure('app.saas_pre_request()') is not null and to_regclass('public.companies') is not null`) === "t");
   await reload();
 } finally {
   try { runner("apply"); await reload(); } catch (e) { console.log("could not re-apply in cleanup: " + String(e).slice(0, 200)); }
 }
 
-// ================================================================ H. an OLDER backend on a tenant-populated database: measured, not recommended
-if (process.env.E2E_REPAIR_BUNDLE && fs.existsSync(process.env.E2E_REPAIR_BUNDLE)) {
-  console.log("\nH. The repair build (PR #111, no company concept) on this tenant-populated database - MEASURED");
-  const old = await startApp(X_PORT + 2, false, "isolation-older-backend.log", `APP_BUNDLE=${process.env.E2E_REPAIR_BUNDLE}`);
-  const base = `http://127.0.0.1:${X_PORT + 2}`;
-  const fl = await login(base, "t_admin"), st = fl.token ? await json(await call(base, fl.token)("/api/state")) : {};
-  const sees = (st.leads || []).some((l) => l.name === ALPHA_LEAD);
-  console.log(`OBSERVED: the older backend served the founding administrator ${Array.isArray(st.leads) ? st.leads.length : 0} leads, including the pilot company's lead: ${sees}`);
-  check("the older backend has NO isolation: it shows the pilot company's lead to a founding administrator, so it is NOT a supported fallback once tenant data exists", sees === true);
-  await stopApp(old);
-} else console.log("\nH. skipped: E2E_REPAIR_BUNDLE not set (the repair build is not available here)");
+// ================================================================ H. processes that do NOT know about companies: the DATABASE refuses them
+console.log("\nH. Older backends, scripts and flag-off processes: refused by the database itself");
+{
+  const pr = process.env.E2E_POSTGREST_URL, sk = process.env.E2E_SERVICE_KEY;
+  if (pr && sk) {
+    const raw = async (path, mode) => { const r = await fetch(pr + path, { headers: { apikey: sk, authorization: `Bearer ${sk}`, ...(mode ? { "x-isolation-mode": mode } : {}) } }); const t = await r.text(); return { status: r.status, text: t }; };
+    const TABLES = ["leads", "invoices", "customers", "users", "customer_documents", "activity_logs", "invoice_payments", "projects", "quotations"];
+    let bad = [];
+    for (const t of TABLES) for (const mode of [undefined, "single", "global-only"]) { const r = await raw(`/${t}?limit=5`, mode); if (r.status !== 503 || CANARIES.some((c) => r.text.includes(c))) bad.push(`${t}/${mode || "none"}: ${r.status}`); }
+    check(`${TABLES.length * 3} direct requests with the SERVICE key and no header / header single / header global-only (an older backend, a script, a flag-off process) all answered 503 by the database; no body held company data`, bad.length === 0, bad.slice(0, 3).join("; "));
+    const okMulti = await raw("/leads?limit=1", "multi");
+    check("the same key with the multi-company declaration is served (the barrier is not a blanket refusal)", okMulti.status === 200, String(okMulti.status));
+    const st = await raw("/rpc/saas_isolation_status", undefined);
+    check("the status question is answered even with no header (so every process can find out)", st.status === 200 || st.status === 405, String(st.status));
+  } else console.log("SKIP: E2E_POSTGREST_URL / E2E_SERVICE_KEY not set");
+  if (process.env.E2E_REPAIR_BUNDLE && fs.existsSync(process.env.E2E_REPAIR_BUNDLE)) {
+    const old = await startApp(X_PORT + 2, false, "isolation-older-backend.log", `APP_BUNDLE=${process.env.E2E_REPAIR_BUNDLE}`);
+    const base = `http://127.0.0.1:${X_PORT + 2}`;
+    const fl = await login(base, "t_admin");
+    let seen = false, statuses = [];
+    if (fl.token) for (const p of ["/api/state", "/api/leads", `/api/admin/invoices/${PDF_ID}`]) { const r = await call(base, fl.token)(p); const t = await r.text(); statuses.push(r.status); if (CANARIES.some((c) => t.includes(c))) seen = true; }
+    console.log(`OBSERVED: the repair build (no isolation code) against this tenant-populated database: sign-in ${fl.token ? "succeeded" : "was refused"}, statuses ${statuses.join(",") || "-"}, pilot or founding data seen: ${seen}`);
+    check("the REPAIR build (an older backend with no isolation code) cannot read or write any company data here: the database refuses it", seen === false && !statuses.includes(200), JSON.stringify({ token: Boolean(fl.token), statuses }));
+    await stopApp(old);
+  } else console.log("SKIP: E2E_REPAIR_BUNDLE not set (the repair build is not available here)");
+}
 
-// ================================================================ F. the other companies' data is removed: it resumes by itself
-console.log("\nF. Export done, the pilot companies are removed: the running flag-off process resumes on its own");
+// ================================================================ F. deleting a companies row clears nothing; only the explicit procedure does
+console.log("\nF. The companies rows are deleted by hand: access stays closed. Data removed: still closed until the marker is cleared deliberately");
 {
   const z = await startApp(X_PORT, false, "isolation-recovery.log");
   check("(before) paused", (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === true);
+  // someone deletes the companies rows by hand (foreign keys bypassed) while the tenant rows are still there
+  psql(`set session_replication_role = replica; delete from companies where id <> 'sunchaser'; set session_replication_role = origin`);
+  check("the companies rows are gone, the tenant rows are not", psql(`select count(*) from companies where id <> 'sunchaser'`) === "0" && Number(psql(`select count(*) from leads where company_id <> 'sunchaser'`)) > 0);
+  await sleep(7000);   // longer than one check interval
+  const hh = await json(await fetch(`${X}/health`)), r = await call(X, F.token)("/api/state"), b = await json(r);
+  check("the running flag-off process STAYS paused (the persistent marker; the deep check also sees the orphaned rows)", hh.tenantIsolation?.paused === true && PAUSED(r, b), JSON.stringify(hh));
+  const z2 = await startApp(X_PORT + 3, false, "isolation-restart-no-companies.log");
+  const hz = await json(await fetch(`http://127.0.0.1:${X_PORT + 3}/health`));
+  check("a freshly STARTED flag-off process is paused too (the restart reads the marker, not the companies table)", hz.tenantIsolation?.paused === true, JSON.stringify(hz));
+  await stopApp(z2);
+  const raw = await fetch(`${process.env.E2E_POSTGREST_URL}/leads?limit=1`, { headers: { apikey: process.env.E2E_SERVICE_KEY, authorization: `Bearer ${process.env.E2E_SERVICE_KEY}` } });
+  check("an unaware service-role request is still refused by the database", raw.status === 503, String(raw.status));
+  let dis = ""; try { psql("select app.tenancy_disable()"); } catch (e) { dis = String(e.stderr || e); }
+  check("clearing the marker is refused while another company's rows exist", /tenancy_disable refused/.test(dis), dis.slice(0, 200));
   execFileSync("node", ["--import", "tsx", "scripts/saas/e2e/seed-two-companies.mjs", "--cleanup"], { stdio: "ignore" });
-  const others = psql("select count(*) from companies where id <> 'sunchaser'");
+  await sleep(7000);
+  const h3 = await json(await fetch(`${X}/health`));
+  check("the other companies' data is removed, the marker is still on: the process STAYS paused (nothing resumes by itself)", h3.tenantIsolation?.paused === true && h3.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(h3));
+  check("clearing the marker with no other company and no other company's row succeeds", psql("select app.tenancy_disable()") === "single");
   let resumed = false; for (let i = 0; i < 20 && !resumed; i++) { await sleep(1000); resumed = (await json(await fetch(`${X}/health`))).tenantIsolation?.paused === false; }
-  check(`no company other than the founding one remains (${others}) and the process resumed serving without a restart`, others === "0" && resumed);
-  const r = await call(X, F.token)("/api/state"), b = await json(r);
-  check("the founding administrator's earlier session works again on the flag-off process and shows founding data only", r.status === 200 && (b.leads || []).some((l) => l.name === FOUND_LEAD) && !(b.leads || []).some((l) => l.name === ALPHA_LEAD));
+  check("the same running process resumes serving without a restart", resumed);
+  const r2 = await call(X, F.token)("/api/state"), b2 = await json(r2);
+  check("the founding administrator's earlier session works again on the flag-off process and shows founding data only", r2.status === 200 && (b2.leads || []).some((l) => l.name === FOUND_LEAD) && !(b2.leads || []).some((l) => l.name === ALPHA_LEAD));
   const rp = await call(X, A.token)("/api/state");
   check("the removed pilot company's session no longer works", rp.status === 401 || rp.status === 403 || rp.status === 404, String(rp.status));
+  let mk = ""; try { psql("insert into companies (id, slug, name, status) values ('co_late','co-late','Late','active')"); } catch (e) { mk = String(e.stderr || e); }
+  check("and a new pilot company is refused again until the marker is switched on and the barrier verified", /refused: the tenancy marker/.test(mk), mk.slice(0, 200));
   await stopApp(z);
+}
+
+// ================================================================ W. no exposure window: a flag-off process is serving, then the marker is switched on
+console.log("\nW. A flag-off process is SERVING (marker off). The marker is switched on. Its very next requests are refused: no waiting for its next check");
+{
+  const w = await startApp(X_PORT, false, "isolation-window.log");
+  const FT = (await login(X, "t_admin")).token;
+  const before = await call(X, FT)("/api/state");
+  check("(before) the flag-off process serves the founding administrator", before.status === 200);
+  psql("select app.tenancy_enable()");
+  // no sleep: the process has not polled (its interval is 5 s). Fire requests for 3 s.
+  const t0 = Date.now(); let served = 0, refusedN = 0, leaked = [];
+  while (Date.now() - t0 < 3000) {
+    for (const p of ["/api/state", "/api/leads", `/api/admin/invoices/${F_PDF_ID}`]) {
+      const r = await call(X, FT)(p); const t = await r.text();
+      if (r.status === 200) served++; else refusedN++;
+      if (r.status === 200 && CANARIES.some((c) => t.includes(c))) leaked.push(p);
+    }
+  }
+  check(`in the first 3 seconds after the marker was switched on (before any check of the process): ${refusedN} requests refused, ${served} served, 0 with data`, refusedN > 0 && served === 0 && leaked.length === 0, JSON.stringify({ served, refusedN, leaked }));
+  await sleep(6000);
+  const hw = await json(await fetch(`${X}/health`));
+  check("and then the process itself reports paused (the marker)", hw.tenantIsolation?.paused === true && hw.tenantIsolation?.reason === "tenancy_marker", JSON.stringify(hw));
+  check("the marker was cleared again by the explicit procedure for the next journey", psql("select app.tenancy_disable()") === "single");
+  await stopApp(w);
 }
 console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);

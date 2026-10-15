@@ -56,6 +56,8 @@ const RULES: Rule[] = [
   // Self-registration links a customer profile (customers/leads), so it needs a company until Phase 3 adds company links.
   { prefix: "/api/auth/register", scope: "public_founding", exact: true },
   { prefix: "/api/auth/", scope: "none" },
+  // One-off operations that reach the database directly (all companies, no row-level security): the founding company only. (They also answer 404 in multi-company mode.)
+  { prefix: "/api/admin/maintenance/", scope: "founding_only" },
   { prefix: "/api/platform/", scope: "platform" },
   { prefix: "/api/company/", scope: "company" },
   { prefix: "/api/storage/object/", scope: "signed_link" },

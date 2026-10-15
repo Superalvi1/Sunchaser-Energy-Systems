@@ -111,7 +111,7 @@ step() { # label (state reached)
   echo "| $label | $n | $r |" >> "$REPORT_DIR/matrix.md"
 }
 step "before M1 (schema before the repair release)"
-for m in r1-smart-quote-versions r2-session-revocation r3-invoice-payments-integrity r4-invoice-save-atomic t1-company-foundation t2-ownership t3-document-numbering t4-company-settings t5-subscriptions t6-invoice-issuance-snapshot t7-company-admin t8-storage-reservations; do
+for m in r1-smart-quote-versions r2-session-revocation r3-invoice-payments-integrity r4-invoice-save-atomic t1-company-foundation t1b-tenancy-barrier t2-ownership t3-document-numbering t4-company-settings t5-subscriptions t6-invoice-issuance-snapshot t7-company-admin t8-storage-reservations; do
   runner apply --to "$m" > "$REPORT_DIR/apply-$m.log" || { tail -5 "$REPORT_DIR/apply-$m.log"; die "could not apply $m"; }
   step "after $m"
 done
@@ -127,6 +127,18 @@ smoke "gap-new" "$NEW_PORT"; GN="$SMOKE_CELL"; GR="not run"
 [ $HAVE_REPAIR = 1 ] && [ "$(echo "$GR" | grep -c " 0 failed")" = 0 ] && FAILED=$((FAILED-1))
 echo "gap: NEW $GN | REPAIR $GR"; echo "| gap in the numbering | NEW $GN | REPAIR $GR |" >> "$REPORT_DIR/matrix.md"
 [ "$(echo "$GN" | grep -c ' 0 failed')" = 1 ] || FAILED=$((FAILED+1))   # only the NEW build is required to survive a gap
+# ------------------------------------------------------------------ the database barrier: once the tenancy marker is on, an older backend (and a flag-off process of the new build) is refused
+# The rows above run with the marker OFF (nothing changes for anyone). Here the marker is switched on, as the operator does before the first pilot company, and both backends are
+# asked to sign in. REPAIR has no isolation code at all: the DATABASE refuses it. NEW (flag off) pauses itself (and would be refused by the database anyway).
+psql $CI_PG -d "$DB" -qc "select app.tenancy_enable()" > /dev/null; psql $CI_PG -d "$DB" -qc "notify pgrst, 'reload config'; notify pgrst, 'reload schema'" > /dev/null; sleep 8
+echo "" >> "$REPORT_DIR/matrix.md"; echo "## With the tenancy marker ON (as before the first pilot company): sign-in on each backend" >> "$REPORT_DIR/matrix.md"
+login_cell() { # port -> prints "refused (HTTP n)" or "SERVED"
+  local code body; body="$(curl -s --noproxy '*' -m 20 -o /tmp/matrix-login.$$ -w '%{http_code}' -X POST "http://127.0.0.1:$1/api/auth/login" -H 'content-type: application/json' -d "{\"username\":\"t_admin\",\"password\":\"$TEST_PW\"}")"; code="$body"
+  if grep -q '"token"' /tmp/matrix-login.$$ 2>/dev/null; then echo "SERVED"; else echo "refused (HTTP $code)"; fi; rm -f /tmp/matrix-login.$$
+}
+LN="$(login_cell "$NEW_PORT")"; LR="not run"; [ $HAVE_REPAIR = 1 ] && LR="$(login_cell "$REPAIR_PORT")"
+echo "marker on: NEW $LN | REPAIR $LR"; echo "| marker on | NEW (flag off) $LN | REPAIR $LR |" >> "$REPORT_DIR/matrix.md"
+[ "$LN" = SERVED ] && FAILED=$((FAILED+1)); [ "$LR" = SERVED ] && FAILED=$((FAILED+1))
 node scripts/migrations/run.mjs verify > "$REPORT_DIR/verify.log" 2>&1 || { tail -5 "$REPORT_DIR/verify.log"; FAILED=$((FAILED+1)); }
 echo; [ "$FAILED" = 0 ] && echo "All states passed." || echo "$FAILED state(s) FAILED."
 cat "$REPORT_DIR/matrix.md"

@@ -1,6 +1,7 @@
 /**
  * Replace demo users in Supabase with production accounts from database.json.
  */
+import { assertSingleCompanyDatabase } from "./lib/assertSingleCompanyDatabase.mjs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -49,6 +50,7 @@ async function migrateRoleConstraint(supabase, url) {
     ssl: { rejectUnauthorized: false },
   });
   await client.connect();
+  await assertSingleCompanyDatabase(client);   // direct connection: the database barrier does not see it
   await client.query(sql);
   await client.end();
   console.log("Updated users_role_check constraint.");

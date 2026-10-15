@@ -10,10 +10,17 @@ import { FOUNDING_COMPANY_ID, isMultiCompanyEnabled } from "./multiCompany.ts";
  * cannot read across companies either. It never falls back to unfiltered access. With the flag on, the database's own row-level policies isolate the
  * companies and this guard does nothing.
  *
- * What it cannot do: it protects only builds that contain it. An older backend (the repair build, or anything before it) has no such check.
+ * What it cannot do alone: it protects only builds that contain it. Older backends and scripts are stopped by the DATABASE (t1b-tenancy-barrier: a persistent marker and a
+ * PostgREST pre-request function that refuses service-role requests which do not declare multi-company mode), which also gives this guard its marker: it is not lifted by
+ * deleting a companies row.
  */
-export type ProbeResult = { otherCompanies: number } | { tablesMissing: true };
-export type IsolationState = { blocked: boolean; reason: "none" | "tenant_data_present" | "unverified"; detail: string; checkedAt: number };
+/**
+ * What the database says. marker: the persistent tenancy marker (t1b); otherCompanies: companies other than the founding one; foreignRows: (deep check only) does any
+ * tenant table hold a row of another company. tablesMissing: no company tables at all - a single-company database.
+ */
+export type ProbeResult = { tablesMissing: true } | { otherCompanies: number; marker?: "single" | "multi"; foreignRows?: boolean };
+export type ProbeRequest = { deep: boolean };
+export type IsolationState = { blocked: boolean; reason: "none" | "tenant_data_present" | "tenancy_marker" | "unverified"; detail: string; checkedAt: number };
 
 export class TenantIsolationError extends Error {
   readonly statusCode = 503;
@@ -22,6 +29,8 @@ export class TenantIsolationError extends Error {
     super(
       reason === "tenant_data_present"
         ? `Service paused: this database holds data of more than one company and this server is not running in multi-company mode, so it cannot keep the companies apart. ${detail}`
+        : reason === "tenancy_marker"
+        ? `Service paused: the database is marked as multi-company (tenancy marker) and this server is not running in multi-company mode. ${detail}`
         : `Service paused: this server could not verify that the database holds one company only. ${detail}`
     );
     this.name = "TenantIsolationError";
@@ -29,7 +38,8 @@ export class TenantIsolationError extends Error {
 }
 
 type Deps = {
-  probe: () => Promise<ProbeResult>;
+  probe: (req: ProbeRequest) => Promise<ProbeResult>;
+  deepEveryMs: number;
   flagOn: () => boolean;
   now: () => number;
   ttlMs: number;
@@ -43,6 +53,7 @@ export function createIsolationGuard(initial: Partial<Deps> = {}) {
     flagOn: () => isMultiCompanyEnabled(),
     now: () => Date.now(),
     ttlMs: 5000,
+    deepEveryMs: 60_000,
     probeTimeoutMs: 5000,
     log: (m) => console.warn(m),
     ...initial,
@@ -51,6 +62,8 @@ export function createIsolationGuard(initial: Partial<Deps> = {}) {
   let state: IsolationState = { blocked: true, reason: "unverified", detail: "The first check has not finished.", checkedAt: -Infinity };
   let inflight: Promise<IsolationState> | null = null;
   let armed = false;
+  let lastDeepAt = -Infinity;
+  let lastForeignRows = false;    // the last deep answer; kept between deep checks so a "yes" is never forgotten by a cheap one
 
   const withTimeout = <T,>(p: Promise<T>) =>
     new Promise<T>((resolve, reject) => {
@@ -60,11 +73,17 @@ export function createIsolationGuard(initial: Partial<Deps> = {}) {
 
   async function runCheck(): Promise<IsolationState> {
     let next: IsolationState;
+    const deep = deps.now() - lastDeepAt >= deps.deepEveryMs;
     try {
-      const r = await withTimeout(deps.probe());
-      if ("tablesMissing" in r) next = { blocked: false, reason: "none", detail: "No company tables: a single-company database.", checkedAt: deps.now() };
-      else if (r.otherCompanies > 0) next = { blocked: true, reason: "tenant_data_present", detail: `${r.otherCompanies}+ company(ies) other than "${FOUNDING_COMPANY_ID}" exist.`, checkedAt: deps.now() };
-      else next = { blocked: false, reason: "none", detail: "Only the founding company exists.", checkedAt: deps.now() };
+      const r = await withTimeout(deps.probe({ deep }));
+      if ("tablesMissing" in r) { next = { blocked: false, reason: "none", detail: "No company tables: a single-company database.", checkedAt: deps.now() }; lastForeignRows = false; }
+      else {
+        if (deep && typeof r.foreignRows === "boolean") { lastForeignRows = r.foreignRows; lastDeepAt = deps.now(); }
+        if (r.otherCompanies > 0) next = { blocked: true, reason: "tenant_data_present", detail: `${r.otherCompanies}+ company(ies) other than "${FOUNDING_COMPANY_ID}" exist.`, checkedAt: deps.now() };
+        else if (lastForeignRows) next = { blocked: true, reason: "tenant_data_present", detail: `tables hold rows of a company other than "${FOUNDING_COMPANY_ID}" (even though no such company row exists).`, checkedAt: deps.now() };
+        else if (r.marker === "multi") next = { blocked: true, reason: "tenancy_marker", detail: "Clear it only with select app.tenancy_disable() after the other companies' data is exported and removed.", checkedAt: deps.now() };
+        else next = { blocked: false, reason: "none", detail: "Only the founding company exists and the tenancy marker is off.", checkedAt: deps.now() };
+      }
     } catch (err) {
       next = { blocked: true, reason: "unverified", detail: err instanceof Error ? err.message : String(err), checkedAt: deps.now() };
     }

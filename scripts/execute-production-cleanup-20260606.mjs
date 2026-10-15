@@ -5,6 +5,7 @@
  *   node scripts/execute-production-cleanup-20260606.mjs
  *   SUPABASE_DB_URL=postgresql://... node scripts/execute-production-cleanup-20260606.mjs --backup-only
  */
+import { assertSingleCompanyDatabase } from "./lib/assertSingleCompanyDatabase.mjs";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
@@ -75,6 +76,7 @@ async function runBackupViaPg() {
   if (!client) return null;
 
   await client.connect();
+  await assertSingleCompanyDatabase(client);   // direct connection: the database barrier does not see it
   try {
     await client.query(sql);
     const tables = [
