@@ -1,7 +1,7 @@
 import pg from 'pg';
 const {Pool}=pg;
 export class Store{
- constructor(url){this.pool=new Pool({connectionString:url,max:5,connectionTimeoutMillis:5000});}
+ constructor(url){this.pool=new Pool({connectionString:url,max:5,connectionTimeoutMillis:5000,options:'-c search_path=moos_worker,public'});}
  async close(){await this.pool.end()}
  async query(sql,params=[]){return this.pool.query(sql,params)}
  async add(event){
