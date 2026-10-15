@@ -45,7 +45,8 @@ const objs = (co) => fs.readdirSync(S3DIR).filter((f) => decodeURIComponent(f).i
 const usedBytes = (co) => objs(co).reduce((n, f) => n + fs.statSync(path.join(S3DIR, f)).size, 0);
 const s3Delete = (key) => new Promise((resolve, reject) => { const u = new URL(process.env.RAILWAY_S3_ENDPOINT + "/" + encodeURI(key)); const rq = https.request(u, { method: "DELETE", rejectUnauthorized: false }, (r) => { r.resume(); r.on("end", () => resolve(r.statusCode)); }); rq.on("error", reject); rq.end(); });
 // the stored files that are as large as the test files (not the tiny ones that primed the caches)
-const bigKeys = (co, min) => objs(co).filter((f) => fs.statSync(path.join(S3DIR, f)).size >= min).map(decodeURIComponent);
+// the stored files that are exactly as large as the test files (a deletion then frees exactly one file's room; leftovers of earlier journeys are never chosen)
+const bigKeys = (co, size) => objs(co).filter((f) => fs.statSync(path.join(S3DIR, f)).size === size).map(decodeURIComponent);
 const rows = (state) => Number(psql(`select count(*) from saas_storage_reservations where company_id='co_alpha'${state ? ` and state='${state}'` : ""}`));
 const pdf = (bytes, tag) => { const head = Buffer.from(`%PDF-1.4\n% ${tag}\n`), tail = Buffer.from("\n%%EOF\n"); return Buffer.concat([head, Buffer.alloc(Math.max(0, bytes - head.length - tail.length), 0x20), tail]); };
 const png = (bytes) => { const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); return Buffer.concat([sig, Buffer.alloc(Math.max(0, bytes - sig.length), 0x00)]); };
@@ -93,7 +94,9 @@ await sleep(CACHE_WAIT);
 const roomNow = L * MB - usedBytes("co_alpha"), fit = Math.floor(roomNow / S);
 const two = await Promise.all([1, 2].map(async (n) => (await outcome(await send(n, "document", S, `after-delete${n}`))).status));
 const okTwo = two.filter((s) => s === 200 || s === 201).length;
-check(`room for ${fit} file(s) now: exactly ${fit} of 2 simultaneous uploads (one per process) are accepted (got ${okTwo}: ${two.join(",")})`, okTwo === fit, two.join(","));
+const wantTwo = Math.min(fit, 2);
+if (okTwo !== wantTwo) console.log("   DIAGNOSTIC " + JSON.stringify({ roomNow, S, fit, bytesOnDisk: usedBytes("co_alpha"), limit: L * MB, reservations: psql(`select coalesce(json_agg(json_build_object('state', state, 'bytes', bytes, 'done_seq', done_seq, 'expires_in_s', round(extract(epoch from expires_at - clock_timestamp())::numeric))), '[]'::json) from saas_storage_reservations where company_id='co_alpha'`) }));
+check(`room for ${fit} file(s) now: ${wantTwo} of 2 simultaneous uploads (one per process) are accepted (got ${okTwo}: ${two.join(",")})`, okTwo === wantTwo, two.join(","));
 check("...and the company is still within its limit", usedBytes("co_alpha") <= L * MB);
 
 // ================================================================ C. failed writes give their room back
