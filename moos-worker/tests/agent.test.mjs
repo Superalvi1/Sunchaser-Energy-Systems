@@ -302,3 +302,24 @@ test('custom draft validation failure → holding reply + handoff, no invented q
   assert.equal(r.review, true);
   assert.ok(events.at(-1).text.includes('technical team'));
 });
+
+test('unverified warranty question never sends a 10kW PDF', async () => {
+  const { agent, events, state } = mocks([q(10, '10kW Hybrid', 'ten', 'hybrid')]);
+  const result = await agent.process(msg('10kW hybrid ki warranty kitni hai?'));
+  assert.equal(result.review, true);
+  assert.equal(result.reason, 'unverified_policy_handoff');
+  assert.equal(state.handoff, 'unverified_policy_requires_staff');
+  assert.equal(events.some(e => e.type === 'document'), false);
+});
+test('LLM custom-intent classification starts requirements collection instead of handoff', async () => {
+  const { agent, events, state } = mocks([]);
+  agent.decideWithMoos = async () => ({action:'custom'});
+  const result = await agent.process(msg('I have unique requirements for my roof'));
+  assert.equal(result.review, false);
+  assert.equal(state.pending.kind, 'custom_name');
+  assert.equal(events.some(e=>e.type==='document'),false);
+});
+test('off-grid classification takes precedence over hybrid label', () => {
+  const { agent } = mocks([]);
+  assert.equal(agent.systemTypeOf({title:'Hybrid off-grid rural cabin'}), 'off_grid');
+});
