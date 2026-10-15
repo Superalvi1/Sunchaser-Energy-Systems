@@ -33,7 +33,7 @@ const objs = (co) => fs.readdirSync(S3DIR).filter((f) => decodeURIComponent(f).i
 const usedBytes = (co) => objs(co).reduce((n, f) => n + fs.statSync(path.join(S3DIR, f)).size, 0);
 const objectMap = (co) => Object.fromEntries(objs(co).sort().map((f) => [decodeURIComponent(f), sha(fs.readFileSync(path.join(S3DIR, f)))]));
 const s3Delete = (key) => new Promise((resolve, reject) => { const u = new URL(process.env.RAILWAY_S3_ENDPOINT + "/" + encodeURI(key)); const rq = https.request(u, { method: "DELETE", rejectUnauthorized: false }, (r) => { r.resume(); r.on("end", () => resolve(r.statusCode)); }); rq.on("error", reject); rq.end(); });
-const bigKey = () => objs("co_alpha").filter((f) => fs.statSync(path.join(S3DIR, f)).size >= S).map(decodeURIComponent)[0];
+const bigKey = () => objs("co_alpha").filter((f) => fs.statSync(path.join(S3DIR, f)).size === S).map(decodeURIComponent)[0];   // a file of exactly the test size: a deletion frees exactly one file's room (leftovers of earlier journeys are never chosen)
 const pdf = (bytes, tag) => { const head = Buffer.from(`%PDF-1.4\n% ${tag}\n`), tail = Buffer.from("\n%%EOF\n"); return Buffer.concat([head, Buffer.alloc(Math.max(0, bytes - head.length - tail.length), 0x20), tail]); };
 const png = (n) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(n)]);
 const fingerprint = () => ({
