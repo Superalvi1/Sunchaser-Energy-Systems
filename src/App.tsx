@@ -1,3 +1,4 @@
+import SessionReauthentication from "./components/SessionReauthentication";
 import AccountsWorkspace from "./components/AccountsWorkspace";
 import { canCreateInvoice } from "./lib/invoices";
 import { filterCrmState } from "./lib/crmLeadQualification";
@@ -110,7 +111,7 @@ export default function App() {
   if (proposalToken) return <InteractiveProposalPublicPage token={proposalToken} />;
   const isStaffQuoteBuilder =
     typeof window !== "undefined" && isStaffQuotePath(window.location.pathname);
-  if (isStaffQuoteBuilder) return <StaffQuotationBuilderRoute />;
+  if (isStaffQuoteBuilder) return <><SessionReauthentication /><StaffQuotationBuilderRoute /></>;
   const isPublicQuoteBuilder =
     typeof window !== "undefined" &&
     (/^\/(quote|quotation)\/?$/.test(window.location.pathname) ||
@@ -118,7 +119,7 @@ export default function App() {
         window.location.hostname.toLowerCase()
       ));
   if (isPublicQuoteBuilder) return <PublicQuotationBuilderPage />;
-  return <AuthenticatedApp />;
+  return <><SessionReauthentication /><AuthenticatedApp /></>;
 }
 
 function AuthenticatedApp() {
@@ -277,11 +278,12 @@ function AuthenticatedApp() {
     (async () => {
       const cached = getStoredUser();
       if (cached?.username) setCachedUsername(cached.username);
-      const { user, temporaryFailure } = await restoreAuthSession();
+      const { user, temporaryFailure, unauthorized } = await restoreAuthSession();
       if (temporaryFailure) setSessionRestoreUnavailable(true);
       if (cancelled) return;
 
       if (!user) {
+        if (unauthorized) setGuestView("login");
         setLoading(false);
         return;
       }

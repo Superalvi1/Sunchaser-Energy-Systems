@@ -1,3 +1,6 @@
+import { SESSION_RESTORED_EVENT } from "../lib/sessionRecovery";
+import SmartQuotePriceSettings from "./SmartQuotePriceSettings";
+import { canManageAutoSizerPresets } from "../lib/roles";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -23,7 +26,7 @@ import StaffClientWorkspace from "./StaffClientWorkspace";
 import PublicQuotationBuilderPage from "./PublicQuotationBuilderPage";
 import "./accountsWorkspace.css";
 
-type View = "parties" | "sales" | "quotes" | "items" | "reports";
+type View = "parties" | "sales" | "quotes" | "items" | "reports" | "smartquote-prices";
 type Party = {
   id: string;
   name: string;
@@ -38,6 +41,7 @@ const tabs = [
   { id: "quotes", label: "Quotations", icon: FileText },
   { id: "items", label: "Items", icon: Package },
   { id: "reports", label: "Reports", icon: BarChart3 },
+  { id: "smartquote-prices", label: "Smart Quote Prices", icon: Package },
 ] as const;
 const money = (v: number) => `Rs ${Number(v || 0).toLocaleString("en-PK")}`;
 
@@ -59,7 +63,7 @@ export default function AccountsWorkspace({
   const [view, setView] = useState<View>(initialView);
   const [unsaved, setUnsaved] = useState(false);
   const canLeave = () =>
-    !unsaved || window.confirm("Discard unsaved invoice changes?");
+    !unsaved || window.confirm("Discard unsaved changes?");
   const exit = () => {
     if (canLeave()) onExit();
   };
@@ -67,6 +71,12 @@ export default function AccountsWorkspace({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [sessionVersion, setSessionVersion] = useState(0);
+  useEffect(() => {
+    const resumed = () => { setError(""); setSessionVersion(v => v + 1); };
+    window.addEventListener(SESSION_RESTORED_EVENT, resumed);
+    return () => window.removeEventListener(SESSION_RESTORED_EVENT, resumed);
+  }, []);
   const [party, setParty] = useState<Party | null>(null);
   const [quoteLead, setQuoteLead] = useState<Lead | null>(null);
   const [newQuote, setNewQuote] = useState(false);
@@ -105,7 +115,7 @@ export default function AccountsWorkspace({
     return () => {
       active = false;
     };
-  }, [allowed, view, staffUser.id, staffUser.username, staffUser.role, leads]);
+  }, [allowed, view, staffUser.id, staffUser.username, staffUser.role, leads, sessionVersion]);
   const parties = useMemo(() => {
     const result: Party[] = ledger.map((p) => ({
       id: p.partyKey,
@@ -249,7 +259,7 @@ export default function AccountsWorkspace({
           className="hidden lg:flex flex-col gap-2 bg-slate-900 p-4 min-h-[90vh]"
         >
           {tabs
-            .filter((t) => t.id !== "reports" || reportsAllowed)
+            .filter((t) => (t.id !== "reports" || reportsAllowed) && (t.id !== "smartquote-prices" || canManageAutoSizerPresets(staffUser.username, staffUser.role)))
             .map((t) => (
               <button
                 key={t.id}
@@ -308,6 +318,8 @@ export default function AccountsWorkspace({
                 {saving ? "Saving…" : "Save Party"}
               </button>
             </form>
+          ) : view === "smartquote-prices" ? (
+            <SmartQuotePriceSettings onDirtyChange={setUnsaved} />
           ) : newQuote ? (
             <PublicQuotationBuilderPage mode="staff" />
           ) : view === "parties" ? (
@@ -529,7 +541,7 @@ export default function AccountsWorkspace({
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {tabs
-          .filter((t) => t.id !== "reports" || reportsAllowed)
+          .filter((t) => (t.id !== "reports" || reportsAllowed) && (t.id !== "smartquote-prices" || canManageAutoSizerPresets(staffUser.username, staffUser.role)))
           .map((t) => (
             <button
               key={t.id}

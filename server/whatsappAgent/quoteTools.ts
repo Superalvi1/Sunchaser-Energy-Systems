@@ -1,3 +1,4 @@
+import type { SmartQuoteSettings } from "../../src/lib/smartQuoteSettings";
 import { calculatePublicQuotation, defaultPublicQuoteConfig, PUBLIC_QUOTE_CAPACITIES, type PublicQuoteCapacity, type PublicQuoteConfig } from "../../src/lib/publicQuotationBuilder.ts";
 import { PANEL_CATALOG, INVERTER_CATALOG, BATTERY_CATALOG } from "../../src/lib/solarEquipmentCatalog.ts";
 import { normalizePakistanMobile } from "../../src/lib/smartQuoteLead.ts";
@@ -5,7 +6,7 @@ import type { ApprovedQuotation } from "./agentSettings.ts";
 
 export type QuoteRequirements = { name: string; city: string; systemCapacityKw: number; panelId: string; inverterId: string; batteryId: string | null; panelQuantity: number; inverterQuantity: number; batteryQuantity: number; structureType: "standard-l2" | "standard-l3" | "elevated"; confirmed: boolean };
 /** Provider supplies IDs and requirements only. All selling prices come from Smart Quote. */
-export function calculateAgentQuote(input: QuoteRequirements, phone: string) {
+export function calculateAgentQuote(input: QuoteRequirements, phone: string, pricing?: SmartQuoteSettings) {
   if (!input.confirmed) throw new Error("Confirm the proposed equipment and standard cable/service allowances with the client first.");
   if (typeof input.name !== "string" || typeof input.city !== "string" || !input.name.trim() || !input.city.trim() || input.name.length > 120 || input.city.length > 120 || /[\r\n]/.test(input.name + input.city) || !normalizePakistanMobile(phone)) throw new Error("Client name, city and a valid mobile are required.");
   if (!PUBLIC_QUOTE_CAPACITIES.includes(input.systemCapacityKw as PublicQuoteCapacity)) throw new Error("This system size requires a consultant.");
@@ -21,7 +22,7 @@ export function calculateAgentQuote(input: QuoteRequirements, phone: string) {
   if (!["standard-l2", "standard-l3", "elevated"].includes(input.structureType)) throw new Error("A custom structure requires a site review.");
   const config: PublicQuoteConfig = { ...defaultPublicQuoteConfig(input.systemCapacityKw as PublicQuoteCapacity), panelId: input.panelId, panelQuantity: input.panelQuantity, inverterId: input.inverterId, inverterQuantity: input.inverterQuantity, batteryId: input.batteryId || defaultPublicQuoteConfig(input.systemCapacityKw as PublicQuoteCapacity).batteryId, batteryQuantity: input.batteryId ? input.batteryQuantity : 1, structureType: input.structureType, structurePanelQuantity: input.panelQuantity, wiringPhase: inverter.phase, discountPkr: 0 };
   config.included.battery = Boolean(input.batteryId);
-  const result = calculatePublicQuotation(config);
+  const result = calculatePublicQuotation(config, { pricing });
   const arrayKw = input.panelQuantity * panel.watts / 1000;
   if (arrayKw < input.systemCapacityKw * 0.9 || arrayKw > input.systemCapacityKw * 1.3) throw new Error("Panel sizing requires a consultant review.");
   return { config, result };

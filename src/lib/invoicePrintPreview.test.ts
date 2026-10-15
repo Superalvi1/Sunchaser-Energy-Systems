@@ -21,8 +21,9 @@ const preview = {
   print() { printed = true; },
   close() { closed = true; },
 };
+const storage = new Map([['sunchaser_auth_token', 'test-session-token']]);
 Object.assign(globalThis, {
-  localStorage: { getItem: (key: string) => key === 'sunchaser_auth_token' ? 'test-session-token' : null },
+  localStorage: { getItem: (key: string) => storage.get(key) || null, removeItem: (key: string) => storage.delete(key) },
   window: { open() { opened = true; return blocked ? null : preview; } },
   fetch: async (url: string, init: RequestInit) => {
     assert.ok(opened, 'reserve popup before network await');
@@ -43,6 +44,7 @@ status = 401;
 written = '';
 await assert.rejects(openInvoicePrintPreview('inv-123'), /Unauthorized/);
 assert.ok(closed, 'close empty popup on authorization failure');
+assert.equal(storage.get('sunchaser_auth_token'), undefined, 'remove rejected session token');
 assert.equal(written, '', 'never render an error response as an invoice');
 blocked = true;
 await assert.rejects(openInvoicePrintPreview('inv-123'), /Allow pop-ups/);
