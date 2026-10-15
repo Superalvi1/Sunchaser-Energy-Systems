@@ -200,16 +200,6 @@ OFF_PORT="${FLAG_OFF_PORT:-3198}"
 if (exec 3<>"/dev/tcp/127.0.0.1/$OFF_PORT") 2>/dev/null; then die "port $OFF_PORT is already in use"; fi
 node --import tsx scripts/saas/e2e/reset-founding-test-passwords.mjs > /dev/null 2>&1 || true
 start_app "$OFF_PORT" false "$REPORT_DIR/app-flag-off.log"
-journey_once() { # one run, reported like journey(); the caller seeds
-  local name="$1"; shift
-  if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
-  local t0=$SECONDS
-  echo "-- $name"
-  if "$@" > "$REPORT_DIR/$name.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name.log" | sed 's/^/   | /'; fi
-  local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name.log" | tail -1)"
-  echo "$name: $r ${tail_line:+($tail_line)}"
-  echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
-}
 off_journey() { # same reporting as journey(), against the flag-off instance
   local name="$1"; shift
   if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
@@ -225,8 +215,7 @@ export E2E_BASE_URL_ON="http://127.0.0.1:$APP_PORT" E2E_REPORT_DIR="$REPORT_DIR"
 [ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -q ",feature-disable-reenable," && reseed   # clean pilot companies for the next journey
 DESC="the switch OFF while pilot companies exist (a flag-off process of the same build) PAUSES: founding and pilot sessions are refused with the maintenance error, nothing is read or written; the pilot's files, rows and quota are untouched and served again when it is switched on" off_journey feature-disable-reenable node scripts/saas/e2e/feature-disable-reenable.mjs
 # Company isolation independent of the flag: the journey starts and restarts flag-off processes of its own, rolls schema back and forward, removes the pilot companies and proves the process resumes.
-[ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -q ",tenant-isolation-guard," && reseed
-DESC="isolation independent of the flag: with pilot data present a flag-off process serves nothing (reads, searches, exports, PDFs, file downloads, writes, sign-in, webhook; founding, pilot and earlier sessions), across a restart, after schema rollback t8..t3, and when the database cannot be reached; flag-on sessions issued before still work isolated; resumes by itself once the pilot data is removed" journey_once tenant-isolation-guard node scripts/saas/e2e/tenant-isolation-guard.mjs
+DESC="isolation independent of the flag: with pilot data present a flag-off process serves nothing (reads, searches, exports, PDFs, file downloads, writes, sign-in, webhook; founding, pilot and earlier sessions), across a restart, after schema rollback t8..t3, and when the database cannot be reached; flag-on sessions issued before still work isolated; resumes by itself once the pilot data is removed" journey tenant-isolation-guard node scripts/saas/e2e/tenant-isolation-guard.mjs
 # The single-company deployment as it is today is only legitimate on a database with the founding company alone: remove the pilot companies, wait for the flag-off process to notice.
 if [ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -qE ",(single-company-smoke|flag-off-round3),"; then
   node --import tsx scripts/saas/e2e/seed-two-companies.mjs --cleanup > /dev/null 2>&1
