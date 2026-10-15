@@ -98,16 +98,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 test("storage: the limit is checked against real usage; accepted bytes are held, committed, or given back", async () => {
   let listCalls = 0;
-  setStorageQuotaDeps({ limitFor: async () => 10, list: async (ns) => { listCalls++; return ns === "customer-documents" ? [{ size: 6 * MB }] : []; } });
+  const written: { size: number }[] = [];   // the object store lists what was written (read-after-write, the stated assumption)
+  setStorageQuotaDeps({ limitFor: async () => 10, list: async (ns) => { listCalls++; return ns === "customer-documents" ? [{ size: 6 * MB }, ...written] : []; } });
   await inCompany("acme", async () => {
     const a = await reserveStorage(3 * MB); // 6 + 3 = 9 <= 10
     await assert.rejects(() => reserveStorage(2 * MB), (e: any) => e instanceof StorageQuotaError && e.statusCode === 402 && e.code === "storage_limit_exceeded" && e.retryable === false, "9 + 2 > 10");
     await a.release(); // the first write failed: its bytes are given back
     const b = await reserveStorage(2 * MB); // 6 + 2 = 8 <= 10
-    await b.commit(); // finished: still counted (8)
+    written.push({ size: 2 * MB }); await b.commit(); // finished: still counted (8)
     await assert.rejects(() => reserveStorage(3 * MB), StorageQuotaError, "8 + 3 > 10 after the second write finished");
     const c = await reserveStorage(2 * MB); // exactly 10: allowed, the limit is inclusive
-    await c.commit();
+    written.push({ size: 2 * MB }); await c.commit();
     await assert.rejects(() => reserveStorage(1), StorageQuotaError, "one byte over");
   });
   assert.ok(listCalls >= 2, "usage is listed once per namespace");
@@ -199,7 +200,8 @@ test("storage: CONCURRENT uploads at the boundary - exactly as many are accepted
 });
 
 test("storage: concurrent uploads of different sizes never exceed the limit in total; failed writes free their room", async () => {
-  setStorageQuotaDeps({ limitFor: async () => 10, list: async () => [] });
+  const written: { size: number }[] = [];
+  setStorageQuotaDeps({ limitFor: async () => 10, list: async (ns) => (ns === "customer-documents" ? [...written] : []) });
   await inCompany("acme", async () => {
     const sizes = [4, 4, 4, 3, 3, 2, 2, 1, 1, 1, 6, 5];
     let accepted = 0, failedWrites = 0;
@@ -207,12 +209,12 @@ test("storage: concurrent uploads of different sizes never exceed the limit in t
       const r = await reserveStorage(mb * MB);
       await sleep(i % 3);
       if (i === 0) { await r.release(); failedWrites++; return; } // the first accepted write fails and gives its room back
-      await r.commit(); accepted += mb;
+      written.push({ size: mb * MB }); await r.commit(); accepted += mb;
     }));
     assert.ok(accepted <= 10, `accepted ${accepted} MB`);
     // after it all the figure is consistent: nothing more than what is left fits
     const left = 10 - accepted;
-    if (left > 0) await (await reserveStorage(left * MB)).commit();
+    if (left > 0) { const r = await reserveStorage(left * MB); written.push({ size: left * MB }); await r.commit(); }
     await assert.rejects(() => reserveStorage(1), StorageQuotaError);
     assert.equal(failedWrites, 1);
   });

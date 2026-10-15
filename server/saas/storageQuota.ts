@@ -222,8 +222,9 @@ export function createStorageQuota(initial: Partial<Deps> = {}) {
 
     let m = await measureOrFail(false);
     let r = await attempt(m);
-    if (!r.ok && deps.now() - m.at > RECHECK_AFTER_MS) {
-      // Do not refuse on an old listing: files may have been deleted since.
+    if (!r.ok && (deps.now() - m.at > RECHECK_AFTER_MS || r.inFlight > 0)) {
+      // Do not refuse on an old listing: files may have been deleted since. Nor while other uploads are in flight or finished after our mark: one of them can already be
+      // in our listing AND counted by the database (a write that completed between our mark and our listing), so it is counted twice. A fresh mark and listing settle it.
       m = await measureOrFail(true);
       r = await attempt(m);
     }

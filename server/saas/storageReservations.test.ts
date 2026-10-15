@@ -150,3 +150,21 @@ test("never reserved - the founding company, no company, a zero-byte write, the 
   assert.equal(touched, 0, "the database was never asked");
   void store;
 });
+
+test("an upload counted twice (in B's fresh listing and as finished after B's mark) does not cause a false refusal: B re-measures and is admitted", async () => {
+  const store = createMemoryReservationStore();
+  const b = bucket(7);                                         // 7 MB stored, 10 MB limit
+  let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+  let slow = true;
+  const A = processOf(store, b, 10);
+  const B = processOf(store, b, 10, { list: async (ns: string) => { if (slow) { slow = false; await gate; } return b.list(ns); } });   // B takes its mark, then lists only after A's write finished
+  await inCompany("acme", async () => {
+    const pending = B.reserveStorage(2 * MB);                  // B: mark first, listing held back
+    await sleep(5);
+    await upload(A, b, 1 * MB);                                // A reserves, writes (8 MB stored) and settles: done_seq is AFTER B's mark
+    release();                                                 // B's listing now includes A's file
+    const r = await pending;                                   // room is exactly 2 MB (10 - 8); counted twice it would be 3 MB and B would be refused
+    await r.commit();
+    assert.equal(store.rows("acme").filter((x) => x.state === "pending").length, 0);
+  });
+});
