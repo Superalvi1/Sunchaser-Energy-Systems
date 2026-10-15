@@ -48,6 +48,15 @@ export function matchApproved(quotes, size, type){
   if(matching.length!==1)return {status: matching.length ? 'ambiguous_revision':'missing'};
   return {status:'ok',quote:matching[0]};
 }
+/**
+ * Unreviewed commercial terms and technical claims require human verification.
+ * A system-size mention is NOT sufficient to send a quotation PDF when the
+ * customer actually asked about warranty, financing or backup duration.
+ */
+export function requiresStaffPolicyReview(text) {
+  return /\b(installments?|instalments?|emi|qist|qiston|finance|financing|down[ -]?payment|credit[ -]?card|warrant(?:y|ies)|guarantee|discount|negotiat(?:e|ion)|net[ -]?metering|earthing|grounding|subsidy|certification|maintenance|service[ -]?charge|visit[ -]?charge|delivery[ -]?date|delivery[ -]?time|backup[ -]?runtime|runtime|backup[ -]?hours?|battery[ -]?hours?|kitne[ -]?ghante|kitni[ -]?der)\b|وارنٹی|گارنٹی|قسط|قسطوں|خرابی|شکایت|کتنے\s*گھنٹے|کتنی\s*دیر|نیٹ\s*میٹرنگ/i.test(String(text || ""));
+}
+
 export function shouldHandoff(text){return /\b(human|representative|complaint|refund|wrong quote|legal|fraud|warranty claim|technician|fault|refund)\b|شکایت|بندہ\s*بات|انسان\s*بات/i.test(text)}
 
 /**
