@@ -19,15 +19,18 @@ if (process.argv.includes("--cleanup")) {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const classes = JSON.parse(fs.readFileSync(path.join(here, "..", "table-classification.json"), "utf8")).tables;
   const tenant = Object.entries(classes).filter(([, v]) => ["tenant", "tenant_config", "tenant_existing_company_id", "tenant_system"].includes(v.class)).map(([k]) => k);
+  // Every company other than the founding one (the two synthetic ones and any another journey left behind, e.g. by operator onboarding).
+  const ids = (await db.query("select id from companies where id <> 'sunchaser'")).rows.map((r) => r.id);
+  if (!ids.includes("co_alpha")) ids.push("co_alpha"); if (!ids.includes("co_beta")) ids.push("co_beta");
   await db.query("set session_replication_role = replica");
   for (const t of tenant) {
     const has = await db.query("select 1 from information_schema.columns where table_schema='public' and table_name=$1 and column_name='company_id'", [t]);
-    if (has.rowCount) await db.query(`delete from public."${t}" where company_id in ('co_alpha','co_beta')`);
+    if (has.rowCount) await db.query(`delete from public."${t}" where company_id = any($1)`, [ids]);
   }
-  await db.query("delete from saas_subscriptions where company_id in ('co_alpha','co_beta')");
-  await db.query("delete from company_memberships where company_id in ('co_alpha','co_beta')");
+  await db.query("delete from saas_subscriptions where company_id = any($1)", [ids]);
+  await db.query("delete from company_memberships where company_id = any($1)", [ids]);
   await db.query("delete from users where id like 'u-alpha%' or id like 'u-beta%' or id in ('u-both','u-nobody','u-platform')");
-  await db.query("delete from companies where id in ('co_alpha','co_beta')");
+  await db.query("delete from companies where id = any($1)", [ids]);
   await db.query("set session_replication_role = origin");
   console.log("Removed the synthetic companies, their users and rows.");
   await db.end();

@@ -46,3 +46,21 @@ test("multi-company mode without the tenant key refuses to hand out a client", (
   clearTenantClientsForTests();
   assert.throws(() => runWithCompany({ companyId: "co_alpha" }, () => getSupabase()), /CRM_TENANT_POSTGREST_KEY/);
 });
+
+test("single-company mode with the isolation guard closed: the service client is NOT handed out (no unfiltered access, no null that means 'use the local file')", async () => {
+  const { isolationGuard, TenantIsolationError } = await import("./tenantIsolationGuard.ts");
+  const { getUnguardedSystemSupabase, isSupabaseActive } = await import("../../dbManager.ts");
+  setEnv({ MULTI_COMPANY_ENABLED: "false", RAILWAY_POSTGREST_URL: "http://127.0.0.1:1", SUPABASE_SERVICE_ROLE_KEY: "service-key" });
+  isolationGuard.setDeps({ probe: async () => ({ otherCompanies: 2 }) });
+  await isolationGuard.refresh(); isolationGuard.arm();
+  try {
+    assert.throws(() => getSystemSupabase(), TenantIsolationError);
+    assert.throws(() => getSupabase(), TenantIsolationError);
+    assert.throws(() => runWithCompany({ companyId: "sunchaser" }, () => getSupabase()), TenantIsolationError, "a founding-company context does not open it either");
+    assert.ok(getUnguardedSystemSupabase(), "the guard's own probe still has a client");
+    assert.equal(isSupabaseActive(), true, "'is a database configured' stays true, so no code falls back to the local JSON file");
+    // the flag on: the tenant role's row-level policies isolate; the guard stands aside
+    setEnv({ MULTI_COMPANY_ENABLED: "true", CRM_TENANT_POSTGREST_KEY: "tenant-key" });
+    assert.doesNotThrow(() => runAsSystem("test", () => getSupabase()));
+  } finally { isolationGuard.stop(); isolationGuard.setDeps({ flagOn: () => false, probe: async () => ({ tablesMissing: true }) }); await isolationGuard.refresh(); }
+});

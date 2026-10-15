@@ -105,5 +105,17 @@ RE="$($P -f "$SAAS/phase2e-subscriptions.sql" 2>&1 || true)"; echo "$RE" | grep 
 check "re-apply restored the payments and the audit trail" "$($Q -c "select (select count(*) from saas_payments)||':'||(select count(*) from saas_audit)")" "2:$A0"
 check "after the re-apply a NEW audit row can still be written (the id sequence is past the restored rows; an onboarding writes one)" "$($P -c "insert into saas_audit (actor_username, action, company_id, detail) values ('t','after-reapply',null,'{}')" > /dev/null 2>&1; echo $?)" "0"
 
+# --- t5 audit id sequence, explicitly: rollback -> re-apply -> new audit insert, twice, and a negative control (the migration WITHOUT the sequence repair)
+check "the NEW audit row got an id past every restored row (ids stay unique and increasing)" "$($Q -c "select (select id from saas_audit where action='after-reapply') > (select max(id) from saas_audit where action <> 'after-reapply')")" "t"
+$P -f "$SAAS/phase2e-subscriptions-rollback.sql" > /dev/null 2>&1; RE2="$($P -f "$SAAS/phase2e-subscriptions.sql" 2>&1 || true)"
+check "second rollback and re-apply (the copy now holds restored and new rows) applies cleanly" "$(echo "$RE2" | grep -ci " error" || true)" "0"
+check "...and the next audit insert after the second cycle works and takes a fresh id" "$($Q -c "with n as (insert into saas_audit (actor_username, action, company_id, detail) values ('t','after-second-reapply',null,'{}') returning id) select n.id > (select max(id) from saas_audit where action <> 'after-second-reapply') from n")" "t"
+NOFIX="$(mktemp)"; grep -v "perform setval(pg_get_serial_sequence('public.saas_audit'" "$SAAS/phase2e-subscriptions.sql" > "$NOFIX"
+$P -f "$SAAS/phase2e-subscriptions-rollback.sql" > /dev/null 2>&1; $P -f "$NOFIX" > /dev/null 2>&1
+check "NEGATIVE CONTROL: without the sequence repair the first audit insert after a re-apply collides (this is the defect that stopped onboarding)" "$($P -c "insert into saas_audit (actor_username, action, company_id, detail) values ('t','no-fix',null,'{}')" 2>&1 | grep -c 'duplicate key')" "1"
+rm -f "$NOFIX"
+$P -f "$SAAS/phase2e-subscriptions-rollback.sql" > /dev/null 2>&1; $P -f "$SAAS/phase2e-subscriptions.sql" > /dev/null 2>&1   # leave the real migration applied
+check "the real migration is back and an insert works again" "$($P -c "insert into saas_audit (actor_username, action, company_id, detail) values ('t','restored',null,'{}')" > /dev/null 2>&1; echo $?)" "0"
+
 echo; echo "subscription/limits tests: $ok passed, $bad failed"
 [ "$bad" = 0 ]

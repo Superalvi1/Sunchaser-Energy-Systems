@@ -110,32 +110,39 @@ export E2E_S3_DIR="$WORK/s3/objects"
 # the journeys that read the object store directly (company restore) need the same settings the application has
 export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem"
 JWT_SECRET_VALUE="$(openssl rand -hex 32)"
-# start_app <port> <multi-company true|false> <log file>: the built application against the stack. With multi-company "false" the flag and the tenant key
-# are NOT set - the deployment as it is today (single company), on the same migrated database.
+# run-app.sh <port> <true|false> [KEY=VALUE ...]: the application's environment in one place, so that a journey can start (and restart) a process of its own - the
+# restart journeys do. Execs node; the recorded pid IS the application.
+cat > "$WORK/run-app.sh" <<APPSH
+#!/usr/bin/env bash
+cd "$REPO"
+port="\$1"; multi="\$2"; shift 2
+export NODE_ENV=production PORT="\$port" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000
+export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY"
+if [ "\$multi" = true ]; then export CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" MULTI_COMPANY_ENABLED=true; else unset CRM_TENANT_POSTGREST_KEY MULTI_COMPANY_ENABLED; fi
+export JWT_SECRET="$JWT_SECRET_VALUE" RAILWAY_OBJECT_PROXY_SECRET="$RAILWAY_OBJECT_PROXY_SECRET"
+export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto
+export NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem" NO_PROXY='*' no_proxy='*'
+unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY
+export STORAGE_USAGE_CACHE_MS=2000 STORAGE_LIMIT_CACHE_MS=2000   # short caches so the storage journey does not wait out the production defaults (60 s / 15 s)
+export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="\$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="\$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001
+export WHATSAPP_TOKEN_ENCRYPTION_KEY="\$(openssl rand -base64 32)"
+export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false
+for kv in "\$@"; do export "\$kv"; done
+exec node "\${APP_BUNDLE:-dist/server.cjs}"
+APPSH
+chmod +x "$WORK/run-app.sh"; export E2E_RUN_APP="$WORK/run-app.sh"
+# start_app <port> <multi-company true|false> <log file> [KEY=VALUE ...]: With multi-company "false" the flag and the tenant key are NOT set - the deployment
+# as it is today (single company), on the same migrated database.
 start_app() {
-  local port="$1" multi="$2" log="$3" extra="${4:-}"
-  (
-    export NODE_ENV=production PORT="$port" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000
-    export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY"
-    if [ "$multi" = true ]; then export CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" MULTI_COMPANY_ENABLED=true; else unset CRM_TENANT_POSTGREST_KEY MULTI_COMPANY_ENABLED; fi
-    export JWT_SECRET="$JWT_SECRET_VALUE" RAILWAY_OBJECT_PROXY_SECRET
-    export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto
-    export NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem" NO_PROXY='*' no_proxy='*'
-    unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY
-    export STORAGE_USAGE_CACHE_MS=2000 STORAGE_LIMIT_CACHE_MS=2000   # short caches so the storage journey does not wait out the production defaults (60 s / 15 s)
-    export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001
-    export WHATSAPP_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-    export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false
-    [ -n "$extra" ] && export $extra
-    exec node dist/server.cjs
-  ) > "$log" 2>&1 & PIDS+=($!); LAST_APP_PID=$!
+  local port="$1" multi="$2" log="$3"; shift 3
+  "$WORK/run-app.sh" "$port" "$multi" "$@" > "$log" 2>&1 & PIDS+=($!); LAST_APP_PID=$!
   for i in $(seq 1 60); do curl -s --noproxy '*' "http://127.0.0.1:$port/health" | grep -q '"ok"' && return 0; sleep 1; done
   tail -15 "$log"; die "the application on :$port did not come up"
 }
 start_app "$APP_PORT" true "$REPORT_DIR/app.log"; APP1_PID="$LAST_APP_PID"
 # A SECOND process of the same build against the same database, for the journeys that prove the storage limit holds across server processes.
 # Its pending storage reservations expire after 12 s (production default 180 s) so the journey can show that a killed process stops counting.
-start_app "$APP2_PORT" true "$REPORT_DIR/app2.log" "STORAGE_RESERVATION_TTL_SECONDS=12"; APP2_PID="$LAST_APP_PID"
+start_app "$APP2_PORT" true "$REPORT_DIR/app2.log" STORAGE_RESERVATION_TTL_SECONDS=12; APP2_PID="$LAST_APP_PID"
 export E2E_BASE_URL_2="http://127.0.0.1:$APP2_PORT" E2E_APP1_PID="$APP1_PID" E2E_APP2_PID="$APP2_PID" E2E_APP1_LOG="$REPORT_DIR/app.log" E2E_APP2_LOG="$REPORT_DIR/app2.log"
 echo "stack up: PostgreSQL $(psql $CI_PG -d "$DB" -tAc 'show server_version'), PostgREST ($POSTGREST_MODE), app on :$APP_PORT"
 
@@ -154,7 +161,7 @@ journey() { # name, command..., (the description is in $DESC)
   for n in $(seq 1 "$total"); do
     [ "$total" -gt 1 ] && suffix=".$n"
     # a journey may kill the second process on purpose (storage-two-instances); bring it back so the next repeat starts from two processes
-    if ! kill -0 "$APP2_PID" 2>/dev/null; then start_app "$APP2_PORT" true "$REPORT_DIR/app2.log" "STORAGE_RESERVATION_TTL_SECONDS=12"; APP2_PID="$LAST_APP_PID"; export E2E_APP2_PID="$APP2_PID"; fi
+    if ! kill -0 "$APP2_PID" 2>/dev/null; then start_app "$APP2_PORT" true "$REPORT_DIR/app2.log" STORAGE_RESERVATION_TTL_SECONDS=12; APP2_PID="$LAST_APP_PID"; export E2E_APP2_PID="$APP2_PID"; fi
     reseed
     local t0=$SECONDS
     echo "-- $name$suffix"
@@ -193,6 +200,16 @@ OFF_PORT="${FLAG_OFF_PORT:-3198}"
 if (exec 3<>"/dev/tcp/127.0.0.1/$OFF_PORT") 2>/dev/null; then die "port $OFF_PORT is already in use"; fi
 node --import tsx scripts/saas/e2e/reset-founding-test-passwords.mjs > /dev/null 2>&1 || true
 start_app "$OFF_PORT" false "$REPORT_DIR/app-flag-off.log"
+journey_once() { # one run, reported like journey(); the caller seeds
+  local name="$1"; shift
+  if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
+  local t0=$SECONDS
+  echo "-- $name"
+  if "$@" > "$REPORT_DIR/$name.log" 2>&1; then r="pass"; else r="FAIL"; FAILED=$((FAILED+1)); tail -12 "$REPORT_DIR/$name.log" | sed 's/^/   | /'; fi
+  local tail_line; tail_line="$(grep -E '[0-9]+ passed, [0-9]+ failed|passed.*failed' "$REPORT_DIR/$name.log" | tail -1)"
+  echo "$name: $r ${tail_line:+($tail_line)}"
+  echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
+}
 off_journey() { # same reporting as journey(), against the flag-off instance
   local name="$1"; shift
   if [ -n "${JOURNEYS:-}" ] && ! echo ",$JOURNEYS," | grep -q ",$name,"; then return 0; fi
@@ -203,9 +220,19 @@ off_journey() { # same reporting as journey(), against the flag-off instance
   echo "$name: $r ${tail_line:+($tail_line)}"
   echo "| \`$name\` | $r${tail_line:+ — $tail_line} | $((SECONDS - t0)) | $DESC |" >> "$REPORT_DIR/summary.md"
 }
-export E2E_BASE_URL_ON="http://127.0.0.1:$APP_PORT"
+export E2E_BASE_URL_ON="http://127.0.0.1:$APP_PORT" E2E_REPORT_DIR="$REPORT_DIR"
+[ -n "${REPAIR_BUNDLE:-}" ] && [ -f "$REPAIR_BUNDLE" ] && export E2E_REPAIR_BUNDLE="$REPAIR_BUNDLE"   # optional: the repair build, to MEASURE what an older backend shows
 [ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -q ",feature-disable-reenable," && reseed   # clean pilot companies for the next journey
-DESC="the switch OFF while pilot companies exist (a flag-off process of the same build): the founding company operates; the pilot company's files, rows and quota are untouched and served again when it is switched on; what the flag-off process can see of pilot data is RECORDED (the flag is not a full rollback)" off_journey feature-disable-reenable node scripts/saas/e2e/feature-disable-reenable.mjs
+DESC="the switch OFF while pilot companies exist (a flag-off process of the same build) PAUSES: founding and pilot sessions are refused with the maintenance error, nothing is read or written; the pilot's files, rows and quota are untouched and served again when it is switched on" off_journey feature-disable-reenable node scripts/saas/e2e/feature-disable-reenable.mjs
+# Company isolation independent of the flag: the journey starts and restarts flag-off processes of its own, rolls schema back and forward, removes the pilot companies and proves the process resumes.
+[ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -q ",tenant-isolation-guard," && reseed
+DESC="isolation independent of the flag: with pilot data present a flag-off process serves nothing (reads, searches, exports, PDFs, file downloads, writes, sign-in, webhook; founding, pilot and earlier sessions), across a restart, after schema rollback t8..t3, and when the database cannot be reached; flag-on sessions issued before still work isolated; resumes by itself once the pilot data is removed" journey_once tenant-isolation-guard node scripts/saas/e2e/tenant-isolation-guard.mjs
+# The single-company deployment as it is today is only legitimate on a database with the founding company alone: remove the pilot companies, wait for the flag-off process to notice.
+if [ -z "${JOURNEYS:-}" ] || echo ",$JOURNEYS," | grep -qE ",(single-company-smoke|flag-off-round3),"; then
+  node --import tsx scripts/saas/e2e/seed-two-companies.mjs --cleanup > /dev/null 2>&1
+  for i in $(seq 1 30); do curl -s --noproxy '*' "http://127.0.0.1:$OFF_PORT/health" | grep -q '"paused":false' && break; sleep 1; done
+  node --import tsx scripts/saas/e2e/reset-founding-test-passwords.mjs > /dev/null 2>&1 || true
+fi
 DESC="flag off (single-company mode) on the migrated database: login, lead, quotation, contract, invoice, payment, PDF as before; no company fields in any response" off_journey single-company-smoke node scripts/saas/e2e/single-company-smoke.mjs
 DESC="flag off: no module flags, no identity mark, AutoSizer, after-sales, WhatsApp inbox and design tools all available as before, Sunchaser sign-in kept, uploads unmetered" off_journey flag-off-round3 node scripts/saas/e2e/flag-off-round3.mjs
 

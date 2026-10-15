@@ -52,6 +52,7 @@ export const DESIGN_TOOLS_PATTERNS: RegExp[] = [
 // Order matters: first match wins, so specific rules precede general ones.
 const RULES: Rule[] = [
   { prefix: "/health", scope: "none", exact: true },
+  { prefix: "/api/maintenance-status", scope: "none", exact: true },   // answers before any session check: is serving paused by the isolation guard
   // Self-registration links a customer profile (customers/leads), so it needs a company until Phase 3 adds company links.
   { prefix: "/api/auth/register", scope: "public_founding", exact: true },
   { prefix: "/api/auth/", scope: "none" },

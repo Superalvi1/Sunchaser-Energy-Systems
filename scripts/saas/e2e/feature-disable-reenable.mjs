@@ -1,4 +1,4 @@
-// What switching the multi-company feature OFF does, and does not do, while pilot companies exist. SYNTHETIC data, disposable stack.
+// What switching the multi-company feature OFF does while pilot companies exist: the process PAUSES (maintenance error), changes nothing, and the pilot is served again when it is switched on. SYNTHETIC data, disposable stack.
 // Two server processes of the SAME build on one database and one object store: ON (multi-company flag on) and OFF (flag unset, no tenant key).
 // The flag is a switch for the application; it does not touch the database, the object store or the pilot companies' data. This journey records exactly what each
 // side can then see and do, so that the rollback boundary in docs/ops/COMBINED_DEPLOYMENT_AND_ROLLBACK.md is a measured one: THE FLAG IS A SWITCH, NOT A ROLLBACK.
@@ -40,39 +40,25 @@ const OBJ0 = objectMap("co_alpha");
 const alphaRows = () => psql(`select (select count(*) from leads where company_id='co_alpha')||':'||(select count(*) from invoices where company_id='co_alpha')||':'||(select count(*) from customer_documents where company_id='co_alpha')`);
 const ROWS0 = alphaRows();
 const sunRows = () => psql(`select (select count(*) from leads where company_id='sunchaser')||':'||(select count(*) from invoices where company_id='sunchaser')`);
+const SUN0 = sunRows();
 
 // ============================================================ the switch is OFF: the same database, the same files
-console.log("\nFlag OFF (a second process of the same build, flag unset, no tenant key)");
-const fOff = api(OFF, (await login(OFF, "t_admin")).token);
-{ // founding company operates as before
-  const l = await json(await fOff("/api/leads", { method: "POST", body: JSON.stringify({ name: `Founding after switch-off ${RUN}`, email: `fo${RUN}@example.test`, phone: "0302" + Math.floor(1000000 + Math.random() * 8999999), leadSource: "Direct/Referral" }) }));
-  const q = await fOff(`/api/leads/${l.id}/create-quote`, { method: "POST", body: JSON.stringify({ systemSizekW: 5, panelCount: 2, panelType: "S", inverterType: "S", batteryCapacity: "None", totalCost: 2000, boqItems: [{ type: "item", name: "P", description: "p", qty: 2, unit: "pcs", rate: 1000, total: 2000 }] }) });
-  const c = await json(await fOff(`/api/leads/${l.id}`, { method: "PUT", body: JSON.stringify({ status: "Contracted" }) }));
-  const invId = c.contractProvision?.invoiceId;
-  const pay = await fOff(`/api/admin/invoices/${invId}/payments`, { method: "POST", body: JSON.stringify({ amount: 500, paymentMethod: "Cash", paymentDate: new Date().toISOString().slice(0, 10), clientRequestId: `fd-${RUN}` }) });
-  const pdfr = await fOff(`/api/export/pdf/invoice/${invId}`);
-  const up = await json(await fOff("/api/admin/customer-documents/upload", { method: "POST", body: JSON.stringify({ customerId: c.contractProvision?.customerId, documentType: "other", title: `fd ${RUN}`, fileName: "fd.pdf", mimeType: "application/pdf", base64Data: pdf(2000, "fd").toString("base64") }) }));
-  check("founding company operates on the flag-off process: lead, quotation, contract, invoice, payment, PDF, document upload", Boolean(l.id) && q.status < 300 && Boolean(invId) && pay.status < 300 && pdfr.status === 200 && Boolean(up.id), JSON.stringify([l.id, q.status, invId, pay.status, pdfr.status, up.id]));
-  check("what it wrote belongs to the founding company (company_id sunchaser) and was numbered in the founding sequence", psql(`select company_id from invoices where id='${invId}'`) === "sunchaser");
+// With pilot companies present, a process that is not in multi-company mode PAUSES (server/saas/tenantIsolationGuard.ts): it neither serves nor changes anything.
+console.log("\nFlag OFF (a second process of the same build, flag unset, no tenant key), pilot data present");
+const offHealth = await json(await fetch(`${OFF}/health`));
+check("the flag-off process reports that serving is paused because other companies' data exists", offHealth.tenantIsolation?.paused === true && offHealth.tenantIsolation?.reason === "tenant_data_present", JSON.stringify(offHealth));
+{
+  const t = await login(OFF, "t_admin");
+  check("the founding administrator cannot sign in on it: 503 tenant_isolation_unavailable, no token (the maintenance error, not an unfiltered session)", !t.token && t.code === "tenant_isolation_unavailable", JSON.stringify(t).slice(0, 200));
+  const fTok = (await login(ON, "t_admin")).token, aTok = (await login(ON, "alpha_admin")).token;
+  let bad = [];
+  for (const [who, tok] of [["founding (earlier session)", fTok], ["pilot (earlier session)", aTok]]) for (const [m, pth, body] of [["GET", "/api/state"], ["GET", `/api/admin/invoices/${inv.invoice?.id}`], ["GET", `/api/admin/customer-documents/${customerId}`], ["GET", `/api/export/pdf/invoice/${inv.invoice?.id}`], ["POST", "/api/leads", { name: `NOPE ${RUN}`, email: `nope${RUN}@example.test`, phone: "0309999999", leadSource: "Direct/Referral" }]]) {
+      const r = await api(OFF, tok)(pth, { method: m, ...(body ? { body: JSON.stringify(body) } : {}) }); const b = await json(r);
+      if (!(r.status === 503 && b.code === "tenant_isolation_unavailable") || JSON.stringify(b).includes(`PILOTLEAD ${RUN}`)) bad.push(`${who} ${m} ${pth} ${r.status}`);
+    }
+  check("earlier sessions of the founding company and of the pilot company: reads, an invoice PDF, document list and a write are all refused 503 and show no pilot data", bad.length === 0, bad.join("; "));
 }
-check("the pilot company's files are untouched by the switch (same keys, same bytes) and its rows are untouched", JSON.stringify(objectMap("co_alpha")) === JSON.stringify(OBJ0) && alphaRows() === ROWS0);
-{ // THE BOUNDARY. With the flag off the single-company code runs: it has no notion of a company, so it does not filter by one. Pilot rows are in the same tables.
-  // These are asserted as the documented, KNOWN behaviour (if it ever changes, the rollback boundary in docs/ops/COMBINED_DEPLOYMENT_AND_ROLLBACK.md must change with it).
-  const st = await json(await fOff("/api/state"));
-  const seesPilotLead = (st.leads || []).some((x) => x.name === `PILOTLEAD ${RUN}`);
-  check("BOUNDARY (known): on the flag-off process the founding administrator SEES the pilot company's lead (no company filter exists in single-company mode)", seesPilotLead);
-  const inv2 = await fOff(`/api/admin/invoices/${inv.invoice?.id}`);
-  check(`BOUNDARY (known): ...and can read a pilot company's invoice by id (HTTP ${inv2.status}) and list a pilot customer's documents`, inv2.status === 200 && (await json(await fOff(`/api/admin/customer-documents/${customerId}`))).documents?.length > 0);
-  const al = await login(OFF, "alpha_admin");
-  const as = al.token ? await json(await api(OFF, al.token)("/api/state")) : {};
-  check("BOUNDARY (known): ...and a pilot administrator can sign in on the flag-off process and then sees the founding company's data too", Boolean(al.token) && (as.leads || []).some((x) => x.name?.startsWith("Founding after switch-off")));
-  // the one mitigation that is real: suspended accounts cannot sign in (existing behaviour), so suspend every pilot-company user BEFORE switching off
-  psql(`update users set account_status='Suspended' where username in ('alpha_admin','alpha_sales','alpha_manager','alpha_portal','beta_admin','beta_sales','beta_portal')`);
-  const al2 = await login(OFF, "alpha_admin"), pt2 = await login(OFF, "alpha_portal");
-  check("MITIGATION: with the pilot companies' users suspended, a pilot administrator and a pilot portal customer cannot sign in on the flag-off process", !al2.token && !pt2.token, JSON.stringify([al2.error, pt2.error]));
-  check("...but the founding administrator STILL sees the pilot rows: suspension protects the pilot company from its own users, not the pilot's data from founding staff (only removing the pilot data does that)", ((await json(await fOff("/api/state"))).leads || []).some((x) => x.name === `PILOTLEAD ${RUN}`));
-  psql(`update users set account_status='Approved' where username in ('alpha_admin','alpha_sales','alpha_manager','alpha_portal','beta_admin','beta_sales','beta_portal')`);
-}
+check("the pilot company's files are untouched by the switch (same keys, same bytes) and its rows are untouched; nothing was written by the refused requests", JSON.stringify(objectMap("co_alpha")) === JSON.stringify(OBJ0) && alphaRows() === ROWS0 && psql(`select count(*) from leads where name like 'NOPE%'`) === "0");
 // the pilot's files and the quota, served again when the switch is turned back on
 console.log("\nFlag ON again");
 const aOn2 = api(ON, (await login(ON, "alpha_admin")).token);
@@ -81,6 +67,6 @@ let ok = 0; for (const d of (list.documents || []).filter((x) => new RegExp(`^df
 check(`alpha's ${N} files download byte-identical through the flag-on process`, ok === N, String(ok));
 const again = await upload(aOn2, "over-again"); const ab = await json(again);
 check(`quota accounting is unchanged: the boundary is where it was (402, limit ${L} MB), the founding company's activity did not use alpha's room`, again.status === 402 && ab.code === "storage_limit_exceeded" && ab.limitMb === L, JSON.stringify(ab).slice(0, 160));
-check("the founding company's rows written while the switch was off are still the founding company's (nothing moved)", Number(sunRows().split(":")[0]) >= 1);
+check("nothing moved between companies while the switch was off", sunRows() === SUN0);
 console.log(`\n${pass} passed, ${fail} failed${fail ? "\nFAILED: " + failures.join("; ") : ""}`);
 process.exit(fail ? 1 : 0);
