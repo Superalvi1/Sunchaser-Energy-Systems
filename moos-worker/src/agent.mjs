@@ -1,5 +1,6 @@
-import { classifyRequest, matchApproved, matchFaq, shouldHandoff } from "./logic.mjs";
+import { classifyRequest, matchApproved, matchFaq, shouldHandoff, requiresStaffPolicyReview } from "./logic.mjs";
 import { readFile } from "node:fs/promises";
+import { pilotRecipientAllowed } from "./pilotScope.mjs";
 
 /**
  * Moos decision agent (action-only).
@@ -67,6 +68,7 @@ export class Agent {
   async isSafeToSend(msg) {
     return (
       this.env.ENABLE_AUTOSEND === "true" &&
+      pilotRecipientAllowed(msg.phone, this.env) &&
       (await this.store.preflight(msg)) &&
       !(await this.isOwnedByHuman(msg))
     );
@@ -175,8 +177,8 @@ export class Agent {
    */
   systemTypeOf(q) {
     const hay = `${q.title || ""} ${q.description || ""}`.toLowerCase();
-    if (hay.includes("hybrid")) return "hybrid";
     if (hay.includes("off-grid") || hay.includes("off grid")) return "off_grid";
+    if (hay.includes("hybrid")) return "hybrid";
     if (hay.includes("on-grid") || hay.includes("on grid") || hay.includes("ongrid")) return "on_grid";
     return null;
   }
@@ -189,7 +191,7 @@ export class Agent {
         method: "POST",
         headers: { Authorization: `Bearer ${this.env.MOOS_SERVICE_TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          current: { text: msg.text, type: msg.type },
+          current: { text: String(msg.text || "").slice(0, 500), type: msg.type },
           history,
           availableQuotes: available.map((q) => ({ id: q.id, size: q.capacityKw, title: q.title, expiresAt: q.expiresAt })),
         }),
@@ -470,6 +472,13 @@ export class Agent {
       return { review: true, reason: "human_request" };
     }
 
+    // Policy, warranty, financing and backup questions must not accidentally
+    // trigger a quotation PDF merely because a capacity such as 10kW appears.
+    if (requiresStaffPolicyReview(t)) {
+      await this.text(msg, "policy_review", "Is sawal par hamari team verified tafseel check karke jawab degi. Aapka paigham consultant ko forward kar diya gaya hai.");
+      await this.handoff(msg, "unverified_policy_requires_staff", t.slice(0, 500));
+      return { review: true, reason: "unverified_policy_handoff" };
+    }
     const pending = await this.store.pending(msg.phone);
     if (pending && String(pending.kind || "").startsWith("custom_")) {
       return this.continueCustom(msg, pending, t);
@@ -516,6 +525,7 @@ export class Agent {
         return { review: false, reason: "faq" };
       }
     }
+    if (moos?.action === "custom") return this.startCustom(msg);
     if (moos?.action === "clarify") {
       await this.text(msg, "clarify", "Shukriya! Sunchaser Energy Systems se rabta karne ka. Apna required system size (6/8/10/12/15/20 kW), city aur on-grid ya hybrid batayein.");
       return { review: false, reason: "clarify" };
