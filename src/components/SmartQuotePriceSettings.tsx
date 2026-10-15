@@ -1,3 +1,4 @@
+import { SESSION_RESTORED_EVENT } from "../lib/sessionRecovery";
 import React, { useEffect, useState } from 'react';
 import { PANEL_CATALOG, INVERTER_CATALOG, BATTERY_CATALOG, BATTERY_ACCESSORY_CATALOG, inverterDisplayName } from '../lib/solarEquipmentCatalog';
 import { SMART_QUOTE_RATE_LABELS, validateSmartQuoteSettings, type SmartQuoteSettings } from '../lib/smartQuoteSettings';
@@ -43,6 +44,15 @@ export default function SmartQuotePriceSettings({ onDirtyChange }: { onDirtyChan
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+  useEffect(() => {
+    const resumed = () => {
+      setError('');
+      // Retry a failed read only. Never overwrite an existing draft or repeat a save.
+      if (!draft) void reload();
+    };
+    window.addEventListener(SESSION_RESTORED_EVENT, resumed);
+    return () => window.removeEventListener(SESSION_RESTORED_EVENT, resumed);
+  }, [draft]);
   const changed = () => { setDirty(true); onDirtyChange?.(true); setMessage(''); };
   const save = async (e: React.FormEvent) => {
     e.preventDefault(); if (!draft) return;

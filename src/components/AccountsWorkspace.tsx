@@ -1,3 +1,4 @@
+import { SESSION_RESTORED_EVENT } from "../lib/sessionRecovery";
 import SmartQuotePriceSettings from "./SmartQuotePriceSettings";
 import { canManageAutoSizerPresets } from "../lib/roles";
 import React, { useEffect, useMemo, useState } from "react";
@@ -70,6 +71,12 @@ export default function AccountsWorkspace({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [sessionVersion, setSessionVersion] = useState(0);
+  useEffect(() => {
+    const resumed = () => { setError(""); setSessionVersion(v => v + 1); };
+    window.addEventListener(SESSION_RESTORED_EVENT, resumed);
+    return () => window.removeEventListener(SESSION_RESTORED_EVENT, resumed);
+  }, []);
   const [party, setParty] = useState<Party | null>(null);
   const [quoteLead, setQuoteLead] = useState<Lead | null>(null);
   const [newQuote, setNewQuote] = useState(false);
@@ -108,7 +115,7 @@ export default function AccountsWorkspace({
     return () => {
       active = false;
     };
-  }, [allowed, view, staffUser.id, staffUser.username, staffUser.role, leads]);
+  }, [allowed, view, staffUser.id, staffUser.username, staffUser.role, leads, sessionVersion]);
   const parties = useMemo(() => {
     const result: Party[] = ledger.map((p) => ({
       id: p.partyKey,
