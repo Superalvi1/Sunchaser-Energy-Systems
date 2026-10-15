@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {classifyRequest,matchApproved,matchFaq,shouldHandoff} from '../src/logic.mjs';
+import {classifyRequest,matchApproved,matchFaq,shouldHandoff,requiresStaffPolicyReview} from '../src/logic.mjs';
 test('6 and 10 kW explicit requests',()=>{const x=classifyRequest('Please send 6kW and 10 kW quotations');assert.deepEqual(x.sizes,[6,10]);assert.equal(x.quoteIntent,true)});
 test('Roman Urdu and hybrid',()=>{const x=classifyRequest('10 kilowatt hybrid price bhej den');assert.equal(x.type,'hybrid');assert.deepEqual(x.sizes,[10])});
 test('no invented sizing for generic quote',()=>assert.deepEqual(classifyRequest('Send me a quotation').sizes,[]));
@@ -20,4 +20,12 @@ test('matchFaq returns null when uncertain or unreviewed',()=>{
 test('matchFaq rejects overlong answers',()=>{
  const faqs=[{id:'x',question:'Service area cities serve',keywords:'cities serve area',answer:'y'.repeat(2000)}];
  assert.equal(matchFaq('which cities do you serve',faqs),null);
+});
+
+test('unverified policy requests take priority over a quoted 10kW size',()=>{
+ assert.equal(requiresStaffPolicyReview('10kW hybrid warranty kitni hai'),true);
+ assert.equal(requiresStaffPolicyReview('10kw hybrid installments please'),true);
+ assert.equal(requiresStaffPolicyReview('10kw hybrid kitne ghante backup'),true);
+ assert.equal(requiresStaffPolicyReview('10kw hybrid net metering process'),true);
+ assert.equal(requiresStaffPolicyReview('Please send a 10kW hybrid quotation'),false);
 });
