@@ -34,7 +34,7 @@ To validate the key, export the **public certificate** locally via `keytool -exp
 
 The GitHub Actions workflow `Build Android CRM (debug and signed Play bundle)` builds the latest web UI and Capacitor assets. On each push to main it uploads a debug APK; it uploads a **signed AAB only when all signing secrets are present**. A manual `workflow_dispatch` fails clearly if any required signing material is missing.
 
-After code review and merge into main, open GitHub → Actions → Build Android CRM → Run workflow, wait for success, and download `Sunchaser-CRM-1.0.18-build21-play-store-aab`. Unzip that artifact and upload its `app-release.aab` file to Google Play Console, preferably the Internal testing track first. Do not upload `app-debug.apk` to the release track.
+Before merging, open GitHub → Actions → Build Android CRM → Run workflow, select branch `release/android-1.0.18-build21`, wait for success, and download `Sunchaser-CRM-1.0.18-build21-play-store-aab`. Unzip that artifact and test it on a device. After approving and merging the PR, build again on `main` and upload that fresh `app-release.aab` file to Google Play Console, preferably the Internal testing track first. Do not upload `app-debug.apk` to the release track.
 
 For a local build (with the original keystore stored at `android/app/sunchaser-release-key.jks`):
 
