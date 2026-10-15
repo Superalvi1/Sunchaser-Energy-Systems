@@ -16,6 +16,8 @@ const db = new pg.Client(client); await db.connect();
 const q = (sql, p) => db.query(sql, p);
 const WORK = fs.mkdtempSync(path.join(os.tmpdir(), "rdb-")); process.on("exit", () => fs.rmSync(WORK, { recursive: true, force: true }));
 
+// pilot companies need the marker on and the barrier verified (t1b); this database has no PostgREST, so the HTTP proof is recorded directly
+await q("select app.tenancy_enable(), app.tenancy_confirm_barrier()");
 await q("insert into companies (id, slug, name) values ('co_a','co-a','Company A'),('co_b','co-b','Company B') on conflict do nothing");
 async function seed(co, tag) {
   await q("set session_replication_role = replica");
