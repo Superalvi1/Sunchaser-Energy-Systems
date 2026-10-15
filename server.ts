@@ -480,7 +480,7 @@ import {
   hardDeletePartyLedger,
 } from "./partyLedgerDb.js";
 import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
-import { generateCustomerCode } from "./customerCode.js";
+import { insertWithUniqueCustomerCode } from "./customerCode.js";
 import { syncQuotationDocumentVault } from "./customerDocumentSync.js";
 import { fetchFinanceDashboard } from "./financeDashboardDb.js";
 import {
@@ -718,16 +718,14 @@ async function persistPublicMarketingLead(
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
     const customerId = `cust-${randomUUID()}`;
-    const customerCode = await generateCustomerCode(db);
-
-    const { error: custErr } = await supabase.from("customers").insert({
+    const { error: custErr } = await insertWithUniqueCustomerCode((customer_code) => supabase.from("customers").insert({
       id: customerId,
       name: newLead.name,
       email: newLead.email,
       phone: newLead.phone,
       address: newLead.address,
-      customer_code: customerCode,
-    });
+      customer_code,
+    }), { localDb: db });
     if (custErr) {
       console.error("[public-leads] customer insert failed:", custErr.message);
       throw new Error("Failed to persist customer for public lead.");
@@ -5145,16 +5143,14 @@ app.post("/api/leads", async (req, res) => {
     if (isSupabaseActive()) {
       const supabase = getSupabase()!;
       const customerId = `cust-${randomUUID()}`;
-      const customerCode = await generateCustomerCode(db);
-
-      const { error: custErr } = await supabase.from("customers").insert({
+      const { error: custErr } = await insertWithUniqueCustomerCode((customer_code) => supabase.from("customers").insert({
         id: customerId,
         name: newLead.name,
         email: newLead.email,
         phone: newLead.phone,
         address: newLead.address,
-        customer_code: customerCode,
-      });
+        customer_code,
+      }), { localDb: db });
       if (custErr) {
         console.error("[Supabase Customer Insert Error]:", custErr.message);
         return res.status(leadInsertHttpStatus(custErr)).json({ error: custErr.message });
