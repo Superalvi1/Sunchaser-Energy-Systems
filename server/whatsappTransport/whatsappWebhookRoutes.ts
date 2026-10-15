@@ -24,6 +24,7 @@ import {
 } from "./whatsappRepository.ts";
 import { dirtyUnreadIndexForConversation } from "./whatsappInboxUnreadIndexCache.ts";
 import { moosRelayEnabled } from "../moos/moosRelay.ts";
+import { moosTestRecipientAllowed } from "../moos/moosTestScope.ts";
 import {
   getDefaultMoosRelayOutboxStore,
 } from "../moos/moosRelayOutbox.ts";
@@ -181,7 +182,7 @@ async function persistNormalizedEvents(
         // Relay disabled (MOOS_RELAY_ENABLED unset) → skip entirely: no
         // enqueue, no audit noise. Mutual exclusion with the legacy AI agent
         // is enforced fresh at drain/delivery time (see moosRelayOutbox.ts).
-        if (textBody && messageType === "text" && moosRelayEnabled(process.env)) {
+        if (textBody && messageType === "text" && moosRelayEnabled(process.env) && moosTestRecipientAllowed(contact.phoneE164)) {
           const relayEvent = {
             conversationId: conversation.id,
             messageId: event.waMessageId,
