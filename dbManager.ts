@@ -24,6 +24,7 @@ import { liftWebsiteSourceFields } from "./src/lib/websiteCatalog/normalize.ts";
 import { rewriteLegacyStorageUrl } from "./server/storage/railwayObjectStorage.ts";
 import { CompanyContextMissingError, getCompanyContext } from "./server/saas/companyContext.ts";
 import { isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { isolationGuard } from "./server/saas/tenantIsolationGuard.ts";
 import { scopedSettingKey, unscopeSettingRows, usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
 import { ensureSettingsSnapshot } from "./server/saas/settingsSnapshot.ts";
 import { getTenantClient } from "./server/saas/tenantClient.ts";
@@ -202,8 +203,18 @@ export function getSupabase(): SupabaseClient | null {
   return getSystemSupabase();
 }
 
-/** The service-role client. Bypasses row security: use only for identity, platform and billing work. */
+/**
+ * The service-role client. Bypasses row security: use only for identity, platform and billing work.
+ * In single-company mode it throws while the database holds other companies' data (or while that cannot be verified): the isolation guard,
+ * see server/saas/tenantIsolationGuard.ts. It never returns an unfiltered client in that state, and never null (null means "use the local JSON file").
+ */
 export function getSystemSupabase(): SupabaseClient | null {
+  isolationGuard.assertAllowed();
+  return getUnguardedSystemSupabase();
+}
+
+/** The service-role client without the isolation check. For the guard's own probe and for "is a database configured" questions only. */
+export function getUnguardedSystemSupabase(): SupabaseClient | null {
   if (clientInstance) return clientInstance;
 
   const railwayPostgrestUrl = String(process.env.RAILWAY_POSTGREST_URL || "").trim();
@@ -250,7 +261,7 @@ export function getSystemSupabase(): SupabaseClient | null {
 
 export function isSupabaseActive(): boolean {
   if (isConfigured) return true;
-  return getSystemSupabase() !== null;
+  return getUnguardedSystemSupabase() !== null;
 }
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */

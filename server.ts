@@ -229,6 +229,7 @@ import {
   upsertAppSettingsToSupabase,
   describeSupabaseBackendConfig,
   getSystemSupabase,
+  getUnguardedSystemSupabase,
 } from "./dbManager.js";
 import { isSupabaseConnectivityError, SUPABASE_UNAVAILABLE_CODE } from "./supabaseConnectivity.ts";
 import {
@@ -369,6 +370,7 @@ import {
 } from "./server/auth/revocation.ts";
 import { createPostgrestCompanyStore, listCompanyMemberUserIds } from "./server/saas/companyStore.ts";
 import { assertMultiCompanyConfig, FOUNDING_COMPANY_ID, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { isolationGuard, isTenantIsolationError } from "./server/saas/tenantIsolationGuard.ts";
 import { getCompanyContext, runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
 import { usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
 import { moduleFlags, AUTOSIZER_DISABLED_MESSAGE } from "./server/saas/moduleGate.ts";
@@ -612,6 +614,15 @@ const railwayPrivateSmokeMode = assertRailwayPrivateSmokeEnvironment();
 // Never pair credentials with a wildcard — see server/middleware/cors.ts.
 app.use(createCorsMiddleware());
 
+// Company isolation does not depend on the feature flag. While the database holds another company's data and this server is not in multi-company mode
+// (or cannot tell), every data route is paused with an explicit 503 - never served unfiltered. See server/saas/tenantIsolationGuard.ts.
+app.get("/api/maintenance-status", (_req, res) => {
+  const s = isolationGuard.current();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ paused: s.blocked, reason: s.reason });
+});
+app.use(isolationGuard.middleware((req) => !(req.path === "/api" || req.path.startsWith("/api/") || req.path.startsWith("/uploads")) || req.path === "/api/maintenance-status"));
+
 // Preserve exact Meta webhook POST bytes before global JSON parsing.
 installWhatsAppRawBodyMiddleware(app);
 
@@ -778,7 +789,7 @@ app.get("/api/company/files/:namespace/:encodedKey", async (req, res) => {
 
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
 // The sales agent is a founding-company feature until WhatsApp is scoped per company.
-if (!railwayPrivateSmokeMode) setInterval(()=>{void runAsFoundingCompany(() => salesAgentRuntime.drain());},5000).unref();
+if (!railwayPrivateSmokeMode) setInterval(()=>{ if (isolationGuard.current().blocked) return; void runAsFoundingCompany(() => salesAgentRuntime.drain()).catch((e) => { if (!isTenantIsolationError(e)) console.error("[sales-agent] drain failed:", e); }); },5000).unref();
 
 // Sunchaser Learning Studio: protected CRM SSO handoff and learning APIs.
 // The router is feature-gated and remains inert until LEARNING_STUDIO_ENABLED=true.
@@ -10994,6 +11005,7 @@ if (!fs.existsSync(BACKUPS_DIR)) {
 
 setInterval(() => runAsFoundingCompany(async () => {
   try {
+    if (isolationGuard.current().blocked) return;   // a backup read through the unfiltered client would mix companies
     let backupState: Database = db;
     if (isSupabaseActive()) {
       backupState = await fetchAppStateFromSupabase();
@@ -11017,7 +11029,8 @@ setInterval(() => runAsFoundingCompany(async () => {
 app.get("/health", (req, res) => {
   const revocation = revocationStatus();
   // sessionRevocationActive=false means logout/refresh rotation cannot revoke tokens (migration not applied or disabled).
-  res.json({ status: "ok", service: "sunchaser-crm", sessionRevocationActive: revocation.active });
+  const iso = isolationGuard.current();
+  res.json({ status: "ok", service: "sunchaser-crm", sessionRevocationActive: revocation.active, tenantIsolation: iso.blocked ? { paused: true, reason: iso.reason } : { paused: false } });
 });
 
 /** PDF engine diagnostic — confirms Playwright/Chromium availability on this host (Render, not Vercel). */
@@ -11094,6 +11107,28 @@ async function startServer() {
   }
 
   logServerBuildIdentity();
+
+  // Company isolation does not depend on the flag: ask the database before serving anything, and keep asking (see tenantIsolationGuard.ts).
+  if (!isMultiCompanyEnabled()) {
+    isolationGuard.setDeps({
+      probe: async () => {
+        const client = getUnguardedSystemSupabase();
+        if (!client) return { tablesMissing: true };   // local JSON mode: one company by construction
+        const { data, error } = await client.from("companies").select("id").neq("id", FOUNDING_COMPANY_ID).limit(1);
+        if (error) {
+          // The companies table does not exist (before migration t1): a single-company database. Anything else cannot be verified: fail closed.
+          if (/PGRST205|42P01|Could not find the table|does not exist/i.test(`${(error as any).code || ""} ${error.message || ""}`)) return { tablesMissing: true };
+          throw new Error(`companies could not be read: ${error.message}`);
+        }
+        return { otherCompanies: (data || []).length };
+      },
+    });
+    await isolationGuard.refresh();
+    isolationGuard.arm();
+    isolationGuard.start();
+    const st = isolationGuard.current();
+    if (st.blocked) console.error(`\x1b[31m%s\x1b[0m`, `🚨 [TENANT ISOLATION] Serving is PAUSED (${st.reason}): ${st.detail} Enable MULTI_COMPANY_ENABLED with the tenant key, or export and remove the other companies' data.`);
+  }
 
   // Optional deployment gate for hosts that must prove Playwright/Chromium
   // availability before accepting traffic. Disabled by default.
