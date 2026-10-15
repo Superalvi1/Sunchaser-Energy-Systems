@@ -1,3 +1,4 @@
+import { identityDefault, isNeutralBranding } from "./src/lib/documentIdentity.ts";
 import type { CompanyBranding } from "./src/lib/branding.ts";
 import { mediaLabel } from "./src/lib/projectCompletion.ts";
 
@@ -23,7 +24,8 @@ export function compileWarrantyHandoverPDFHtml(
 ) {
   const d = data.delivery;
   const company = branding.companyName;
-  const logo = branding.logoUrl || "/assets/sunchaser-logo.png";
+  const neutral = isNeutralBranding(branding);
+  const logo = branding.logoUrl || identityDefault(neutral, "/assets/sunchaser-logo.png", "");
   const primary = branding.primaryColor || "#f59e0b";
 
   const panels = data.items.filter((i) => String(i.item_category || i.itemCategory || "").toLowerCase().includes("panel"));
@@ -76,7 +78,7 @@ export function compileWarrantyHandoverPDFHtml(
   <div class="wrap">
     <div class="head">
       <div>
-        <img class="logo" src="${esc(logo)}" alt="${esc(company)}"/>
+        ${logo ? `<img class="logo" src="${esc(logo)}" alt="${esc(company)}"/>` : ""}
         <h1>${esc(company)}</h1>
         <div style="font-size:10px;color:#64748b">${esc(branding.officeAddress)}</div>
         <div style="font-size:10px;color:#64748b">${esc(branding.phoneNumbers)}</div>
@@ -127,7 +129,7 @@ export function compileWarrantyHandoverPDFHtml(
     <div class="box">
       <h3>Warranty period</h3>
       <div>Start: <strong>${esc(wStart)}</strong> · End: <strong>${esc(wEnd)}</strong></div>
-      <div style="margin-top:6px;font-size:9px;color:#64748b">Standard coverage per Sunchaser warranty policy. Panels 25yr, inverter 5yr, battery 10yr where applicable.</div>
+      <div style="margin-top:6px;font-size:9px;color:#64748b">${esc(identityDefault(neutral, "Standard coverage per Sunchaser warranty policy. Panels 25yr, inverter 5yr, battery 10yr where applicable.", "Coverage periods are as stated by the company and the equipment manufacturers."))}</div>
     </div>
     ${
       serialRows
@@ -136,7 +138,7 @@ export function compileWarrantyHandoverPDFHtml(
     }
     <div class="box">
       <h3>Terms</h3>
-      ${esc(branding.terms || "Warranty valid subject to proper use and Sunchaser maintenance guidelines.")}
+      ${esc(branding.terms || identityDefault(neutral, "Warranty valid subject to proper use and Sunchaser maintenance guidelines.", "Warranty valid subject to proper use and the maintenance guidelines supplied with the system."))}
     </div>
     <div class="sig">
       <div class="sig-line">Authorized — ${esc(company)}</div>

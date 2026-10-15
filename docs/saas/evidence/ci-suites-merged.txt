@@ -1,0 +1,83 @@
+▶ test:crm-repair (required) … PASS (9s)
+▶ test:authorization (required) … PASS (1s)
+▶ test:phase-1b1 (required) … PASS (24s)
+▶ test:phase-1b2a (required) … PASS (1s)
+▶ test:phase-1b2b (required) … PASS (2s)
+▶ test:phase-1b2c (required) … PASS (1s)
+▶ test:phase-1b3a (required) … PASS (1s)
+▶ test:phase-1b3b (required) … PASS (1s)
+▶ test:client-crm-link (required) … PASS (2s)
+▶ test:public-quotation (required) … PASS (2s)
+▶ test:public-lead-gateway (required) … PASS (1s)
+▶ test:smart-quote-pdf (required) … PASS (2s)
+▶ test:quotation-engine (required) … PASS (5s)
+▶ test:quote-commercial (required) … PASS (1s)
+▶ test:invoice-ready-route (required) … PASS (1s)
+▶ test:whatsapp-sales-agent (required) … PASS (1s)
+▶ test:saas (required) … PASS (2s)
+▶ test:marketplace-live-suppliers-phase1 (tracked) … FAIL (1s)
+    PASS: money parsing / malformed / zero / missing
+    PASS: kamal fixture normalize / confirmPrice / images / no HTML bodies
+    PASS: alladin fixture normalize / category exclusions / stock / compare-at
+    PASS: category filter solar true-positives / inverter false-positives
+    PASS: pagination discovery
+    node:internal/modules/run_main:123
+        triggerUncaughtException(
+        ^
+    AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+    1 !== 2
+        at <anonymous> (/home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/server/marketplace/suppliers/liveCataloguePhase1.test.ts:442:10) {
+      generatedMessage: true,
+      code: 'ERR_ASSERTION',
+      actual: 1,
+      expected: 2,
+      operator: 'strictEqual',
+      diff: 'simple'
+    }
+    Node.js v22.22.0
+▶ test:startup-smoke (tracked) … FAIL (1s)
+    [smoke] server exited early code=1 signal=null
+    [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+    /home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/dist/server.cjs:11162
+        throw new Error(
+        ^
+    Error: WhatsApp inbox repositories require active Supabase persistence. Use createInMemoryWhatsAppInboxRepositories() for tests.
+        at createDefaultWhatsAppInboxRepositories (/home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/dist/server.cjs:11162:11)
+        at createProductionWhatsAppServices (/home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/dist/server.cjs:53811:31)
+        at buildProductionWebhookAutoLinkLead (/home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/dist/server.cjs:53816:20)
+        at Object.<anonymous> (/home/user/Sunchaser-Energy-Systems/.worktrees/saas-pilot/dist/server.cjs:59334:28)
+        at Module._compile (node:internal/modules/cjs/loader:1706:14)
+        at Object..js (node:internal/modules/cjs/loader:1839:10)
+        at Module.load (node:internal/modules/cjs/loader:1441:32)
+        at Function._load (node:internal/modules/cjs/loader:1263:12)
+        at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+    Node.js v22.22.0
+    ◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+    [Supabase Config] source=SUPABASE_URL host=unset configured=false
+
+## Test suites
+
+| Suite | Kind | Result | Seconds | Note |
+|---|---|---|---|---|
+| `test:crm-repair` | required | ✅ pass | 9 | quotation persistence, payments ledger, uploads signature, session renewal, phone matching |
+| `test:authorization` | required | ✅ pass | 1 | auth and route permissions |
+| `test:phase-1b1` | required | ✅ pass | 24 | route policy, AI draft cannot auto-save, 30 chained suites |
+| `test:phase-1b2a` | required | ✅ pass | 1 | ownership / permissions |
+| `test:phase-1b2b` | required | ✅ pass | 2 | ownership / permissions |
+| `test:phase-1b2c` | required | ✅ pass | 1 | ownership / permissions |
+| `test:phase-1b3a` | required | ✅ pass | 1 | finance ownership |
+| `test:phase-1b3b` | required | ✅ pass | 1 | finance ownership |
+| `test:client-crm-link` | required | ✅ pass | 2 | customer / portal linking |
+| `test:public-quotation` | required | ✅ pass | 2 | public Smart Quote |
+| `test:public-lead-gateway` | required | ✅ pass | 1 | public lead intake |
+| `test:smart-quote-pdf` | required | ✅ pass | 2 | Smart Quote PDF |
+| `test:quotation-engine` | required | ✅ pass | 5 | quotation engine |
+| `test:quote-commercial` | required | ✅ pass | 1 | quotation pricing |
+| `test:invoice-ready-route` | required | ✅ pass | 1 | invoices |
+| `test:whatsapp-sales-agent` | required | ✅ pass | 1 | WhatsApp AI agent approval rules |
+| `test:saas` | required | ✅ pass | 2 | company foundation: scope policy, resolver, classification of every table, generated SQL up to date, migration manifest |
+| `test:marketplace-live-suppliers-phase1` | tracked | ❌ fail | 1 | pageFingerprint() uses ids only, so a second page with the same ids but newer content is treated as a repeated page; test expects both pages. Production sync logic, left unchanged pending owner decision. |
+| `test:startup-smoke` | tracked | ❌ fail | 1 | needs a built dist/server.cjs and database credentials |
+
+Required: 17/17 passed. Tracked (not blocking, still reported): 2, of which 2 not passing.

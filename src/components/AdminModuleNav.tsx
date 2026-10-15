@@ -1,3 +1,4 @@
+import { afterSalesEnabled, companySettingsEnabled, workspaceIsNeutral } from "../lib/workspaceModules";
 import { isNativeApp } from "../lib/appPlatform";
 import React, { useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -33,6 +34,9 @@ import {
 import { isKnowledgeMockUiEnabled } from "../lib/knowledgeFeatureFlag";
 import { DisclosureSection, useIsMobile, useSingleOpen } from "./ui/MobileDisclosure";
 
+/** Screens whose server routes exist for the founding company only (server/saas/companyScopePolicy.ts): another company is not offered them. */
+const FOUNDING_ONLY_SEGMENTS: ReadonlySet<string> = new Set(["whatsapp-connection", "whatsapp-setup", "inbox", "marketplace-auto-import"]);
+
 export type AdminSegmentId =
   | "overview"
   | "reports"
@@ -58,6 +62,7 @@ export type AdminSegmentId =
   | "client-portal"
   | "user-management"
   | "branding"
+  | "company-settings"
   | "control-panel"
   | "savings-desk"
   | "subscription-desk"
@@ -296,12 +301,16 @@ export function buildAdminNavGroups(opts: {
       id: "operations",
       label: "Operations",
       modules: [
-        {
-          id: "project-delivery",
-          title: "Project Delivery",
-          description: "Invoice-linked material delivery and challans",
-          icon: Truck,
-        },
+        ...(afterSalesEnabled()
+          ? [
+              {
+                id: "project-delivery" as const,
+                title: "Project Delivery",
+                description: "Invoice-linked material delivery and challans",
+                icon: Truck,
+              },
+            ]
+          : []),
         ...(showProjectOperations
           ? [
               {
@@ -428,6 +437,16 @@ export function buildAdminNavGroups(opts: {
               },
             ]
           : []),
+        ...(companySettingsEnabled()
+          ? [
+              {
+                id: "company-settings" as const,
+                title: "Company Settings",
+                description: "Branding, bank accounts, terms, prices, history",
+                icon: Settings2,
+              },
+            ]
+          : []),
         ...(showBranding
           ? [
               {
@@ -519,7 +538,7 @@ export default function AdminModuleNav({
         showUserManagement,
         showInternalCosting,
         showMarketplaceAutoImport,
-      }).map(g=>({...g,modules:g.modules.filter(m=>!isNativeApp() || ["overview","reports","invoices","parties","finance-dashboard","project-delivery","project-operations","service-desk","tickets","support-desk","inventory","client-portal"].includes(m.id))})).filter(g=>g.modules.length>0),
+      }).map(g=>({...g,modules:g.modules.filter(m=>(!workspaceIsNeutral() || !FOUNDING_ONLY_SEGMENTS.has(m.id)) && (!isNativeApp() || ["overview","reports","invoices","parties","finance-dashboard","project-delivery","project-operations","service-desk","tickets","support-desk","inventory","client-portal"].includes(m.id)))})).filter(g=>g.modules.length>0),
     [showFinanceAdmin, showFinanceDashboard, showProjectOperations, showInvoices, showBranding, showUserManagement, showInternalCosting, showMarketplaceAutoImport]
   );
 

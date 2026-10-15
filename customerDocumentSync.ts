@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
 import { mapDocumentRow } from "./src/lib/clientPortalPhase2.ts";
 import type { InvoiceRecord } from "./src/lib/invoices.ts";
@@ -46,7 +47,7 @@ export async function upsertVaultCustomerDocument(
 
   const now = new Date().toISOString();
   const doc = {
-    id: `doc-${Date.now()}`,
+    id: `doc-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`,   // not the clock alone: two invoices in one millisecond lost a document row
     customer_id: customerId,
     project_id: null,
     document_type: body.documentType,

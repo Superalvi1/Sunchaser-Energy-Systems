@@ -18,3 +18,5 @@ whatsapp-web-auth/
 # CI reports
 ci-report/
 ci-report-docker/
+ci-report-stack/
+.matrix/

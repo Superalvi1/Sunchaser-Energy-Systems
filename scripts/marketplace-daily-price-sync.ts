@@ -6,6 +6,11 @@
  * activates catalogue rows, or switches the public catalogue source.
  */
 import "dotenv/config";
+import { declareGlobalOnlyProcess } from "../server/saas/isolationMode.ts";
+
+// This job reads and writes marketplace tables only (sunchaser_only in scripts/saas/table-classification.json). It tells the database so: while the tenancy marker is on, the
+// database lets a global-only job reach marketplace paths and nothing else. Without this line the daily sync would be refused once the first pilot company exists.
+declareGlobalOnlyProcess("marketplace daily price sync");
 import { createAutoImportService } from "../server/marketplace/autoImport/autoImportService.ts";
 import { createDailyPriceSyncRejectLedger } from "../server/marketplace/autoImport/dailyPriceSyncRejectLedger.ts";
 import { createCatalogueManagerRepositoryFromEnv } from "../server/marketplace/catalogueManager/catalogueManagerRepository.ts";

@@ -1,3 +1,4 @@
+import { autoSizerEnabled, companySettingsEnabled } from "../lib/workspaceModules";
 import React, { useEffect, useState } from "react";
 import {
   TrendingUp,
@@ -36,6 +37,7 @@ import PartyLedgerStaff from "./PartyLedgerStaff";
 import FinanceDashboardStaff from "./FinanceDashboardStaff";
 import ProjectOperationsDashboardStaff from "./ProjectOperationsDashboardStaff";
 import BrandingSettings from "./BrandingSettings";
+import CompanySettingsScreen from "./CompanySettingsScreen";
 import { canViewProjectProfit } from "../lib/projectFinance";
 import { canCreateInvoice } from "../lib/invoices";
 import { canViewFinanceDashboard } from "../lib/financeDashboard";
@@ -578,7 +580,7 @@ export default function AdminApp({
 
             {/* Inner Sub-Tab Selector Navigation */}
             <div className="flex gap-1.5 bg-neutral-950 p-1.5 rounded-2xl border border-neutral-850 flex-wrap">
-              {(['pages', 'banks', 'terms', 'ceo', 'structures', 'settings', 'autosizer'] as const).map((sub) => (
+              {(['pages', 'banks', 'terms', 'ceo', 'structures', 'settings', 'autosizer'] as const).filter((sub) => sub !== 'autosizer' || autoSizerEnabled()).map((sub) => (
                 <button
                   key={sub}
                   onClick={() => {
@@ -1694,6 +1696,7 @@ export default function AdminApp({
             onOpenInvoiceConsumed={() => setInvoiceEditId(null)}
           />
         )}
+        {activeSegment === 'company-settings' && companySettingsEnabled() && <CompanySettingsScreen />}
         {activeSegment === 'branding' && showBranding && (
           <BrandingSettings staffUser={staffUser} />
         )}

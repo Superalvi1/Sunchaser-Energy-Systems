@@ -1,0 +1,73 @@
+                                                                                                                                                 PREMIUM INVOICE V3
+                  Beta Energy House B11C1E
+                  📞 042-2020202 · ✉ accounts.b11c1e@beta.test                                                                               INVOICE
+                  🌐 www.beta-b11c1e.test
+                  📍 2 Beta Street B11C1E Lahore
+
+  BILL TO                                                                                   INVOICE DETAILS
+
+  BETAB11C1E PDF                                                                            Invoice No.                                                INV-2026-0001
+                                                                                            Date                                                          14/10/2026
+  Tel: 03155081602
+                                                                                            Time                                                            06:28 am
+                                                                                            Due Date                                                                 —
+                                                                                            Status                                                         PARTIAL
+
+
+
+  PROJECT INFORMATION
+ Project Number                                                                      project-1791959330333
+ System Size                                                                         5 kW
+ System Type                                                                         Hybrid
+ Panel Brand                                                                         Synthetic 500W
+ Inverter Brand                                                                      Synthetic 5kW
+ Battery Brand                                                                       None
+ Structure Type                                                                      Standard
+ Net Metering Status                                                                 Yes
+
+
+  PAYMENT PROGRESS
+                 TOTAL AMOUNT                                RECEIVED                                  BALANCE DUE                            % PAID
+                Rs 324,000                                Rs 81,000                                  Rs 243,000                               25%
+
+                                                                                                                                       25% of invoice amount received
+
+
+
+
+                           Scan to Pay / Share Payment Details
+                           QR encodes invoice number, total, and balance. Use bank details on the last page for transfer.
+
+
+
+
+ #       Item                                                                                                                Qty             Rate             Amount
+
+     1   BETAB11C1E-PANEL-PDF                                                                                                      9   Rs 36,000          Rs 324,000
+         BETAB11C1E panel PDF
+
+                                                                                                                             9                            Rs 324,000
+
+Amount in words: Three Lakh Twenty Four Thousand Rupees only                                              Sub Total                                       Rs 324,000
+Terms & Conditions
+System booked in COD basis.                                                                               Total                                         Rs 324,000
+                                                                                                          Received                                          Rs 81,000
+
+                                                                                                          Balance Due                                     Rs 243,000
+
+Authorized Signatory                                                                                      Previous Balance                                      Rs 0
+For Beta Energy House B11C1E
+                                                                                                          Current Balance                                 Rs 243,000
+             Payment — Bank Accounts
+             Transfer to an account below. Reference: INV-2026-0001
+
+
+
+Company / Account Title                           Bank Name                          Account Number                IBAN
+
+BETA ENERGY HOUSE B11C1E                          Beta Bank B11C1E                   BB11C1E0003                   PK00BETAB11C1E000003
+
+
+
+                                              Beta Energy House B11C1E · 042-2020202 · accounts.b11c1e@beta.test
+

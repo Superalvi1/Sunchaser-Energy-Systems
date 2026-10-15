@@ -1,3 +1,4 @@
+import { afterSalesEnabled } from "../lib/workspaceModules";
 import React from "react";
 import {
   Activity,
@@ -52,7 +53,7 @@ export default function ClientPortalPremiumServices({
   onOpenDocuments,
   showDocuments = false,
 }: ClientPortalPremiumServicesProps) {
-  const items = showDocuments ? SERVICES : SERVICES.filter((s) => s.id !== "documents");
+  const items = (showDocuments ? SERVICES : SERVICES.filter((s) => s.id !== "documents")).filter((s) => s.id !== "warranty" || afterSalesEnabled());
 
   return (
     <section className="space-y-3">

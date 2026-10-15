@@ -1,0 +1,626 @@
+{
+ "version": 1,
+ "classes": {
+  "tenant": "Company-owned rows: add company_id (NOT NULL, default from request context), FK, index, RLS select/insert/update/delete.",
+  "tenant_config": "Company-owned configuration: same as tenant, plus unique(company_id) or unique(company_id, key). Replaces global singletons.",
+  "tenant_existing_company_id": "Already has company_id text. Add FK to companies(id) and RLS; keep values ('sunchaser').",
+  "identity": "Global identity table; visibility to a company only via company_memberships.",
+  "role_template": "System rows (company_id NULL) readable by all; company rows isolated.",
+  "dormant": "Feature not enabled in production. No tenant access until a scoping review is done.",
+  "sunchaser_only": "Module owned by the founding company. No tenant access; routes blocked for other companies.",
+  "rollback_artefact": "Created only by a rollback script to keep a copy of removed data. No tenant access; excluded from company export; never part of the application schema.",
+  "tenant_system": "Company-owned rows written only by SECURITY DEFINER functions (for example numbering counters). Has company_id; the tenant role has no privilege on the table; included in company export.",
+  "platform": "Platform-owned table created by a SaaS migration (companies, memberships). Privileges are set by that migration, not by the generated tenant policies; not part of the tenant attack matrix; not exported as one company's data."
+ },
+ "tables": {
+  "activity_logs": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "after_sales_service_logs": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "bank_accounts": {
+   "class": "tenant_config",
+   "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
+  },
+  "bills": {
+   "class": "tenant",
+   "note": "Finance record, provisional class tenant. Production-only: not defined in tracked SQL. On a synthetic bills the foundation migration adds company_id, row security and the reference trigger (scripts/rehearsal/run-saas-rehearsal.sh); its unique bill_number stays GLOBAL until the real definition is read and a per-company key is added.",
+   "verify": "Not defined in tracked SQL. Production schema must be read before migration."
+  },
+  "categories": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "ceo_messages": {
+   "class": "tenant_config",
+   "note": "Public website/branding content; per company. Pilot scope: only branding fields are exposed."
+  },
+  "companies": {
+   "class": "platform",
+   "note": "One row per customer company. A tenant sees only its own row (policy tenant_sees_own_company)."
+  },
+  "company_memberships": {
+   "class": "platform",
+   "note": "Which user works for which company, with a per-company role and status. Written by the platform (service role) only."
+  },
+  "company_settings_audit": {
+   "class": "platform",
+   "note": "History of changes to a company's settings (branding, bank accounts, terms, prices): who, when, before and after. Created by scripts/saas/phase2g-company-admin.sql. Written and read only by the application with the service role, filtered by company; the tenant role has no privilege. Append-only and deliberately NOT part of a company export or restore: restoring a company to an earlier state must not erase the record of who changed what."
+  },
+  "company_terms": {
+   "class": "tenant_config",
+   "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
+  },
+  "customer_documents": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "customer_energy_devices": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "customer_equipment": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "customer_portal_profiles": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "customer_savings_profiles": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "customer_subscriptions": {
+   "class": "tenant",
+   "note": "A solar company's own customer maintenance plans (NOT the SaaS plan). plan_code must become unique per company."
+  },
+  "customer_systems": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "customer_warranties": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "customers": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "delivery_challan_items": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "delivery_challan_photos": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "delivery_challans": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "design_sessions": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "document_counters": {
+   "class": "tenant_system",
+   "note": "Last invoice (document) number per company, kind and period. Created by scripts/saas/phase2c-document-numbering.sql; advanced only by next_document_number()."
+  },
+  "energy_alerts": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "installation_photos": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "installation_tasks": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "interactive_proposal_events": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "interactive_proposals": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "internal_costing_sheets": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "inventory_items": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "inventory_movements": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "inventory_purchases": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "investors": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "invoice_items": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "invoice_payments": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "invoices": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "leads": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "learning_assessments": {
+   "class": "sunchaser_only",
+   "note": "Learning Studio (separate service, already has company_id). Not part of the pilot."
+  },
+  "learning_courses": {
+   "class": "sunchaser_only",
+   "note": "Learning Studio (separate service, already has company_id). Not part of the pilot."
+  },
+  "learning_enrollments": {
+   "class": "sunchaser_only",
+   "note": "Learning Studio (separate service, already has company_id). Not part of the pilot."
+  },
+  "learning_generation_jobs": {
+   "class": "sunchaser_only",
+   "note": "Learning Studio (separate service, already has company_id). Not part of the pilot."
+  },
+  "learning_usage_events": {
+   "class": "sunchaser_only",
+   "note": "Learning Studio (separate service, already has company_id). Not part of the pilot."
+  },
+  "messaging_attachments": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_audit_logs": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_contact_identities": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_contacts": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_conversation_assignments": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_conversations": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_messages": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_outbox": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "messaging_status_events": {
+   "class": "dormant",
+   "note": "Unified messaging store (organization_id). UNIFIED_MESSAGING_POSTGRES_ENABLED is off in production. Scope before enabling."
+  },
+  "mp_audit_events": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_auto_import_listings": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_auto_import_sync_runs": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_brands": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_cart_items": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_carts": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_categories": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_delivery_rates": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_delivery_zones": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_event_outbox": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_field_overrides": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_idempotency_keys": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_import_reject_ledger": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_job_runs": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_media": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_order_items": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_orders": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_payment_plans": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_payments": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_price_alerts": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_price_history": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_price_overrides": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_pricing_config": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_product_costs": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_product_variants": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_products": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_receipt_objects": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_receipts": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_storage_cleanup_outbox": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_supplier_observations": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_supplier_products": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_suppliers": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "mp_upload_intents": {
+   "class": "sunchaser_only",
+   "note": "Marketplace module. Owned by the founding company; no tenant access; routes blocked for pilots."
+  },
+  "net_metering_trackers": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "notifications": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "orders": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "party_ledger_archives": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "payments": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "products": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "products_inventory": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "project_completion_media": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "project_deliveries": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "project_delivery_items": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "project_delivery_updates": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "project_finance_records": {
+   "class": "tenant",
+   "note": "Finance record: ledger-critical, keep per-company numbering and uniqueness."
+  },
+  "project_installation_photos": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "project_installed_equipment": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "project_inventory_reservations": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "projects": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "purchase_orders": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "quotations": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "quote_pdf_settings": {
+   "class": "tenant_config",
+   "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
+  },
+  "quote_template_pages": {
+   "class": "tenant_config",
+   "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
+  },
+  "quote_templates": {
+   "class": "tenant_config",
+   "note": "Currently a global singleton. Becomes one row per company (unique on company_id)."
+  },
+  "revoked_sessions": {
+   "class": "identity",
+   "note": "Revoked token ids and session families. Sessions belong to a global login identity (users), so revocation is global; read only with the system client, never with a company-scoped one."
+  },
+  "role_permissions": {
+   "class": "role_template",
+   "note": "company_id NULL = system template visible to all; company rows = custom roles owned by one company."
+  },
+  "roles": {
+   "class": "role_template",
+   "note": "company_id NULL = system template visible to all; company rows = custom roles owned by one company."
+  },
+  "saas_audit": {
+   "class": "platform",
+   "note": "Append-only audit trail of operator actions (company created, plan changed, payment recorded, suspension). Platform table: no tenant privilege."
+  },
+  "saas_payments": {
+   "class": "platform",
+   "note": "Manual payment ledger of the operator's own revenue. Append-only (corrections are reversal rows). Platform table: no tenant privilege."
+  },
+  "saas_plans": {
+   "class": "platform",
+   "note": "Plans offered by the operator (limits, informational price). Platform table: no tenant privilege. Created by phase2e-subscriptions.sql."
+  },
+  "saas_storage_reservations": {
+   "class": "platform",
+   "note": "Transient bookkeeping of file-storage reservations (in-flight and recently finished uploads of the pilot companies), created by scripts/saas/phase2h-storage-reservations.sql. Platform table: no tenant privilege; reached only through the saas_storage_* functions with the service role. Not part of a company export or restore."
+  },
+  "saas_subscriptions": {
+   "class": "platform",
+   "note": "One manual subscription per company (plan, status, period, per-company limit overrides). Platform table: no tenant privilege."
+  },
+  "service_requests": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "service_visit_photos": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "service_visit_reports": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "settings": {
+   "class": "tenant_config",
+   "note": "One row per (company, key). The founding company keeps its plain keys; every other company stores \"<company>:<key>\" (application: server/saas/companyIdentity.ts; database: phase2d check constraint)."
+  },
+  "site_surveys": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "smart_quote_versions": {
+   "class": "tenant",
+   "note": "Core CRM record."
+  },
+  "smart_quote_versions_rollback_backup": {
+   "class": "rollback_artefact",
+   "note": "Copy of smart_quote_versions made by smart-quote-versions-rollback.sql. Exists only after a rollback; contains company data, so it must stay invisible to the tenant role and out of exports."
+  },
+  "social_links": {
+   "class": "tenant_config",
+   "note": "Public website/branding content; per company. Pilot scope: only branding fields are exposed."
+  },
+  "solar_packages": {
+   "class": "tenant",
+   "note": "Inventory and product catalogue of the company."
+  },
+  "structure_descriptions": {
+   "class": "tenant_config",
+   "note": "Public website/branding content; per company. Pilot scope: only branding fields are exposed."
+  },
+  "subscription_payments": {
+   "class": "tenant",
+   "note": "A solar company's own customer maintenance plans (NOT the SaaS plan). plan_code must become unique per company."
+  },
+  "subscription_plans": {
+   "class": "tenant",
+   "note": "A solar company's own customer maintenance plans (NOT the SaaS plan). plan_code must become unique per company."
+  },
+  "support_ticket_updates": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "support_tickets": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "technical_job_updates": {
+   "class": "tenant",
+   "note": "Projects, delivery and after-sales operations."
+  },
+  "users": {
+   "class": "identity",
+   "note": "Global login identity. Access in a company is granted only through company_memberships."
+  },
+  "warranties": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "warranty_claims": {
+   "class": "tenant",
+   "note": "Documents and portal data of a company's own customers."
+  },
+  "website_content": {
+   "class": "tenant_config",
+   "note": "One row per (company, key). The founding company keeps its plain keys; every other company stores \"<company>:<key>\" (application: server/saas/companyIdentity.ts; database: phase2d check constraint)."
+  },
+  "whatsapp_audit_events": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_channels": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_connections": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_contacts": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_conversation_assignment_events": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_conversation_crm_links": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_conversation_status_events": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_conversations": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_logs": {
+   "class": "tenant",
+   "note": "Legacy WhatsApp message logs linked to leads/customers."
+  },
+  "whatsapp_message_logs": {
+   "class": "tenant",
+   "note": "Legacy WhatsApp message logs linked to leads/customers."
+  },
+  "whatsapp_message_status_events": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_messages": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_oauth_states": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_outbound_idempotency_keys": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_read_watermarks": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  },
+  "whatsapp_web_owner_diagnostics": {
+   "class": "dormant",
+   "note": "Unofficial WhatsApp Web session tables; not safe for multi-company until reviewed. Blocked for pilots."
+  },
+  "whatsapp_web_session_lease": {
+   "class": "dormant",
+   "note": "Unofficial WhatsApp Web session tables; not safe for multi-company until reviewed. Blocked for pilots."
+  },
+  "whatsapp_web_sync_jobs": {
+   "class": "dormant",
+   "note": "Unofficial WhatsApp Web session tables; not safe for multi-company until reviewed. Blocked for pilots."
+  },
+  "whatsapp_webhook_events": {
+   "class": "tenant_existing_company_id",
+   "note": "Already has company_id text default 'sunchaser' (declared NOT a real boundary). Add FK to companies(id) and RLS."
+  }
+ }
+}

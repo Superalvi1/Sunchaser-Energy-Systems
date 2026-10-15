@@ -1,0 +1,25 @@
+Reproduction of the intermittent restore-journey failure, run on the code BEFORE the fix (a clock-only row id), local scratch stack,
+scripts/saas/e2e/concurrent-contracts.mjs (12 rounds; in each round 3 leads of each of two companies are contracted at the same instant):
+
+PASS: 72 leads with a quotation exist (12 rounds x 2 companies x 3)
+   CONTRACT-FAILURE-RECORD {"company":"co_beta","status":500,"body":"{\"error\":\"duplicate key value violates unique constraint \\\"invoice_items_pkey\\\"\"}"}
+   CONTRACT-FAILURE-RECORD {"company":"co_alpha","status":500,"body":"{\"error\":\"duplicate key value violates unique constraint \\\"invoice_items_pkey\\\"\"}"}
+   CONTRACT-FAILURE-RECORD {"company":"co_beta","status":500,"body":"{\"error\":\"duplicate key value violates unique constraint \\\"invoices_pkey\\\"\"}"}
+   CONTRACT-FAILURE-RECORD {"company":"co_alpha","status":500,"body":"{\"error\":\"duplicate key value violates unique constraint \\\"invoices_pkey\\\"\"}"}
+   CONTRACT-FAILURE-RECORD {"company":"co_beta","status":500,"body":"{\"error\":\"duplicate key value violates unique constraint \\\"invoice_items_pkey\\\"\"}"}
+FAIL: all 72 simultaneous contracts succeed and each provisions an invoice (14 failed)
+PASS: every invoice id is unique
+PASS: every provisioned invoice exists exactly once in the database (58 of 58)
+PASS: every invoice has its line items
+PASS: every invoice belongs to the company that contracted it (no cross-company row)
+5 passed, 1 failed
+
+AFTER the fix (invoice id, invoice-item ids and the invoice-created customer id carry a random suffix), same script, same stack:
+
+PASS: 72 leads with a quotation exist (12 rounds x 2 companies x 3)
+PASS: all 72 simultaneous contracts succeed and each provisions an invoice (0 failed)
+PASS: every invoice id is unique
+PASS: every provisioned invoice exists exactly once in the database (72 of 72)
+PASS: every invoice has its line items
+PASS: every invoice belongs to the company that contracted it (no cross-company row)
+6 passed, 0 failed

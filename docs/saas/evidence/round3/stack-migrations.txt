@@ -1,0 +1,16 @@
+Applying t1-company-foundation  (scripts/saas/phase2-company-foundation.sql)  gate G3+G4
+  ok (294 ms)
+Applying t2-ownership  (scripts/saas/phase2b-ownership.sql)  gate G3+G4
+  ok (46 ms)
+Applying t3-document-numbering  (scripts/saas/phase2c-document-numbering.sql)  gate G3+G4
+  ok (59 ms)
+Applying t4-company-settings  (scripts/saas/phase2d-company-settings.sql)  gate G3+G4
+  ok (49 ms)
+Applying t5-subscriptions  (scripts/saas/phase2e-subscriptions.sql)  gate G3+G4
+  ok (67 ms)
+Applying t6-invoice-issuance-snapshot  (scripts/saas/phase2f-invoice-issuance-snapshot.sql)  gate G3+G4
+  ok (53 ms)
+Applying t7-company-admin  (scripts/saas/phase2g-company-admin.sql)  gate G3+G4
+  ok (47 ms)
+Ledger: 11 row(s).
+OK: checksums, ledger chain and probes agree.

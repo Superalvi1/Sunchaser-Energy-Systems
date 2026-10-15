@@ -127,6 +127,12 @@ async function requirePgClient(): Promise<PgClient> {
     );
   }
   await client.connect();
+  // A direct connection bypasses the database barrier (t1b-tenancy-barrier): check the persistent tenancy marker here.
+  const { rows: marker } = await client.query("select to_regclass('app.config') is not null as has_config").catch(() => ({ rows: [{ has_config: false }] }));
+  if (marker[0]?.has_config) {
+    const m = await client.query("select value from app.config where key = 'tenancy.mode'");
+    if (m.rows[0]?.value === "multi") throw new Error("Refused: this database is marked multi-company; this one-off operation does not know about companies.");
+  }
   return client;
 }
 

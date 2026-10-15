@@ -1,0 +1,27 @@
+== 0. preflight (read-only) and the production-only table bills
+PASS: preflight reports no BLOCKER
+PASS: bills described in bills-report.txt (owner: classify it; tenant if it holds a company's money, with a per-company unique number)
+== 1. fingerprints BEFORE
+PASS: fingerprint of 103 tables taken
+highest invoice number already used this year: 6; owner floor: 8
+PASS: the owner's floor (8) is not below the highest number in use (6)
+== 2-3. release migrations, floor, tenant migrations through the runner
+PASS: release migrations r1..r4 are present (recorded by baseline) - apply them first (release rehearsal) if this fails
+PASS: tenant migrations t1..t7 apply through the runner
+PASS: runner verify is clean (checksums, ledger chain, probes)
+== 4. AFTER the migrations: nothing existing changed, everything belongs to the founding company
+PASS: every pre-existing table has the same row count AND identical content (original columns)
+PASS: every row of every company-owned table belongs to the founding company
+PASS: the founding invoice counter (8) is at or above the highest number used (6): numbering never restarts at 0001
+PASS: the first new invoice number continues the history
+== 5. the tenant role
+PASS: the tenant role with the founding header sees the same leads as the service role
+PASS: the tenant role without a company header sees no lead
+== 6. rollback to the BEFORE state, then apply again
+PASS: rollback t7..t1 applies
+PASS: after rollback every table's rows and content equal the BEFORE state
+PASS: after rollback the schema snapshot equals the BEFORE snapshot
+PASS: the tenant migrations apply again after the rollback
+PASS: final verify is clean
+
+SaaS rehearsal: 0 failure(s). Reports in /tmp/claude-0/-home-user/25305eab-cc39-5603-a59a-1074767c25b8/scratchpad/rh/saas

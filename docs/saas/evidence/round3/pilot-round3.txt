@@ -1,0 +1,103 @@
+PASS: both pilot companies sign in
+
+A. invoice issuance snapshot
+PASS: co_alpha: settings saved (name, terms, bank account)
+PASS: co_alpha: invoice created
+PASS: co_alpha: the invoice stored an issuance snapshot with its bank account and terms
+PASS: co_alpha: the stored snapshot has no other company's name, bank or terms
+PASS: co_alpha: the print is labelled "snapshot" and shows the bank and terms
+PASS: co_beta: settings saved (name, terms, bank account)
+PASS: co_beta: invoice created
+PASS: co_beta: the invoice stored an issuance snapshot with its bank account and terms
+PASS: co_beta: the stored snapshot has no other company's name, bank or terms
+PASS: co_beta: the print is labelled "snapshot" and shows the bank and terms
+PASS: co_alpha: after the company changed its bank and terms, the OLD invoice reprints with the bank and terms it was issued with
+PASS: co_alpha: a NEW invoice uses the new bank and terms
+PASS: co_alpha: editing the invoice keeps its snapshot byte-for-byte
+PASS: co_alpha: the database refuses to change the snapshot
+PASS: co_alpha: the invoice API returns the snapshot
+PASS: co_beta: after the company changed its bank and terms, the OLD invoice reprints with the bank and terms it was issued with
+PASS: co_beta: a NEW invoice uses the new bank and terms
+PASS: co_beta: editing the invoice keeps its snapshot byte-for-byte
+PASS: co_beta: the database refuses to change the snapshot
+PASS: co_beta: the invoice API returns the snapshot
+PASS: co_alpha: a legacy invoice is labelled "legacy_current_settings" and prints from the CURRENT settings
+PASS: co_alpha: the legacy invoice has no invented snapshot
+PASS: co_beta: a legacy invoice is labelled "legacy_current_settings" and prints from the CURRENT settings
+PASS: co_beta: the legacy invoice has no invented snapshot
+
+B. local QR
+PASS: co_alpha: the invoice QR is a local image; no QR service is referenced
+PASS: co_alpha: the only external hosts in the printed invoice are fonts (fonts.googleapis.com)
+PASS: co_beta: the invoice QR is a local image; no QR service is referenced
+PASS: co_beta: the only external hosts in the printed invoice are fonts (fonts.googleapis.com)
+
+C. AutoSizer
+PASS: the founding company's administrator signs in
+PASS: co_alpha: the AutoSizer presets API is refused (read 404, write 404)
+PASS: co_alpha: saving an AutoSizer quote is refused with module_disabled (403)
+PASS: co_alpha: a manual BOQ quote is still accepted (200)
+PASS: co_alpha: the AutoSizer PDF route is refused (404)
+PASS: co_alpha: the boot payload tells the interface AutoSizer is off and the identity is neutral
+PASS: co_beta: the AutoSizer presets API is refused (read 404, write 404)
+PASS: co_beta: saving an AutoSizer quote is refused with module_disabled (403)
+PASS: co_beta: a manual BOQ quote is still accepted (200)
+PASS: co_beta: the AutoSizer PDF route is refused (404)
+PASS: co_beta: the boot payload tells the interface AutoSizer is off and the identity is neutral
+PASS: the founding company can still read the AutoSizer presets (200)
+PASS: the founding company's boot payload keeps AutoSizer on
+
+D. after-sales group disabled for pilot companies
+PASS: co_alpha: all 17 after-sales endpoints are refused by the company gate (404 not_available), read or write
+PASS: co_alpha: the boot payload tells the interface the after-sales group is off
+PASS: co_beta: all 17 after-sales endpoints are refused by the company gate (404 not_available), read or write
+PASS: co_beta: the boot payload tells the interface the after-sales group is off
+PASS: the founding company is still routed to the same endpoints (the gate does not refuse any of them)
+PASS: the founding company's boot payload keeps the after-sales group on
+
+E. subscription expiry and storage limit
+PASS: alpha, inside its paid period, can write
+PASS: alpha, past its end date + grace, can still READ (invoice list 200, boot 200, invoice 200)
+PASS: alpha can still print an invoice (200)
+PASS: alpha, past its end date + grace, is refused every write with 402 subscription_expired {"create":[402,"subscription_expired"],"edit":[402,"subscription_expired"],"pay":[402,"subscription_expired"],"del":[402,"subscription_expired"],"settings":[402,"subscription_expired"]}
+PASS: nothing was written by those refused calls
+PASS: beta, whose subscription is valid, is unaffected at the same moment
+PASS: alpha's staff can still sign in while expired
+PASS: inside the grace period alpha can still write, and the response says so (201, grace)
+PASS: expired again: writes refused
+PASS: the operator can renew an expired company (200)
+PASS: after the renewal alpha can write again, within seconds, with no restart or job
+PASS: the founding company has no subscription row and is never limited (201)
+PASS: the operator sets a 2 MB storage limit for alpha (it stores 0.00 MB; two uploads of 1228 KB cannot both fit) (200)
+PASS: alpha: a first upload that fits is accepted (201)
+PASS: alpha: a second upload of the same size would exceed the limit and is refused with 402 storage_limit_exceeded (402)
+PASS: the refused upload left nothing behind (no document row, no stored object)
+PASS: the first document is still there and readable
+PASS: being at the limit never blocks reading (200)
+PASS: beta, with no limit set beyond its plan's, uploads the same files (201,201)
+PASS: after the operator raises the limit alpha can upload again (201)
+PASS: with a limit of 0 MB every new upload is refused (402) but existing files and reading are untouched
+
+F. company settings: permissions and history
+PASS: co_alpha: a sales user can read the settings but is told it cannot edit
+PASS: co_alpha: the administrator is told it can edit
+PASS: co_alpha: a sales user is refused every change and the history (403,403,403,403,403)
+PASS: co_alpha: nothing was changed by the refused calls
+PASS: co_beta: a sales user can read the settings but is told it cannot edit
+PASS: co_beta: the administrator is told it can edit
+PASS: co_beta: a sales user is refused every change and the history (403,403,403,403,403)
+PASS: co_beta: nothing was changed by the refused calls
+PASS: co_alpha: four changes by the administrator each recorded an audit row
+PASS: co_alpha: the history lists the changes, newest first, with who, when, section and before/after
+PASS: co_alpha: the bank-account entry holds the account before and after the change
+PASS: co_alpha: every history row is stored under co_alpha
+PASS: co_alpha: the history cannot be edited or deleted, even by the database owner
+PASS: co_beta: four changes by the administrator each recorded an audit row
+PASS: co_beta: the history lists the changes, newest first, with who, when, section and before/after
+PASS: co_beta: the bank-account entry holds the account before and after the change
+PASS: co_beta: every history row is stored under co_beta
+PASS: co_beta: the history cannot be edited or deleted, even by the database owner
+PASS: neither company's history contains the other's entries
+PASS: the history endpoint answers the founding company too, with its own (empty or own) history (200)
+
+89 passed, 0 failed

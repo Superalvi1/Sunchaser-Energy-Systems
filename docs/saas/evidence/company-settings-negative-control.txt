@@ -1,0 +1,96 @@
+PASS: both company administrators sign in bound to their own company
+FAIL: ALPHAE046B3: before any setting, its quotation document is produced (200) and carries no Sunchaser value - Sunchaser
+FAIL: ALPHAE046B3: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account - Sunchaser
+FAIL: ALPHAE046B3: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting - {"p":36,"b":0,"t":0,"s":0}
+FAIL: ALPHAE046B3: its boot state has no Sunchaser text at all - Sunchaser
+FAIL: BETAE046B3: before any setting, its quotation document is produced (200) and carries no Sunchaser value - Sunchaser
+FAIL: BETAE046B3: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account - Sunchaser
+FAIL: BETAE046B3: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting - {"p":36,"b":0,"t":0,"s":0}
+FAIL: BETAE046B3: its boot state has no Sunchaser text at all - Sunchaser
+FAIL: a non-administrator (Sales Executive) cannot change branding
+FAIL: a non-administrator cannot change bank accounts
+FAIL: a script link as logo is refused
+FAIL: a bank account without an account number is refused
+FAIL: a validity of 0 days is refused
+FAIL: ALPHAE046B3: administrator saves branding, bank account, terms and price settings - 404/404/404/404
+FAIL: ALPHAE046B3: reads back exactly what it saved - {}
+FAIL: BETAE046B3: administrator saves branding, bank account, terms and price settings - 404/404/404/404
+FAIL: BETAE046B3: reads back exactly what it saved - {}
+PASS: alpha's settings contain nothing of beta's, and beta's nothing of alpha's
+FAIL: settings keys are stored per company (<company>:<key>); no plain key was written for a pilot company
+PASS: the founding company's settings rows are untouched by all of that
+FAIL: the bank accounts and terms are stored under the saving company only
+FAIL: ALPHAE046B3: quotation shows its own name, address, logo and terms - Alpha Solar Works E046B3 | 1 Alpha Road E046B3, Karachi | https://cdn.alpha.test/E046B3/logo.png | Alpha clause one E046B3: 60% advance. | Alpha clause two E046B3: balance on commissioning.
+PASS: ALPHAE046B3: quotation shows its amounts (rate 41000 x 8 = 328000)
+FAIL: ALPHAE046B3: quotation carries nothing of BETAE046B3 and nothing of Sunchaser - Sunchaser
+PASS: ALPHAE046B3: quotation validity follows the company setting (14 days)
+FAIL: ALPHAE046B3: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN - Alpha Solar Works E046B3 | 1 Alpha Road E046B3, Karachi | billing.e046b3@alpha.test | Alpha Bank E046B3 | ALPHA SOLAR WORKS E046B3 | AE046B30001 | PK00ALPHE046B3000001
+PASS: ALPHAE046B3: invoice shows its amounts (328000)
+FAIL: ALPHAE046B3: invoice carries nothing of BETAE046B3 (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature) - Sunchaser
+FAIL: BETAE046B3: quotation shows its own name, address, logo and terms - Beta Energy House E046B3 | 2 Beta Street E046B3, Lahore | https://cdn.beta.test/E046B3/logo.png | Beta clause one E046B3: 30% advance. | Beta clause two E046B3: net 15 days.
+PASS: BETAE046B3: quotation shows its amounts (rate 36000 x 9 = 324000)
+FAIL: BETAE046B3: quotation carries nothing of ALPHAE046B3 and nothing of Sunchaser - Sunchaser
+PASS: BETAE046B3: quotation validity follows the company setting (5 days)
+FAIL: BETAE046B3: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN - Beta Energy House E046B3 | 2 Beta Street E046B3, Lahore | accounts.e046b3@beta.test | Beta Bank E046B3 | BETA ENERGY HOUSE E046B3 | BE046B30002 | PK00BETAE046B3000002
+PASS: BETAE046B3: invoice shows its amounts (324000)
+FAIL: BETAE046B3: invoice carries nothing of ALPHAE046B3 (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature) - Sunchaser
+FAIL: ALPHAE046B3: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot) - {}
+PASS: ALPHAE046B3: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
+FAIL: BETAE046B3: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot) - {}
+PASS: BETAE046B3: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
+PASS: alpha raises the price of its panel in its own price list
+FAIL: alpha's historical quotation still shows its ORIGINAL name, address and terms after they were changed - Alpha Solar Works E046B3:false 1 Alpha Road E046B3, Karachi:false Alpha RENAMED E046B3:false
+PASS: alpha's historical quotation still shows its ORIGINAL prices and total after the price list changed
+FAIL: alpha's historical quotation document is the same document in every amount (original total, original rate)
+FAIL: re-saving the historical quotation keeps its original settings snapshot - 200 {}
+FAIL: ...and it is still rendered with the original name after the re-save
+FAIL: alpha's NEW quotation uses the new name, address, terms and the new price - Alpha RENAMED E046B3:false 99 New Office E046B3:false Alpha NEW clause E046B3.:false
+FAIL: beta's documents are unchanged by alpha's changes (own name, terms, bank; nothing of alpha's new values)
+PASS: beta's price list is unchanged by alpha's price change
+PASS: alpha's issued invoice keeps its amounts after the price list changed
+FAIL: ALPHAE046B3: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product) - 200
+FAIL: BETAE046B3: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product) - 500
+FAIL: ...and no product row was copied into either company
+PASS: beta cannot change alpha's product
+PASS: the founding company's settings rows are still untouched at the end
+
+17 passed, 38 failed
+Failed:
+ - ALPHAE046B3: before any setting, its quotation document is produced (200) and carries no Sunchaser value
+ - ALPHAE046B3: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
+ - ALPHAE046B3: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
+ - ALPHAE046B3: its boot state has no Sunchaser text at all
+ - BETAE046B3: before any setting, its quotation document is produced (200) and carries no Sunchaser value
+ - BETAE046B3: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
+ - BETAE046B3: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
+ - BETAE046B3: its boot state has no Sunchaser text at all
+ - a non-administrator (Sales Executive) cannot change branding
+ - a non-administrator cannot change bank accounts
+ - a script link as logo is refused
+ - a bank account without an account number is refused
+ - a validity of 0 days is refused
+ - ALPHAE046B3: administrator saves branding, bank account, terms and price settings
+ - ALPHAE046B3: reads back exactly what it saved
+ - BETAE046B3: administrator saves branding, bank account, terms and price settings
+ - BETAE046B3: reads back exactly what it saved
+ - settings keys are stored per company (<company>:<key>); no plain key was written for a pilot company
+ - the bank accounts and terms are stored under the saving company only
+ - ALPHAE046B3: quotation shows its own name, address, logo and terms
+ - ALPHAE046B3: quotation carries nothing of BETAE046B3 and nothing of Sunchaser
+ - ALPHAE046B3: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
+ - ALPHAE046B3: invoice carries nothing of BETAE046B3 (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
+ - BETAE046B3: quotation shows its own name, address, logo and terms
+ - BETAE046B3: quotation carries nothing of ALPHAE046B3 and nothing of Sunchaser
+ - BETAE046B3: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
+ - BETAE046B3: invoice carries nothing of ALPHAE046B3 (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
+ - ALPHAE046B3: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
+ - BETAE046B3: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
+ - alpha's historical quotation still shows its ORIGINAL name, address and terms after they were changed
+ - alpha's historical quotation document is the same document in every amount (original total, original rate)
+ - re-saving the historical quotation keeps its original settings snapshot
+ - ...and it is still rendered with the original name after the re-save
+ - alpha's NEW quotation uses the new name, address, terms and the new price
+ - beta's documents are unchanged by alpha's changes (own name, terms, bank; nothing of alpha's new values)
+ - ALPHAE046B3: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
+ - BETAE046B3: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
+ - ...and no product row was copied into either company

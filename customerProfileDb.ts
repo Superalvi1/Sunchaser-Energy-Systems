@@ -8,11 +8,12 @@ import {
 import { DOCUMENT_WALLET_TYPES, mapCustomerSystemRow, mapDocumentRow, type CustomerSystemProfile } from "./src/lib/clientPortalPhase2";
 import { canManageCustomers, isSuperAdmin } from "./src/lib/roles";
 import { randomUUID } from "node:crypto";
-import { generateCustomerCode } from "./customerCode";
+import { generateCustomerCode, insertWithUniqueCustomerCode } from "./customerCode";
 import {
   buildRailwayObjectProxyUrl,
   isRailwayObjectStorageConfigured,
   isStoragePathForCustomer,
+  scopeObjectKey,
   putRailwayObject,
   rewriteLegacyStorageUrl,
 } from "./server/storage/railwayObjectStorage.ts";
@@ -208,9 +209,10 @@ export async function prepareLeadCustomerProfile(actorId: string, actorUsername:
   const existing = lead.customer_id || lead.customerId;
   if (existing) return { customerId: existing };
   const customerId = `cust-${leadId.replace(/^lead-/, "")}`;
-  const row = { id: customerId, name: lead.name, email: lead.email || "", phone: lead.phone || "", address: lead.address || "", customer_code: await generateCustomerCode(localDb) };
+  const buildRow = (customer_code: string) => ({ id: customerId, name: lead.name, email: lead.email || "", phone: lead.phone || "", address: lead.address || "", customer_code });
+  const row = buildRow(client ? "" : await generateCustomerCode(localDb));
   if (client) {
-    const { error } = await client.from("customers").upsert(row, { onConflict: "id", ignoreDuplicates: true });
+    const { error } = await insertWithUniqueCustomerCode((code) => client.from("customers").upsert(buildRow(code), { onConflict: "id", ignoreDuplicates: true }), { localDb });
     if (error) throw error;
     const { error: linkError } = await client.from("leads").update({ customer_id: customerId }).eq("id", leadId).is("customer_id", null).is("deleted_at", null);
     if (linkError) throw linkError;
@@ -396,7 +398,7 @@ export async function uploadFileToCustomerStorage(
 
   // Keep the tail so the extension survives; the whole bucket key must stay under 1024 characters.
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120);
-  const storagePath = `${customerId}/${options.objectId || Date.now()}_${safeName}`;
+  const storagePath = scopeObjectKey(`${customerId}/${options.objectId || Date.now()}_${safeName}`);
 
   if (isRailwayObjectStorageConfigured()) {
     await putRailwayObject("customer-documents", storagePath, buffer, contentType);

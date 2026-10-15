@@ -1,0 +1,287 @@
+NOTICE:  role "authenticator" has already been granted membership in role "anon" by role "postgres"
+NOTICE:  role "authenticator" has already been granted membership in role "authenticated" by role "postgres"
+NOTICE:  role "authenticator" has already been granted membership in role "service_role" by role "postgres"
+Applying r1-smart-quote-versions  (scripts/smart-quote-versions-schema.sql)  gate G3
+  ok (62 ms)
+Applying r2-session-revocation  (scripts/session-revocation-schema.sql)  gate G3
+  ok (45 ms)
+Applying r3-invoice-payments-integrity  (scripts/invoice-payments-integrity.sql)  gate G3
+  ok (54 ms)
+Applying r4-invoice-save-atomic  (scripts/invoice-save-atomic.sql)  gate G3
+  ok (59 ms)
+built sc_base_template: 103 public tables, release migrations r1-r4 applied
+
+=== test-phase2-migration.sh
+PASS: up applied twice without error (idempotent)
+PASS: founding company exists
+PASS: every non-customer user became a member of sunchaser
+PASS: no legacy open policy remains on a tenant table
+PASS: every tenant table has company_id NOT NULL
+PASS: existing rows kept company_id sunchaser
+PASS: tenant role holds no privilege on marketplace tables
+PASS: tenant role holds no privilege on users
+PASS: tenant role cannot execute application functions
+PASS: the migration leaves service_role's function privileges exactly as they were (functions the release closed to every API role stay closed: 8)
+PASS: service role can read and write the new identity tables
+PASS: service role inserts without a company default to sunchaser
+PASS: row data unchanged apart from the new column
+PASS: rollback applied
+PASS: schema after rollback is identical to the original
+PASS: legacy policies restored
+PASS: row data identical after rollback
+PASS: up re-applies after a rollback
+
+18 passed, 0 failed
+
+=== test-ownership.sh
+   before the fix: FAIL: A can edit A's invoice through the atomic function (tenant role, header co_a)   [ERR:42501:permission denied for function invoice_save_atomic|]
+   before the fix: FAIL: A can replace A's lines   [ERR:42501:permission denied for function invoice_save_atomic|]
+   before the fix: FAIL: B cannot move its own payment onto A's invoice   [ERR:PT422:invoice_overpayment: payment 2000.00 exceeds the balance due 1000.00 (invoice total 1000.00, already paid 0.00)|]
+   before the fix: FAIL: B's attempt on A's invoice does not wait for or report A's row lock (answers within 2 s, no "busy")   [ERR:PT409:invoice_busy: this invoice is being updated by someone else, try again in a momen
+   before the fix: FAIL: every line of A's invoice belongs to A, even one that claimed company_id co_b   []
+   before the fix: FAIL: the edit was applied   []
+   before the fix: FAIL: the refusal for A's invoice is the same error as for an invoice that does not exist   [ERR:PT422:invoice_overpayment: payment 99999.00 exceeds the balance due 1000.00 (invoice total 1000.00, alr
+   before the fix: FAIL: the refusal leaks no figure of A's invoice (no total, balance or paid amount in the message)   [ERR:PT422:invoice_overpayment: payment 99999.00 exceeds the balance due 1000.00 (invoice total 100
+   before the fix: FAIL: the service role acting for B gets the same error for A's invoice as for a missing one, and no figure   [ERR:PT422:invoice_overpayment: payment 99999.00 exceeds the balance due 1000.00 (invoice 
+   before the fix: FAIL: the service role acting for company B cannot edit A's invoice   [ok:1]
+   before the fix: FAIL: the service role without a header (legacy single-company mode) cannot edit B's invoice: it acts as the founding company only   [ok:1]
+   before the fix: FAIL: the tenant role without a company header is refused (it is NOT treated as the founding company)   [ERR:42501:permission denied for function invoice_save_atomic|]
+   before the fix: FAIL: with strict_company on, the service role without a header is refused   [ok:1]
+PASS: before the fix the tests detect the defects (13 failing checks)
+PASS: phase2b applies
+PASS: phase2b applies a second time (idempotent)
+PASS: ownership tests after the fix: 0 failing (32 passing)
+PASS: rollback applies
+PASS: rollback restores the released function definitions exactly
+PASS: after rollback the tenant role cannot execute invoice_save_atomic again
+PASS: after rollback the tests fail again (they are not vacuous)
+PASS: phase2b re-applies after a rollback
+PASS: ownership tests pass again after re-apply
+
+10 passed, 0 failed
+
+=== test-numbering.sh
+PASS: phase2c refuses to run when the founding company has no invoice number this year and no floor
+PASS: the refused migration left nothing behind (single transaction)
+PASS: phase2c applies once the floor is set
+PASS: phase2c applies a second time (idempotent)
+PASS: the founding company counter starts at the floor, not at 0
+PASS: Sunchaser's first number after the reset continues the history (INV-2026-0009, not 0001)
+PASS: deleting invoices never makes a number come back (the counter is its own high-water mark: 0010, not 0009 or 0001)
+PASS: company A's first number follows A's own highest number (0041), ignoring other years and other prefixes
+PASS: company B starts its own sequence independently (INV-2026-0001)
+PASS: company B's second number
+PASS: A continues unaffected by B
+PASS: two companies can both hold INV-2026-0001 (uniqueness is per company)
+PASS: the same company cannot hold the same number twice
+PASS: another year starts at 0001 for a company with no history that year
+PASS: the prefix is formatting only: a company that changes it continues its sequence (SOL-2026-0003 after 0001, 0002)
+NOTICE:  table "nums" does not exist, skipping
+PASS: concurrent callers: 640 numbers handed out for company A
+PASS: concurrent callers: 640 numbers handed out for company B
+PASS: concurrent callers: no number given out twice (A)
+PASS: concurrent callers: no number given out twice (B)
+PASS: concurrent callers: A's numbers are exactly the next 640 in a row
+PASS: concurrent callers: B's numbers are exactly the next 640 in a row
+PASS: the tenant role cannot read the counters directly
+PASS: the tenant role cannot change a counter directly
+PASS: the tenant role cannot call the floor tool
+PASS: anon cannot ask for a number
+PASS: the tenant role without a company header is refused
+PASS: a bad prefix is refused
+PASS: a bad period is refused
+PASS: an unknown kind is refused
+PASS: a counter never moves down (floor below the current value changes nothing)
+PASS: the floor tool raises a counter
+PASS: A cannot be given B's counter value by header trickery: the number follows the header company only
+PASS: rollback applies when no two companies share a number
+PASS: rollback keeps a copy of the counters
+PASS: rollback removes the functions and the table
+PASS: rollback restores the global unique key on invoice_number
+PASS: phase2c re-applies after a rollback
+PASS: after rollback and re-apply the founding company continues its history (0011 after 0010), no number is reissued
+PASS: rollback refuses to bring the global unique key back while two companies share a number
+PASS: the refused rollback changed nothing
+
+40 passed, 0 failed
+
+=== test-settings.sh
+PASS: phase2d applies on a database with founding settings rows
+PASS: phase2d applies a second time (idempotent)
+PASS: no founding row was rewritten
+PASS: founding company can still write the plain key 'global'
+PASS: founding company (tenant role) can still upsert 'global'
+PASS: company A may not write the plain key 'global'
+PASS: company A (tenant role) writes 'co_a:global'
+PASS: company B (tenant role) writes 'co_b:global'
+PASS: company A may not write company B's key 'co_b:x'
+PASS: underscore is not a wildcard: company 'a_b' may not write 'axb:k'
+PASS: company 'a_b' writes 'a_b:k'
+PASS: a company cannot take over an existing plain key by upsert (tenant role, plain 'global'): refused
+PASS: the founding 'global' row is unchanged after the attempt
+PASS: company A may not write the plain key 'global' in website_content
+PASS: company A writes 'co_a:global' in website_content
+PASS: company A sees only its own settings rows
+PASS: company B sees only its own settings rows
+PASS: rollback applies
+PASS: after rollback the constraints are gone
+PASS: rollback left every row in place
+PASS: re-apply after rollback
+PASS: constraints present again
+
+settings migration tests: 22 passed, 0 failed
+
+=== test-subscriptions.sh
+PASS: phase2e applies
+PASS: phase2e applies a second time (idempotent)
+PASS: the placeholder 'pilot' plan exists
+PASS: crm_tenant has no privilege on saas_plans
+PASS: crm_tenant has no privilege on saas_subscriptions
+PASS: crm_tenant has no privilege on saas_payments
+PASS: crm_tenant has no privilege on saas_audit
+PASS: crm_tenant cannot execute saas_usage or saas_create_company
+PASS: the tenant role gets 'permission denied' reading saas_subscriptions
+PASS: the 4th lead of a company with max_leads 3 is refused by the database
+PASS: the same limit applies to the tenant role (row security does not hide the count from the trigger)
+PASS: a deleted lead frees one place
+PASS: ...and the company is full again
+PASS: a per-company override raises the limit
+PASS: another company's leads do not count against this company (co_n has no subscription: unlimited)
+PASS: a plan without limits (open) is unlimited
+PASS: the founding company has no subscription and no limit
+PASS: the 3rd active staff member is refused (max_staff 2)
+PASS: an invited (not yet active) member is not counted
+PASS: activating that invited member would exceed the limit: refused
+PASS: a portal customer membership is not staff and is not counted
+PASS: changing the role of an already-counted member is allowed
+PASS: removing a member frees a seat
+PASS: the 3rd document is refused (max_documents 2)
+PASS: 8 simultaneous inserts with 6 places free: exactly 6 succeed, never more
+PASS: the service role has no UPDATE or DELETE privilege on payments (privilege level)
+PASS: even the table owner cannot edit a payment (trigger)
+PASS: even the table owner cannot delete a payment (trigger)
+PASS: a negative payment without reversal_of is refused
+PASS: a reversal row (negative, reversal_of) is accepted
+PASS: the audit trail cannot be deleted from (owner: trigger)
+PASS: saas_create_company ran for the new company
+PASS: it created the company (trial), subscription (trial, pilot), first admin, membership, neutral branding, PDF settings and one audit row
+PASS: a duplicate username fails the whole onboarding and leaves nothing behind
+PASS: ...nothing of it exists: no company, subscription, user, settings
+PASS: the founding company id cannot be used
+PASS: an unknown plan is refused
+PASS: the tenant role cannot call it
+PASS: saas_usage reports staff, leads and documents per company
+PASS: rollback applies
+PASS: rollback removed the tables, triggers and functions
+PASS: rollback kept a copy of the payments and the audit trail
+PASS: without the migration there is no limit any more
+PASS: re-apply after rollback
+PASS: re-apply restored the payments and the audit trail
+
+subscription/limits tests: 45 passed, 0 failed
+
+=== test-invoice-snapshot.sh
+PASS: phase2f applies
+PASS: phase2f applies a second time (idempotent)
+PASS: the legacy invoice has no snapshot (not back-filled)
+PASS: a new invoice stores its snapshot at insert
+PASS: the snapshot cannot be replaced
+PASS: the snapshot cannot be cleared
+PASS: a legacy invoice cannot be given a snapshot later (no invented history)
+PASS: other columns of an invoice with a snapshot can still be edited
+PASS: the snapshot survives that edit unchanged
+PASS: a snapshot of the wrong shape is refused (bankAccounts not a list)
+PASS: rollback applies
+PASS: rollback keeps every invoice
+PASS: rollback removes the column
+PASS: re-apply after rollback works
+PASS: after re-apply the old invoices have no snapshot (rollback is not a back-fill)
+
+invoice issuance snapshot: 15 passed, 0 failed
+
+=== test-company-admin.sh
+PASS: phase2g applies
+PASS: phase2g applies a second time (idempotent)
+PASS: the placeholder pilot plan got a storage limit
+PASS: a plan the operator created is left unlimited (NULL)
+PASS: a negative storage limit is refused
+PASS: service role can read the history
+PASS: the tenant role has no access to the history
+PASS: the history cannot be updated
+PASS: the history cannot be deleted
+PASS: an unknown section is refused
+PASS: a company that does not exist is refused
+PASS: rollback applies
+PASS: rollback removes the table and the column
+PASS: rollback keeps a copy of the history
+PASS: re-apply after rollback works
+PASS: re-apply restores the history
+
+company admin (phase2g): 16 passed, 0 failed
+
+=== test-company-restore.sh
+PASS: both companies are seeded
+PASS: export: every seeded table is in the archive in dependency order
+PASS: verify accepts the archive; it holds nothing of company B
+PASS: alpha is damaged and B and the founding company are not
+PASS: dry run changes nothing and plans the replacement
+PASS: the archive of A is refused for B
+PASS: a changed file is refused
+PASS: refusals changed nothing
+PASS: restore applies
+PASS: A's tables equal the export (every digest)
+PASS: B is byte-identical (every table)
+PASS: the FOUNDING company is identical
+PASS: the payment guard did not recompute anything: invoice paid/balance as exported
+PASS: the numbering counter is back at 7 (the next number continues from the history)
+PASS: restoring twice is harmless
+
+company restore (database only): 15 passed, 0 failed
+
+=== test-runner.sh
+PASS: status on a fresh database: nothing applied, no ledger
+PASS: apply without --yes is a dry run
+PASS: apply --yes runs both in order
+PASS: the ledger has one OK row each, with the SHA-256 of the file
+PASS: applying again does nothing
+PASS: verify is clean
+PASS: ledger rows cannot be updated
+PASS: ledger rows cannot be deleted
+PASS: the ledger cannot be truncated
+PASS: an edited ledger row is detected by the hash chain
+PASS: restoring the row makes the chain valid again
+PASS: a file changed after it was applied is reported as DRIFT
+PASS: apply refuses while any applied file has drifted
+PASS: the pending migration did not run
+PASS: removing the edit clears the drift
+PASS: a failing migration stops the run with a non-zero exit
+PASS: it is recorded as failed, not applied
+PASS: the failed script left no table behind
+PASS: status still shows it as pending
+PASS: the ledger chain stays valid with a failed row
+PASS: rolling back in reverse order undoes b then a
+PASS: both tables are gone
+PASS: after the rollback both are pending again
+PASS: re-apply after rollback works and rollback --to the first one rolls back every dependent first
+PASS: rolling back only the newest leaves the older one
+PASS: rollback without --yes is a dry run
+PASS: a second runner is refused while the first holds the lock
+PASS: the first runner finished and applied it once
+PASS: a non-local server is refused without --allow-remote and the confirmation variable
+PASS: --allow-remote alone is not enough
+PASS: release migrations applied by hand are noticed (probe present, not in ledger)
+PASS: baseline refuses a migration whose effect is absent (t1 not applied)
+PASS: baseline records r1-r4 without executing them
+PASS: after the baseline verify is clean
+PASS: t3 refuses to run without the owner's floor (founding company has no invoice number this year)
+PASS: t1 and t2 were applied and recorded before that
+PASS: the refused t3 is pending, not applied
+PASS: with the floor set t3 applies
+PASS: verify is clean with all nine applied
+PASS: rollback t7, t6, t5, t4, t3, t2, t1 in reverse order
+PASS: the company foundation is gone and the release migrations remain
+PASS: everything applies again after the rollback (the floor is still set)
+PASS: final verify is clean
+PASS: rollback of an early migration lists the dependents first (dry run)
+
+44 passed, 0 failed

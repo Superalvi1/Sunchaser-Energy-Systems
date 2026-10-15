@@ -16,6 +16,7 @@
  */
 
 import { sanitizeQuoteEditorHtml } from "./quoteAuthoring";
+import { isNeutralState, NEUTRAL_FALLBACK_QUOTE_TERMS } from "./documentIdentity";
 import { escapeHtml, parseQuotePageExtendedSettings } from "./quotePdfLayout";
 
 export const TERMS_PAGE_CHAR_BUDGET = 2800;
@@ -242,7 +243,7 @@ export function resolveSelectedTemplateId(quoteObj: any, _activeState?: any): st
 export function resolveTemplateName(templateId: string, activeState?: any): string {
   const templates = Array.isArray(activeState?.quoteTemplates) ? activeState.quoteTemplates : [];
   const match = templates.find((t: any) => String(t?.id) === String(templateId));
-  return String(match?.name || (templateId === "tmpl-1" ? "Sunchaser Official Proposal Template" : "") || "");
+  return String(match?.name || (templateId === "tmpl-1" && !isNeutralState(activeState) ? "Sunchaser Official Proposal Template" : "") || "");
 }
 
 function pageBody(page: any): { html: string; text: string } {
@@ -391,7 +392,7 @@ export function resolveQuoteTerms(quoteObj: any, activeState?: any): ResolvedQuo
     );
   }
 
-  const fallback = EXISTING_FALLBACK_QUOTE_TERMS.slice();
+  const fallback = (isNeutralState(activeState) ? NEUTRAL_FALLBACK_QUOTE_TERMS : EXISTING_FALLBACK_QUOTE_TERMS).slice();
   const html = clausesToHtml(fallback);
   const pages: QuoteTermsPageSnapshot[] = [
     {

@@ -5,6 +5,8 @@ export type JwtUserClaims = {
   userId: string;
   username: string;
   role: string;
+  /** Company the session is acting for (multi-company mode). Only a hint: memberships are re-checked on every request. */
+  companyId?: string;
 };
 
 const JWT_SECRET_MIN_LENGTH = 32;
@@ -120,13 +122,14 @@ export type SignableClaims = JwtUserClaims & {
 };
 
 export function signAccessToken(claims: SignableClaims, env: NodeJS.ProcessEnv = process.env): string {
-  const { sessionStartedAt, passwordVersion: pwv, sessionEpoch, sessionId, ...userClaims } = claims;
+  const { sessionStartedAt, passwordVersion: pwv, sessionEpoch, sessionId, companyId, ...userClaims } = claims;
   // `jti` is unique per token (refresh rotation retires the old one); `sid` is shared by every token renewed from one
   // sign-in, so logging out revokes the whole family - including tokens minted by a refresh racing the logout.
   const payload: Record<string, unknown> = { ...userClaims, jti: randomUUID(), sid: sessionId || randomUUID() };
   if (sessionEpoch && sessionEpoch > 0) payload.se = sessionEpoch;
   if (sessionStartedAt) payload.sst = sessionStartedAt;
   if (pwv) payload.pwv = pwv;
+  if (companyId) payload.cid = companyId;
 
   const secret = getJwtSecret();
   const now = Math.floor(Date.now() / 1000);
@@ -209,8 +212,9 @@ export function verifySessionToken(token: string): VerifiedSession {
     throw new Error("Invalid token claims");
   }
   const pwv = typeof payload.pwv === "string" && payload.pwv ? payload.pwv : null;
+  const cid = typeof payload.cid === "string" && /^[a-z][a-z0-9_]{1,40}$/.test(payload.cid) ? payload.cid : undefined;
   return {
-    claims: { userId, username, role },
+    claims: cid ? { userId, username, role, companyId: cid } : { userId, username, role },
     startedAt: startedAtFromPayload(payload),
     expiresAt: positiveNumber(payload.exp),
     passwordVersion: pwv,

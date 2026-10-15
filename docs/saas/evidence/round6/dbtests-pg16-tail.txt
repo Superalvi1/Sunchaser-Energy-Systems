@@ -1,0 +1,6 @@
+PASS: the company foundation is gone and the release migrations remain
+PASS: everything applies again after the rollback (the floor is still set)
+PASS: final verify is clean
+PASS: rollback of an early migration lists the dependents first (dry run)
+
+44 passed, 0 failed

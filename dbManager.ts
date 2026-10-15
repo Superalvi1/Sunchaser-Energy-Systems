@@ -22,6 +22,13 @@ import {
 import type { RequestActor } from "./server/middleware/actor.ts";
 import { liftWebsiteSourceFields } from "./src/lib/websiteCatalog/normalize.ts";
 import { rewriteLegacyStorageUrl } from "./server/storage/railwayObjectStorage.ts";
+import { CompanyContextMissingError, getCompanyContext } from "./server/saas/companyContext.ts";
+import { isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { isolationGuard } from "./server/saas/tenantIsolationGuard.ts";
+import { getIsolationMode } from "./server/saas/isolationMode.ts";
+import { scopedSettingKey, unscopeSettingRows, usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
+import { ensureSettingsSnapshot } from "./server/saas/settingsSnapshot.ts";
+import { getTenantClient } from "./server/saas/tenantClient.ts";
 
 export { REQUIRE_EXPLICIT_QUOTE_SAVE } from "./src/crmFeatureFlags.ts";
 import { buildClientPortalPayload } from "./src/lib/clientPortalTracker.ts";
@@ -159,9 +166,18 @@ export function toSupabaseStorageRole(role: string): string {
   return role;
 }
 
+/** Adds the header that tells the database whether this process keeps companies apart (server/saas/isolationMode.ts). Read at request time. */
+function withIsolationHeader(inner: typeof fetch): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers || (typeof input === "object" && "headers" in input ? (input as Request).headers : undefined));
+    headers.set("x-isolation-mode", getIsolationMode());
+    return inner(input, { ...init, headers });
+  }) as typeof fetch;
+}
+
 function railwayPostgrestFetch(baseUrl: string): typeof fetch {
   const targetBase = baseUrl.replace(/\/$/, "");
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+  return withIsolationHeader((async (input: RequestInfo | URL, init?: RequestInit) => {
     const original =
       typeof input === "string"
         ? input
@@ -177,10 +193,38 @@ function railwayPostgrestFetch(baseUrl: string): typeof fetch {
     const target = new URL(targetBase + suffix);
     target.search = parsed.search;
     return fetch(target, init);
-  }) as typeof fetch;
+  }) as typeof fetch);
 }
 
+/**
+ * The data client for the current unit of work.
+ * - Single-company mode (default): the service-role client, exactly as before.
+ * - Multi-company mode: a client bound to the current company through the non-bypass tenant role, so the database
+ *   itself restricts every query. Outside a company context this throws instead of silently reading every company;
+ *   platform work must say so with runAsSystem().
+ */
 export function getSupabase(): SupabaseClient | null {
+  if (isMultiCompanyEnabled()) {
+    const ctx = getCompanyContext();
+    if (ctx?.kind === "company") return getTenantClient(ctx.companyId);
+    if (ctx?.kind === "system") return getSystemSupabase();
+    throw new CompanyContextMissingError();
+  }
+  return getSystemSupabase();
+}
+
+/**
+ * The service-role client. Bypasses row security: use only for identity, platform and billing work.
+ * In single-company mode it throws while the database holds other companies' data (or while that cannot be verified): the isolation guard,
+ * see server/saas/tenantIsolationGuard.ts. It never returns an unfiltered client in that state, and never null (null means "use the local JSON file").
+ */
+export function getSystemSupabase(): SupabaseClient | null {
+  isolationGuard.assertAllowed();
+  return getUnguardedSystemSupabase();
+}
+
+/** The service-role client without the isolation check. For the guard's own probe and for "is a database configured" questions only. */
+export function getUnguardedSystemSupabase(): SupabaseClient | null {
   if (clientInstance) return clientInstance;
 
   const railwayPostgrestUrl = String(process.env.RAILWAY_POSTGREST_URL || "").trim();
@@ -207,9 +251,7 @@ export function getSupabase(): SupabaseClient | null {
   try {
     clientInstance = createClient(url, key, {
       auth: { persistSession: false },
-      ...(railwayPostgrestUrl
-        ? { global: { fetch: railwayPostgrestFetch(railwayPostgrestUrl) } }
-        : {}),
+      global: { fetch: railwayPostgrestUrl ? railwayPostgrestFetch(railwayPostgrestUrl) : withIsolationHeader(fetch) },
     });
     isConfigured = true;
     console.log(
@@ -227,7 +269,7 @@ export function getSupabase(): SupabaseClient | null {
 
 export function isSupabaseActive(): boolean {
   if (isConfigured) return true;
-  return getSupabase() !== null;
+  return getUnguardedSystemSupabase() !== null;
 }
 
 /* --- PERSISTENT FILE DATABASE ARCHITECTURE TYPES & SEED --- */
@@ -250,6 +292,8 @@ export interface Database {
   notifications?: any[];
   solarPackages?: any[];
   settings?: any;
+  /** Set where the state is loaded: another company's documents never use Sunchaser defaults (src/lib/documentIdentity.ts). */
+  documentIdentity?: { neutral: boolean };
   websiteContent?: any;
   quotations?: any[];
   quoteTemplates?: any[];
@@ -1034,6 +1078,7 @@ export function buildQuoteExtendedPayload(quote: any): Record<string, any> {
     manualOverrides: quote.manualOverrides || {},
     projectScopeSnapshot: quote.projectScopeSnapshot || undefined,
     termsSnapshot: quote.termsSnapshot || undefined,
+    settingsSnapshot: quote.settingsSnapshot || undefined,
   };
 }
 
@@ -1247,6 +1292,8 @@ export async function persistQuotationToSupabase(
   mode: "insert" | "upsert" = "insert"
 ): Promise<{ ok: boolean; error?: string; quoteId?: string }> {
   await resolveQuotationIdForPersist(supabase, quote, leadId, mode);
+  // Multi-company mode: freeze the company's settings (identity, bank accounts, terms, price defaults) on the quotation once.
+  await ensureSettingsSnapshot(supabase, quote, mode);
 
   const maxAttempts = mode === "insert" ? 5 : 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1276,11 +1323,13 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     throw new Error("Supabase is not configured.");
   }
   const useLocalConfigFallback = false;
+  // Another company's documents never fall back to the Sunchaser seed or to the local database.json backup.
+  const neutralIdentity = usesNeutralIdentity();
 
   let localBackup: any = {};
   try {
     const backupPath = path.join(process.cwd(), "database.json");
-    if (fs.existsSync(backupPath)) {
+    if (!neutralIdentity && fs.existsSync(backupPath)) {
       localBackup = JSON.parse(fs.readFileSync(backupPath, "utf-8"));
     }
   } catch (e) {
@@ -1316,6 +1365,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     seedKey: keyof Database
   ): T[] => {
     if (fetchResult.tableAvailable) return mapped;
+    if (neutralIdentity) return [];
     const backup = localBackup[seedKey as string];
     const seed = initialSeed[seedKey as keyof typeof initialSeed];
     return (backup as T[]) || (seed as T[]) || [];
@@ -1627,8 +1677,10 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   }));
 
   // Resolve config keys (settings & CMS website content)
-  const settingsObj = (settingsData || []).find((s: any) => s.key === "global")?.value || null;
-  const websiteContentObj = (websiteContentData || []).find((w: any) => w.key === "global")?.value || null;
+  const settingsRows = unscopeSettingRows(settingsData);
+  const websiteContentRows = unscopeSettingRows(websiteContentData);
+  const settingsObj = (settingsRows || []).find((s: any) => s.key === "global")?.value || null;
+  const websiteContentObj = (websiteContentRows || []).find((w: any) => w.key === "global")?.value || null;
 
   // Additional ERP metrics mapping
   const productsCatalogData = productsCatalogResult.data || [];
@@ -1793,7 +1845,7 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
   }));
 
   const quotePdfSettingsMapped = (quotePdfSettingsData || []).map((qps: any) => {
-    const watermark = resolveStoredGlobalWatermark(qps, settingsData, getSupabaseProjectUrlFromEnv());
+    const watermark = resolveStoredGlobalWatermark(qps, settingsRows, getSupabaseProjectUrlFromEnv());
     const row = {
       id: qps.id,
       companyName: qps.company_name || qps.companyName,
@@ -1855,7 +1907,8 @@ export async function fetchAppStateFromSupabase(): Promise<Database> {
     ceoMessages: pickQuotationTableData(ceoMessagesMapped, ceoMessagesResult, "ceoMessages"),
     socialLinks: pickQuotationTableData(socialLinksMapped, socialLinksResult, "socialLinks"),
     structureDescriptions: pickQuotationTableData(structureDescriptionsMapped, structureDescriptionsResult, "structureDescriptions"),
-    quotePdfSettings: pickQuotationTableData(quotePdfSettingsMapped, quotePdfSettingsResult, "quotePdfSettings")
+    quotePdfSettings: pickQuotationTableData(quotePdfSettingsMapped, quotePdfSettingsResult, "quotePdfSettings"),
+    documentIdentity: { neutral: neutralIdentity },
   };
 }
 
@@ -1898,7 +1951,7 @@ export async function upsertSolarPackageCatalogToSupabase(packages: any[]): Prom
 export async function upsertAppSettingsToSupabase(settings: Record<string, any>): Promise<void> {
   const supabase = getSupabase();
   if (!supabase || !settings) return;
-  await supabase.from("settings").upsert({ key: "global", value: settings }, { onConflict: "key" });
+  await supabase.from("settings").upsert({ key: scopedSettingKey("global"), value: settings }, { onConflict: "key" });
 }
 
 /* --- AUTOMATIC RELATION STATE MIGRATOR --- */
@@ -2544,7 +2597,7 @@ export async function fetchCustomerPortalData(
 
   if (isSupabaseActive()) {
     const supabase = getSupabase()!;
-    const { data: userRow, error: userErr } = await supabase
+    const { data: userRow, error: userErr } = await getSystemSupabase()!
       .from("users")
       .select("*")
       .eq("id", normalizedUserId)
@@ -2860,7 +2913,7 @@ export async function verifyCustomerPortalUser(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase
       .from("users")
       .select("*")
@@ -2904,7 +2957,7 @@ export async function verifyStaffPortalUser(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase
       .from("users")
       .select("*")
@@ -5948,7 +6001,7 @@ export async function verifyTechnicalStaffUser(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase
       .from("users")
       .select("*")
@@ -6686,7 +6739,7 @@ export async function fetchOnboardingMe(
   }
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data: userRow, error } = await supabase.from("users").select("*").eq("id", normalizedUserId).single();
     if (error || !userRow) throw new TechnicalStaffAuthError("User not found.");
     if (String(userRow.username || "").trim().toLowerCase() !== normalizedUsername) {
@@ -6728,7 +6781,7 @@ export async function completeOnboarding(
   const now = new Date().toISOString();
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data, error } = await supabase
       .from("users")
       .update({ onboarding_completed: true, onboarding_completed_at: now })
@@ -6768,7 +6821,7 @@ export async function resetOnboarding(
   await fetchOnboardingMe(userId, username, localDb);
 
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
+    const supabase = getSystemSupabase()!;
     const { data, error } = await supabase
       .from("users")
       .update({ onboarding_completed: false, onboarding_completed_at: null })

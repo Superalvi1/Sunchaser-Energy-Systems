@@ -1,0 +1,91 @@
+PASS: activity_logs
+PASS: after_sales_service_logs
+PASS: bank_accounts
+PASS: categories
+PASS: ceo_messages
+PASS: company_terms
+PASS: customer_documents
+PASS: customer_energy_devices
+PASS: customer_equipment
+PASS: customer_portal_profiles
+PASS: customer_savings_profiles
+PASS: customer_subscriptions
+PASS: customer_systems
+PASS: customer_warranties
+PASS: customers
+PASS: delivery_challan_items
+PASS: delivery_challan_photos
+PASS: delivery_challans
+PASS: design_sessions
+PASS: energy_alerts
+PASS: installation_photos
+PASS: installation_tasks
+PASS: interactive_proposal_events
+PASS: interactive_proposals
+PASS: internal_costing_sheets
+PASS: inventory_items
+PASS: inventory_movements
+PASS: inventory_purchases
+PASS: investors
+PASS: invoice_items
+FAIL: invoice_payments  <- A cannot reference B's parent row, and the answer is the same as for a parent that does not exist: [{"id":"y3ea16c-id-295","invoice_id":"b3ea16c-id-286","amount":1,"payment_method":"Cash","payment_date":"2026-10-13","receipt_url":null,"receipt_storage_path":n  vs  {"code":"23505","details":null,"hint":null,"message":"duplicate key value violates unique constraint \"invoice_payments_pkey\""}; 
+PASS: invoices
+FAIL: leads  <- A cannot read B's row by key: [{"id":"b3ea16c-id-185","customer_id":null,"name":"b3ea16c-name-186","email":"b3ea16c-email-184","phone":"b3ea16c-phone-183","address":"b3ea16c-address-187","status":"New","monthly_bill":0,"monthly_units":0,"sanctioned_load":0,"backup_requirement":null,"location":null,"roof_type":null,"roof_space":0,"shading":null,"rating":3,"assigned_salesperson":null,"notes":null,"lead_source":null,"engagement_level":null,"conversion_probability":50,"conversion_score":50,"created_at":"2026-10-13T16:02:37.648117+00:00","deleted_at":null,"deleted_by":null,"company_id":"co_beta"}]; A's full scan has only A rows: null; B's full scan has only B rows: null; A cannot update B's row: [{"id":"b3ea16c-id-185","customer_id":null,"name":"b3ea16c-name-186","email":"b3ea16c-email-184","phone":"b3ea16c-phone-183","address":"b3ea16c-address-187","status":"New","monthly_bill":0,"monthly_units":0,"sanctioned_load":0,"backup_requirement":null,"location":null,"roof_type":null,"roof_space":0,"shading":null,"rating":3,"assigned_salesperson":null,"notes":null,"lead_source":null,"engagement_level":null,"conversion_probability":50,"conversion_score":50,"created_at":"2026-10-13T16:02:37.648117+00:00","deleted_at":null,"deleted_by":null,"company_id":"co_alpha"}]; A cannot delete B's row: [{"id":"b3ea16c-id-185","customer_id":null,"name":"b3ea16c-name-186","email":"b3ea16c-email-184","phone":"b3ea16c-phone-183","address":"b3ea16c-address-187","status":"New","monthly_bill":0,"monthly_units":0,"sanctioned_load":0,"backup_requirement":null,"location":null,"roof_type":null,"roof_space":0,"shading":null,"rating":3,"assigned_salesperson":null,"notes":null,"lead_source":null,"engagement_level":null,"conversion_probability":50,"conversion_score":50,"created_at":"2026-10-13T16:02:37.648117+00:00","deleted_at":null,"deleted_by":null,"company_id":"co_alpha"}]; B's row survives untouched in the database: []; A cannot take over B's row by upsert: [{"id":"b3ea16c-id-185","customer_id":null,"name":"b3ea16c-name-186","email":"b3ea16c-email-184","phone":"b3ea16c-phone-183","address":"b3ea16c-address-187","status":"New","monthly_bill":0,"monthly_units":0,"sanctioned_load":0,"backup_requirement":null,"location":null,"roof_type":null,"roof_space":0,"shading":null,"rating":3,"assigned_salesperson":null,"notes":null,"lead_source":null,"engagement_level":null,"conversion_probability":50,"conversion_score":50,"created_at":"2026-10-13T16:02:37.648+00:00","deleted_at":null,"deleted_by":null,"company_id":"co_alpha"}]; A cannot hand its row to B: [{"id":"a3ea16c-id-308","customer_id":null,"name":"a3ea16c-name-309","email":"a3ea16c-email-307","phone":"a3ea16c-phone-306","address":"a3ea16c-address-310","status":"New","monthly_bill":0,"monthly_units":0,"sanctioned_load":0,"backup_requirement":null,"location":null,"roof_type":null,"roof_space":0,"shading":null,"rating":3,"assigned_salesperson":null,"notes":null,"lead_source":null,"engagement_level":null,"conversion_probability":50,"conversion_score":50,"created_at":"2026-10-13T16:02:38.39419+00:00","deleted_at":null,"deleted_by":null,"company_id":"co_beta"}]; no company header reads nothing: 5; 
+FAIL: net_metering_trackers  <- A cannot reference B's parent row, and the answer is the same as for a parent that does not exist: [{"lead_id":"b3ea16c-id-185","project_id":null,"customer_id":null,"documents_collected":false,"application_submitted":false,"disco_inspection":false,"demand_not  vs  {"code":"23503","details":"Key is not present in table \"leads\".","hint":null,"message":"insert or update on table \"net_metering_trackers\" violates foreign k; 
+PASS: notifications
+PASS: orders
+PASS: party_ledger_archives
+FAIL: payments  <- A cannot reference B's parent row, and the answer is the same as for a parent that does not exist: [{"lead_id":"b3ea16c-id-185","project_id":null,"customer_id":null,"total_value":0,"advance_received":0,"pending_amount":0,"reminder_sent":false,"invoice_status"  vs  {"code":"23503","details":"Key is not present in table \"leads\".","hint":null,"message":"insert or update on table \"payments\" violates foreign key constraint; 
+PASS: products
+PASS: products_inventory
+PASS: project_completion_media
+PASS: project_deliveries
+PASS: project_delivery_items
+PASS: project_delivery_updates
+PASS: project_finance_records
+PASS: project_installation_photos
+PASS: project_installed_equipment
+PASS: project_inventory_reservations
+FAIL: projects  <- A cannot reference B's parent row, and the answer is the same as for a parent that does not exist: [{"id":"y3ea16c-id-449","lead_id":"b3ea16c-id-185","quotation_id":null,"customer_id":null,"customer_name":"y3ea16c-customer_name-450","address":"y3ea16c-address  vs  {"code":"23505","details":null,"hint":null,"message":"duplicate key value violates unique constraint \"projects_pkey\""}; 
+PASS: purchase_orders
+FAIL: quotations  <- A cannot reference B's parent row, and the answer is the same as for a parent that does not exist: [{"id":"y3ea16c-id-492","lead_id":"b3ea16c-id-185","customer_id":null,"system_size_kw":1,"panel_count":1,"panel_type":"y3ea16c-panel_type-487","inverter_type":"  vs  {"code":"23505","details":null,"hint":null,"message":"duplicate key value violates unique constraint \"quotations_pkey\""}; 
+PASS: quote_pdf_settings
+PASS: quote_template_pages
+PASS: quote_templates
+PASS: service_requests
+PASS: service_visit_photos
+PASS: service_visit_reports
+PASS: settings
+FAIL: site_surveys  <- A cannot reference B's parent row, and the answer is the same as for a parent that does not exist: [{"lead_id":"b3ea16c-id-185","project_id":null,"scheduled_date":null,"status":"Pending","notes":null,"shading_percent":0,"optimal_placement":null,"photos":[],"r  vs  {"code":"23503","details":"Key is not present in table \"leads\".","hint":null,"message":"insert or update on table \"site_surveys\" violates foreign key constr; 
+FAIL: smart_quote_versions  <- A cannot reference B's parent row, and the answer is the same as for a parent that does not exist: [{"id":"y3ea16c-id-584","quote_number":"SES-20261009-1588","lead_id":"b3ea16c-id-185","customer_id":null,"version_number":1,"source":"Smart Quote","client_name"  vs  {"code":"23505","details":null,"hint":null,"message":"duplicate key value violates unique constraint \"smart_quote_versions_pkey\""}; 
+PASS: social_links
+PASS: solar_packages
+PASS: structure_descriptions
+PASS: subscription_payments
+PASS: subscription_plans
+PASS: support_ticket_updates
+PASS: support_tickets
+PASS: technical_job_updates
+PASS: warranties
+PASS: warranty_claims
+PASS: website_content
+PASS: whatsapp_audit_events
+PASS: whatsapp_channels
+PASS: whatsapp_connections
+PASS: whatsapp_contacts
+PASS: whatsapp_conversation_assignment_events
+PASS: whatsapp_conversation_crm_links
+PASS: whatsapp_conversation_status_events
+PASS: whatsapp_conversations
+PASS: whatsapp_logs
+PASS: whatsapp_message_logs
+PASS: whatsapp_message_status_events
+PASS: whatsapp_messages
+PASS: whatsapp_oauth_states
+PASS: whatsapp_outbound_idempotency_keys
+PASS: whatsapp_read_watermarks
+PASS: whatsapp_webhook_events
+
+Seeded and attacked: 87 of 88 tenant tables (79 fully isolated).
+NOT covered by the automatic matrix (needs a hand-written test):
+  - bills: table not present in this database

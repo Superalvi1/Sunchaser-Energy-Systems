@@ -1,0 +1,21 @@
+productionCleanupDb.ts: error TS2339: Property 'end' does not exist on type 'PgClient'.
+productionCleanupDb.ts: error TS2339: Property 'end' does not exist on type 'PgClient'.
+server.ts: error TS2322: Type 'ExportAccessMode' is not assignable to type '"full" | "sales_scoped"'.
+server.ts: error TS2339: Property 'error' does not exist on type 'AutoSizerPresetsAuthResult'.
+server.ts: error TS2339: Property 'error' does not exist on type 'AutoSizerPresetsAuthResult'.
+server.ts: error TS2339: Property 'error' does not exist on type 'DesignSessionValidationOk | DesignSessionValidationErr'.
+server.ts: error TS2339: Property 'error' does not exist on type 'WebsiteCatalogAuthResult'.
+server.ts: error TS2339: Property 'error' does not exist on type 'WebsiteCatalogAuthResult'.
+server.ts: error TS2339: Property 'reason' does not exist on type '{ ok: true; namespace: RailwayObjectNamespace; key: string; } | { ok: false; reason?: "expired" | "invalid" | "legacy_not_allowed"; }'.
+server.ts: error TS2339: Property 'status' does not exist on type 'AutoSizerPresetsAuthResult'.
+server.ts: error TS2339: Property 'status' does not exist on type 'AutoSizerPresetsAuthResult'.
+server.ts: error TS2339: Property 'status' does not exist on type 'WebsiteCatalogAuthResult'.
+server.ts: error TS2339: Property 'status' does not exist on type 'WebsiteCatalogAuthResult'.
+server.ts: error TS2345: Argument of type 'Record<string, unknown>' is not assignable to parameter of type 'Database'.
+server.ts: error TS2345: Argument of type 'Record<string, unknown>' is not assignable to parameter of type 'Database'.
+server.ts: error TS2345: Argument of type 'number | "archived" | "draft"' is not assignable to parameter of type 'number'.
+server.ts: error TS2352: Conversion of type 'Database' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+server.ts: error TS2353: Object literal may only specify known properties, and 'archivePdf' does not exist in type 'ProductionInboxWiringDeps'.
+server.ts: error TS2367: This comparison appears to be unintentional because the types '"manual" | "preview"' and '"sizer"' have no overlap.
+server/designSessions/designSessionValidation.ts: error TS2339: Property 'error' does not exist on type '{ ok: true; value: "archived" | "draft"; } | { ok: false; error: string; }'.
+server/designSessions/designSessionValidation.ts: error TS2339: Property 'error' does not exist on type '{ ok: true; value: number; } | { ok: false; error: string; }'.

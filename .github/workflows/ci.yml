@@ -1,6 +1,6 @@
 name: CI
 
-# Three independent jobs. A failure in one never stops the others, and nothing here uses continue-on-error.
+# Independent jobs. A failure in one never stops the others, and nothing here uses continue-on-error.
 on:
   pull_request:
   push:
@@ -27,6 +27,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Typecheck (tsc --noEmit)
         run: npm run typecheck
+      # `tsc --noEmit` does not include server.ts (tsconfig.json lists src/ and server/ only). This checks it separately against the
+      # recorded baseline of errors that already existed: a NEW error fails, the existing ones are listed on every run, never hidden.
+      - name: Typecheck server.ts (new errors fail; existing ones are the recorded baseline)
+        run: npm run typecheck:server
 
   build:
     runs-on: ubuntu-latest
@@ -117,4 +121,78 @@ jobs:
         with:
           name: ci-report-docker-pg${{ matrix.pg }}
           path: ci-report-docker/
+          retention-days: 14
+
+  # The main two-company journeys against a real stack: PostgreSQL 17, PostgREST (the pinned image), an S3-compatible store, the built web app
+  # and server bundle with MULTI_COMPANY_ENABLED=true. Black-box API journeys, real-Chromium PDFs read back as bytes, and real-browser journeys.
+  # Synthetic data only. A failed journey fails the job; its log, the summary table and the screenshots are uploaded either way.
+  pilot-journeys:
+    name: pilot-journeys (two-company stack, PostgreSQL ${{ matrix.postgres }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["16", "17"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      CI_PG: "-h 127.0.0.1 -p 5432 -U postgres"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Tools (poppler reads the PDFs back; Chromium renders them and drives the browser journeys)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          npx playwright install --with-deps chromium
+      - name: Pre-pull the pinned PostgREST image (retries; a failed pull is reported here, not as a journey failure)
+        run: |
+          IMAGE="postgrest/postgrest:v16.4@sha256:d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df"
+          for i in 1 2 3 4; do
+            docker pull "$IMAGE" && exit 0
+            echo "pull attempt $i failed; retrying"; sleep $((i * 5))
+          done
+          echo "::error::could not pull $IMAGE after 4 attempts"; exit 1
+      - name: Build (the UI must call the same origin, never a baked-in host)
+        env:
+          VITE_API_BASE_URL: ""
+        run: |
+          npx vite build
+          npx esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
+      - name: Run the pilot journeys
+        run: bash scripts/saas/ci/run-pilot-journeys.sh
+      - name: Deployment-state matrix (every migration of both releases, one at a time; this build with the flag off. The repair build is checked locally, see docs/ops/COMBINED_DEPLOYMENT_AND_ROLLBACK.md)
+        if: always()
+        env:
+          REPORT_DIR: ci-report-matrix
+        run: bash scripts/saas/ci/run-deploy-matrix.sh
+      - name: Journey summary
+        if: always()
+        run: |
+          if [ -f ci-report-stack/summary.md ]; then cat ci-report-stack/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ -f ci-report-matrix/matrix.md ]; then cat ci-report-matrix/matrix.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload journey logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-report-pilot-journeys-pg${{ matrix.postgres }}
+          path: |
+            ci-report-stack/
+            ci-report-matrix/
           retention-days: 14

@@ -23,6 +23,7 @@ import { fetchLeadSmartQuoteVersions, issueLeadSmartQuoteLink, prepareLeadCustom
 import { parseSmartQuoteLeadNotes, parseSmartQuotePdfArchive, formatLeadReceivedAt, visibleLeadNotes, normalizePakistanMobile } from "../lib/smartQuoteLead";
 import { namesPlausiblyMatch } from "../lib/clientIdentity";
 import InteractiveProposalShareModal from "./InteractiveProposalShareModal";
+import { designToolsEnabled } from "../lib/workspaceModules";
 
 type WorkspaceTab =
   | "overview"
@@ -210,16 +211,16 @@ export default function StaffClientWorkspace({
             {quotes.map((quote) => (
               <div key={quote.id} className="rounded-2xl border border-slate-800 px-3 py-2 text-sm text-slate-200 flex flex-wrap items-center justify-between gap-3">
                 <span>{quote.id} · {quote.systemSizekW} kW · {quote.status}</span>
-                <button
+                {designToolsEnabled() && <button
                   type="button"
                   onClick={() => setProposalQuote(quote)}
                   className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 text-xs font-bold text-emerald-200"
                 >
                   <Link2 className="h-3.5 w-3.5" /> Interactive link
-                </button>
+                </button>}
               </div>
             ))}
-            <p className="text-xs text-slate-500">The original quotation stays unchanged. Accepted configurations are stored as a separate snapshot.</p>
+            {designToolsEnabled() && <p className="text-xs text-slate-500">The original quotation stays unchanged. Accepted configurations are stored as a separate snapshot.</p>}
           </div>
         )}
         {tab === "finance" && (
@@ -241,7 +242,7 @@ export default function StaffClientWorkspace({
         {tab === "support" && <AfterSalesAdminTabs staffUser={staffUser} leads={[lead]} />}
         {tab === "documents" && (customerId ? <ClientPortalStaffTools staffUser={staffUser} section="documents" initialCustomerId={customerId} /> : <div className="space-y-3"><p className="text-sm text-slate-300">Prepare this client's document wallet to upload files.</p><button type="button" disabled={preparing} onClick={() => void prepareDocuments()} className="rounded-xl border border-cyan-400/40 bg-cyan-500/15 px-4 py-3 text-cyan-200">{preparing ? "Preparing…" : "Enable client documents"}</button>{prepareError && <p role="alert" className="text-red-300">{prepareError}</p>}</div>)}
       </div>
-      {proposalQuote ? (
+      {proposalQuote && designToolsEnabled() ? (
         <InteractiveProposalShareModal
           open
           lead={lead}

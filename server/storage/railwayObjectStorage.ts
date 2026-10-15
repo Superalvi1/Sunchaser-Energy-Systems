@@ -3,6 +3,8 @@ import {
   createHmac,
   timingSafeEqual,
 } from "node:crypto";
+import { getCompanyContext } from "../saas/companyContext.ts";
+import { FOUNDING_COMPANY_ID, isMultiCompanyEnabled } from "../saas/multiCompany.ts";
 
 export type RailwayObjectNamespace = "customer-documents" | "quote-assets";
 
@@ -89,16 +91,20 @@ async function signedBucketRequest(
   method: "GET" | "PUT" | "DELETE",
   namespace: RailwayObjectNamespace,
   objectKey: string,
-  options: { body?: Buffer; contentType?: string; ifMatch?: string; ifNoneMatch?: string } = {},
+  options: { body?: Buffer; contentType?: string; ifMatch?: string; ifNoneMatch?: string; listQuery?: Record<string, string> } = {},
 ): Promise<Response> {
   const config = resolveRailwayObjectStorageConfig();
   if (!config) throw new Error("Railway object storage is not configured.");
 
-  const fullKey = normalizeObjectKey(namespace, objectKey);
+  // Bucket-level listing (ListObjectsV2) addresses "/" with a sorted, encoded query string; every object request addresses its key.
+  const fullKey = options.listQuery ? "" : normalizeObjectKey(namespace, objectKey);
   const endpointHost = config.endpoint.host;
   const host = `${config.bucket}.${endpointHost}`;
-  const canonicalUri = encodePath(fullKey);
-  const url = `${config.endpoint.protocol}//${host}${canonicalUri}`;
+  const canonicalUri = options.listQuery ? "/" : encodePath(fullKey);
+  const canonicalQuery = options.listQuery
+    ? Object.entries(options.listQuery).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${rfc3986(k)}=${rfc3986(v)}`).join("&")
+    : "";
+  const url = `${config.endpoint.protocol}//${host}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`;
   const body = options.body ?? Buffer.alloc(0);
   const payloadHash = sha256Hex(body);
   const { full: xAmzDate, short: date } = amzTimestamp();
@@ -111,7 +117,7 @@ async function signedBucketRequest(
   const canonicalRequest = [
     method,
     canonicalUri,
-    "",
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders,
     payloadHash,
@@ -169,14 +175,36 @@ async function failure(res: Response, action: string, knownCode?: string): Promi
   return new Error(`Railway object ${action} failed (HTTP ${res.status}${code ? ` ${code}` : ""}).`);
 }
 
+/**
+ * Optional guard run around every write (the plan storage limit, server/saas/storageQuota.ts). Registered by the server at start-up so
+ * this module does not depend on the SaaS code. `reserve` throws to refuse the write and returns a handle that is released if the write fails.
+ */
+type WriteReservation = { release(): void | Promise<void>; commit?(): void | Promise<void> };
+let writeGuard: ((bytes: number) => Promise<WriteReservation>) | null = null;
+export function setRailwayWriteGuard(guard: ((bytes: number) => Promise<WriteReservation>) | null): void { writeGuard = guard; }
+
 export async function putRailwayObject(
   namespace: RailwayObjectNamespace,
   key: string,
   body: Buffer,
   contentType: string,
 ): Promise<void> {
-  const res = await signedBucketRequest("PUT", namespace, key, { body, contentType });
-  if (!res.ok) throw await failure(res, "upload");
+  // A caller acting for one company may only write under that company's prefix (a missing scopeObjectKey() is caught here, not in review).
+  if (isMultiCompanyEnabled()) {
+    const ctx = getCompanyContext();
+    if (ctx?.kind === "company" && objectCompanyOf(key) !== ctx.companyId) {
+      throw new Error(`Refusing to write an object outside the company's own key space (${ctx.companyId}).`);
+    }
+  }
+  const reservation = writeGuard ? await writeGuard(body.length) : null;
+  try {
+    const res = await signedBucketRequest("PUT", namespace, key, { body, contentType });
+    if (!res.ok) throw await failure(res, "upload");
+  } catch (err) {
+    await reservation?.release();   // never throws: the bytes are given back whether or not the database answers
+    throw err;
+  }
+  await reservation?.commit?.();    // the write succeeded; never throws
 }
 
 export async function deleteRailwayObject(
@@ -189,6 +217,45 @@ export async function deleteRailwayObject(
   const code = await s3ErrorCode(res);
   if (res.status === 404 && code !== "NoSuchBucket") return;
   throw await failure(res, "delete", code);
+}
+
+/**
+ * Keys of the objects whose key starts with `<namespace>/<prefix>`, following the continuation tokens (S3 returns at most 1000 per page).
+ * Returned keys are relative to the namespace, as every other function here takes them. Used by the company export tool.
+ */
+export async function listRailwayObjects(
+  namespace: RailwayObjectNamespace,
+  prefix: string,
+  options: { pageSize?: number } = {},
+): Promise<Array<{ key: string; size: number; etag: string | null }>> {
+  const out: Array<{ key: string; size: number; etag: string | null }> = [];
+  let token: string | undefined;
+  const nsPrefix = `${namespace}/`;
+  for (let page = 0; page < 100_000; page++) {
+    const query: Record<string, string> = { "list-type": "2", prefix: `${nsPrefix}${String(prefix || "").replace(/^\/+/, "")}` };
+    if (options.pageSize) query["max-keys"] = String(options.pageSize);
+    if (token) query["continuation-token"] = token;
+    const res = await signedBucketRequest("GET", namespace, "", { listQuery: query });
+    if (!res.ok) throw await failure(res, "list");
+    const xml = await res.text();
+    for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const key = /<Key>([\s\S]*?)<\/Key>/.exec(m[1])?.[1];
+      if (!key || !key.startsWith(nsPrefix)) continue;
+      out.push({
+        key: decodeXml(key.slice(nsPrefix.length)),
+        size: Number(/<Size>(\d+)<\/Size>/.exec(m[1])?.[1] || 0),
+        etag: /<ETag>([\s\S]*?)<\/ETag>/.exec(m[1])?.[1]?.replace(/&quot;/g, '"') ?? null,
+      });
+    }
+    const truncated = /<IsTruncated>true<\/IsTruncated>/.test(xml);
+    token = /<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/.exec(xml)?.[1];
+    if (!truncated || !token) break;
+  }
+  return out;
+}
+
+function decodeXml(v: string): string {
+  return v.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 }
 
 /** Atomic metadata update; false means another writer changed the object. */
@@ -217,6 +284,52 @@ export async function getRailwayObject(
   };
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Company-scoped object keys and expiring links (multi-company mode)
+//
+//  * A company other than the founding one stores every object under `c/<companyId>/...`. The founding company's keys stay exactly as
+//    they always were (no prefix), so nothing already stored moves. The company of a key is therefore readable from the key itself.
+//  * In multi-company mode every link is signed with an expiry (`exp`, seconds since epoch; the signature covers it). A link without
+//    `exp` is the old permanent link: it is still honoured for the founding company's own (unprefixed) keys unless
+//    STORAGE_LEGACY_LINKS=off, and NEVER for another company's key.
+//  * Authorised access (GET /api/company/files/...) needs a session of the company the key belongs to and no link at all.
+// ---------------------------------------------------------------------------------------------------------------------------------
+const COMPANY_PREFIX_RX = /^c\/([a-z][a-z0-9_]{1,40})\//;
+
+export function objectCompanyOf(key: string): string {
+  const m = COMPANY_PREFIX_RX.exec(String(key || "").replace(/^\/+/, ""));
+  return m ? m[1] : FOUNDING_COMPANY_ID;
+}
+
+/** The key to store an object under for the given (or current) company. Idempotent; refuses a key that names another company. */
+export function scopeObjectKey(key: string, companyId?: string, env: NodeJS.ProcessEnv = process.env): string {
+  const k = String(key || "").trim().replace(/^\/+/, "");
+  if (!isMultiCompanyEnabled(env)) return k;
+  const ctx = getCompanyContext();
+  const company = companyId ?? (ctx?.kind === "company" ? ctx.companyId : undefined);
+  if (!company) return k;
+  const owner = objectCompanyOf(k);
+  if (COMPANY_PREFIX_RX.test(k) && owner !== company) throw new Error("Object key belongs to another company.");
+  if (company === FOUNDING_COMPANY_ID) {
+    if (COMPANY_PREFIX_RX.test(k)) throw new Error("The founding company does not use company-prefixed keys.");
+    return k;
+  }
+  return COMPANY_PREFIX_RX.test(k) ? k : `c/${company}/${k}`;
+}
+
+/** Links expire whenever more than one company can exist, or when STORAGE_LINKS_EXPIRE=true. */
+export function storageLinksExpire(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isMultiCompanyEnabled(env) || String(env.STORAGE_LINKS_EXPIRE || "").trim().toLowerCase() === "true";
+}
+export function storageLinkTtlSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.STORAGE_LINK_TTL_SECONDS);
+  return Number.isFinite(n) && n >= 1 && n <= 86400 ? Math.floor(n) : 900;
+}
+function hmacExpiringSignature(secret: string, namespace: RailwayObjectNamespace, key: string, exp: number): string {
+  return createHmac("sha256", secret).update(`v2\n${namespace}\n${key}\n${exp}`).digest("hex");
+}
+
 function hmacProxySignature(secret: string, namespace: RailwayObjectNamespace, key: string): string {
   return createHmac("sha256", secret).update(`${namespace}\n${key}`).digest("hex");
 }
@@ -239,8 +352,15 @@ export function buildRailwayObjectProxyUrl(
   const normalized = String(key || "").trim().replace(/^\/+/, "");
   normalizeObjectKey(namespace, normalized);
   const encoded = Buffer.from(normalized, "utf8").toString("base64url");
-  const sig = proxySignature(namespace, normalized, env);
-  const relative = `/api/storage/object/${namespace}/${encoded}?sig=${sig}`;
+  let relative: string;
+  if (storageLinksExpire(env)) {
+    const secret = String(env.RAILWAY_OBJECT_PROXY_SECRET || "").trim();
+    if (!secret) throw new Error("RAILWAY_OBJECT_PROXY_SECRET is not configured.");
+    const exp = Math.floor(Date.now() / 1000) + storageLinkTtlSeconds(env);
+    relative = `/api/storage/object/${namespace}/${encoded}?exp=${exp}&sig=${hmacExpiringSignature(secret, namespace, normalized, exp)}`;
+  } else {
+    relative = `/api/storage/object/${namespace}/${encoded}?sig=${proxySignature(namespace, normalized, env)}`;
+  }
   const explicit = String(env.APP_PUBLIC_URL || env.API_BASE_URL || "").trim().replace(/\/$/, "");
   if (explicit) return explicit + relative;
   const railwayDomain = String(env.RAILWAY_PUBLIC_DOMAIN || "").trim();
@@ -252,7 +372,8 @@ export function verifyRailwayObjectProxySignature(
   encodedKey: string,
   signature: string,
   env: NodeJS.ProcessEnv = process.env,
-): { ok: true; namespace: RailwayObjectNamespace; key: string } | { ok: false } {
+  expRaw?: string,
+): { ok: true; namespace: RailwayObjectNamespace; key: string } | { ok: false; reason?: "expired" | "invalid" | "legacy_not_allowed" } {
   if (namespaceRaw !== "customer-documents" && namespaceRaw !== "quote-assets") {
     return { ok: false };
   }
@@ -272,12 +393,26 @@ export function verifyRailwayObjectProxySignature(
     .filter(Boolean);
   if (!secrets.length) throw new Error("RAILWAY_OBJECT_PROXY_SECRET is not configured.");
   const a = Buffer.from(supplied, "hex");
+  const expiring = expRaw !== undefined && String(expRaw) !== "";
+  let exp = 0;
+  if (expiring) {
+    if (!/^\d{9,11}$/.test(String(expRaw))) return { ok: false };
+    exp = Number(expRaw);
+    // The signature covers exp, so it cannot be extended; this also refuses a link minted with an absurd lifetime.
+    if (exp > Math.floor(Date.now() / 1000) + 86400 + 60) return { ok: false };
+  } else if (storageLinksExpire(env)) {
+    // Old permanent links: only the founding company's own, unprefixed keys, and only while STORAGE_LEGACY_LINKS is not off.
+    if (objectCompanyOf(key) !== FOUNDING_COMPANY_ID || String(env.STORAGE_LEGACY_LINKS || "").trim().toLowerCase() === "off") {
+      return { ok: false, reason: "legacy_not_allowed" };
+    }
+  }
   let valid = false;
   for (const secret of secrets) {
-    const b = Buffer.from(hmacProxySignature(secret, namespaceRaw, key), "hex");
+    const b = Buffer.from(expiring ? hmacExpiringSignature(secret, namespaceRaw, key, exp) : hmacProxySignature(secret, namespaceRaw, key), "hex");
     if (a.length === b.length && timingSafeEqual(a, b)) valid = true;
   }
   if (!valid) return { ok: false };
+  if (expiring && exp < Math.floor(Date.now() / 1000)) return { ok: false, reason: "expired" };
   return { ok: true, namespace: namespaceRaw, key };
 }
 
@@ -288,7 +423,12 @@ export function verifyRailwayObjectProxySignature(
 export function isStoragePathForCustomer(customerId: string | null | undefined, storagePath: string): boolean {
   const owner = String(customerId || "").trim();
   const key = String(storagePath || "").trim().replace(/^\/+/, "");
-  return Boolean(owner) && (key.startsWith(`${owner}/`) || key.startsWith("smart-quotes/"));
+  if (isMultiCompanyEnabled()) {
+    const ctx = getCompanyContext();
+    if (ctx?.kind === "company" && objectCompanyOf(key) !== ctx.companyId) return false; // another company's key space
+  }
+  const bare = key.replace(COMPANY_PREFIX_RX, "");
+  return Boolean(owner) && (bare.startsWith(`${owner}/`) || bare.startsWith("smart-quotes/"));
 }
 
 /** Objects the app keeps for itself (sales-agent settings, pending conversations). Never signed for a document row. */

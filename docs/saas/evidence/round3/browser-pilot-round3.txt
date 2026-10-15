@@ -1,0 +1,21 @@
+PASS: sign-in screen is the platform's: it says Sunchaser Sync
+PASS: ...and shows no Sunchaser company name, tagline or logo image
+PASS: company selection says Sunchaser Sync and lists the companies by their own names
+PASS: workspace header carries the company's own name, or the neutral "Your company" before one is set ("Your company")
+PASS: ...with 'Powered by Sunchaser Sync' and no Sunchaser company name, logo or footer
+PASS: the Sunchaser-only Learning Studio is not offered
+PASS: WhatsApp connection, WhatsApp inbox and marketplace are not offered
+PASS: the AI assistant carries no Sunchaser name
+PASS: Company Settings is offered
+PASS: after-sales (Project Delivery) is not offered
+PASS: the settings screen opens, editable for the administrator
+PASS: saving branding updates the header at once, without a reload
+PASS: a bank account is saved from the screen
+PASS: the history lists the four changes just made, newest first, with who changed them
+PASS: after a full reload the header still shows the saved company name
+PASS: a sales user is not offered the settings screen at all (acceptable: nothing editable)
+PASS: a pilot company's sales user is not offered Auto Sizer or After Sales Admin
+PASS: founding company: header keeps the Sunchaser name
+PASS: founding company: Learning Studio, WhatsApp, Project Delivery and the Sunchaser AI Assistant are still offered
+
+19 passed, 0 failed

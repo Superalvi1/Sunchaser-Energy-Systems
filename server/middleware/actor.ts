@@ -28,6 +28,9 @@ export type RequestActor = {
   approvedBy?: string;
   rejectedReason?: string;
   createdAt?: string;
+  isPlatformAdmin?: boolean;
+  /** Set by the authorization middleware in multi-company mode. */
+  companyId?: string;
   authMethod: ActorAuthMethod;
 };
 
@@ -46,7 +49,7 @@ export type AuthSessionInfo = {
 };
 
 export type ActorHydrationResult =
-  | { ok: true; actor: RequestActor; session?: AuthSessionInfo }
+  | { ok: true; actor: RequestActor; session?: AuthSessionInfo; tokenCompanyId?: string }
   | { ok: false; status: 401 | 403 | 503; error: string; reason: string };
 
 /** Account states that may not use an existing session (login refuses the same states). */
@@ -77,6 +80,7 @@ function rowToActor(row: Record<string, unknown>, authMethod: ActorAuthMethod): 
     approvedBy: mapped.approvedBy,
     rejectedReason: mapped.rejectedReason,
     createdAt: mapped.createdAt,
+    isPlatformAdmin: mapped.isPlatformAdmin,
     authMethod,
   };
 }
@@ -177,6 +181,7 @@ export async function hydrateActorFromJwt(
   return {
     ok: true,
     actor: loaded.actor,
+    ...(claims.companyId ? { tokenCompanyId: claims.companyId } : {}),
     session: {
       startedAt: verified.startedAt,
       passwordVersion: loaded.passwordVersion,

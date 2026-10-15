@@ -21,7 +21,7 @@ import {
   SUPPORT_PRIORITIES,
   type SupportTicketRecord,
 } from "../lib/clientPortalSupport";
-import { portal, supportPhoneFromBranding, whatsAppHref } from "../lib/clientPortalUi";
+import { portal, portalCompanyLabel, supportPhoneFromBranding, whatsAppHref } from "../lib/clientPortalUi";
 import type { CompanyBranding } from "../lib/branding";
 
 interface ClientPortalSupportProps {
@@ -46,8 +46,8 @@ export default function ClientPortalSupport({ user, branding }: ClientPortalSupp
   const [videoUrl, setVideoUrl] = useState("");
   const [preferredVisitDate, setPreferredVisitDate] = useState("");
 
-  const phone = supportPhoneFromBranding(branding?.phoneNumbers);
-  const waLink = whatsAppHref(phone, `Hello Sunchaser, I need support. Customer: ${user.name}`);
+  const phone = supportPhoneFromBranding(branding?.phoneNumbers, branding);
+  const waLink = phone ? whatsAppHref(phone, `Hello ${portalCompanyLabel(branding)}, I need support. Customer: ${user.name}`) : "";
 
   const loadList = async () => {
     setLoading(true);
@@ -253,11 +253,11 @@ export default function ClientPortalSupport({ user, branding }: ClientPortalSupp
           <Plus className="h-5 w-5" />
           Open ticket
         </button>
-        <a href={`tel:${phone.replace(/\s/g, "")}`} className={portal.btnSecondary + " flex-col !py-5"}>
+        {phone && <a href={`tel:${phone.replace(/\s/g, "")}`} className={portal.btnSecondary + " flex-col !py-5"}>
           <Phone className="h-5 w-5 text-amber-400" />
           Call support
-        </a>
-        <a
+        </a>}
+        {phone && <a
           href={waLink}
           target="_blank"
           rel="noopener noreferrer"
@@ -265,7 +265,7 @@ export default function ClientPortalSupport({ user, branding }: ClientPortalSupp
         >
           <MessageCircle className="h-5 w-5 text-emerald-400" />
           WhatsApp support
-        </a>
+        </a>}
       </div>
 
       <div>

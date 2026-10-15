@@ -1,0 +1,17 @@
+04:48:55 COMMIT f6aff156c0cc9a86170c8e30938cbd941e1d153e ; tracked changes: 0 ; server.cjs sha256 61ed3c6f609bb8dd7ed19ed4b1312bdefca4bdb6c28c0d38444ec1bada9bb05f
+04:50:53 FOCUSED flag-off isolation journeys (PG17) exit 0 : feature-disable-reenable: pass (8 passed, 0 failed);tenant-isolation-guard: pass (30 passed, 0 failed);single-company-smoke: pass (12 passed, 0 failed);flag-off-round3: pass (18 passed, 0 failed);
+04:51:09 unit tests: # pass 169 # fail 0 
+04:51:23 typecheck: No new server type errors.
+05:04:46 PG17 full journeys exit 0 : All journeys passed. ; 22 pass
+05:06:32 PG17 matrix exit 0
+05:07:58 PG17 DB tests exit 0
+05:21:32 PG16 full journeys exit 0 : All journeys passed. ; 22 pass
+05:23:22 PG16 matrix exit 0
+05:24:59 PG16 DB tests exit 0
+05:36:20 REPEAT company-restore x15 exit 0 : 15 pass, 0 FAIL
+05:41:40 REPEAT concurrent-contracts x15 exit 0 : 15 pass, 0 FAIL
+05:48:41 REPEAT customer-code-collisions x15 exit 0 : 15 pass, 0 FAIL
+06:02:58 REPEAT storage-two-instances x15 exit 0 : 15 pass, 0 FAIL
+06:07:37 REPEAT rollback-files-quota x5 exit 0 : 5 pass, 0 FAIL
+06:14:24 REPEAT tenant-isolation-guard x5 exit 0 : 5 pass, 0 FAIL
+06:14:24 DONE

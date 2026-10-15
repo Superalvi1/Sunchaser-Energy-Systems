@@ -1,0 +1,1113 @@
+TAP version 13
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [SessionRevocation] ACTIVE - revoked_sessions is reachable; server-side logout is enforced.
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [company] could not resolve company: db down
+# Subtest: flag off: nothing changes (no company context is created)
+ok 1 - flag off: nothing changes (no company context is created)
+  ---
+  duration_ms: 7.492275
+  type: 'test'
+  ...
+# Subtest: a route with no scope rule is refused
+ok 2 - a route with no scope rule is refused
+  ---
+  duration_ms: 1.125426
+  type: 'test'
+  ...
+# Subtest: a member's request runs inside their company with the role they hold there
+ok 3 - a member's request runs inside their company with the role they hold there
+  ---
+  duration_ms: 3.573862
+  type: 'test'
+  ...
+# Subtest: a token cannot name a company the user does not belong to
+ok 4 - a token cannot name a company the user does not belong to
+  ---
+  duration_ms: 1.673925
+  type: 'test'
+  ...
+# Subtest: a user in two companies must choose; the token chooses among their own
+ok 5 - a user in two companies must choose; the token chooses among their own
+  ---
+  duration_ms: 2.667296
+  type: 'test'
+  ...
+# Subtest: a global Super Admin without a membership gets nothing
+ok 6 - a global Super Admin without a membership gets nothing
+  ---
+  duration_ms: 0.863264
+  type: 'test'
+  ...
+# Subtest: founding-only features answer 404 to other companies and work for the founding company
+ok 7 - founding-only features answer 404 to other companies and work for the founding company
+  ---
+  duration_ms: 2.368231
+  type: 'test'
+  ...
+# Subtest: public intake runs as the founding company until it is resolved per company
+ok 8 - public intake runs as the founding company until it is resolved per company
+  ---
+  duration_ms: 0.3558
+  type: 'test'
+  ...
+# Subtest: identity routes need no company
+ok 9 - identity routes need no company
+  ---
+  duration_ms: 1.940404
+  type: 'test'
+  ...
+# Subtest: portal customers are bound to their customer's company and kept off staff routes
+ok 10 - portal customers are bound to their customer's company and kept off staff routes
+  ---
+  duration_ms: 2.812382
+  type: 'test'
+  ...
+# Subtest: a company lookup failure is a 503, never an unscoped pass-through
+ok 11 - a company lookup failure is a 503, never an unscoped pass-through
+  ---
+  duration_ms: 1.487103
+  type: 'test'
+  ...
+# Subtest: the flag is off unless explicitly true
+ok 12 - the flag is off unless explicitly true
+  ---
+  duration_ms: 1.099762
+  type: 'test'
+  ...
+# Subtest: boot check names what is missing when multi-company mode is on
+ok 13 - boot check names what is missing when multi-company mode is on
+  ---
+  duration_ms: 0.560694
+  type: 'test'
+  ...
+# Subtest: company ids are validated (they end up in a request header)
+ok 14 - company ids are validated (they end up in a request header)
+  ---
+  duration_ms: 0.162992
+  type: 'test'
+  ...
+# Subtest: concurrent requests keep their own company
+ok 15 - concurrent requests keep their own company
+  ---
+  duration_ms: 23.412667
+  type: 'test'
+  ...
+# Subtest: no context outside a request, and a system context needs a reason
+ok 16 - no context outside a request, and a system context needs a reason
+  ---
+  duration_ms: 0.35378
+  type: 'test'
+  ...
+# Subtest: the tenant fetch strips /rest/v1, targets PostgREST and stamps the company header on every request
+ok 17 - the tenant fetch strips /rest/v1, targets PostgREST and stamps the company header on every request
+  ---
+  duration_ms: 33.671514
+  type: 'test'
+  ...
+# Subtest: tenant clients are cached per company and refuse invalid ids or missing keys
+ok 18 - tenant clients are cached per company and refuse invalid ids or missing keys
+  ---
+  duration_ms: 6.018275
+  type: 'test'
+  ...
+# Subtest: flag off: nothing changes (plain keys, Sunchaser defaults)
+ok 19 - flag off: nothing changes (plain keys, Sunchaser defaults)
+  ---
+  duration_ms: 1.00703
+  type: 'test'
+  ...
+# Subtest: founding company keeps its plain keys and its defaults
+ok 20 - founding company keeps its plain keys and its defaults
+  ---
+  duration_ms: 0.199122
+  type: 'test'
+  ...
+# Subtest: another company: scoped keys and no Sunchaser default
+ok 21 - another company: scoped keys and no Sunchaser default
+  ---
+  duration_ms: 0.128064
+  type: 'test'
+  ...
+# Subtest: multi-company mode without a company context never defaults to Sunchaser
+ok 22 - multi-company mode without a company context never defaults to Sunchaser
+  ---
+  duration_ms: 0.115995
+  type: 'test'
+  ...
+# Subtest: unscoping keeps only this company's rows and removes the prefix
+ok 23 - unscoping keeps only this company's rows and removes the prefix
+  ---
+  duration_ms: 1.455701
+  type: 'test'
+  ...
+# Subtest: single membership selects that company and uses the membership role, not the global role
+ok 24 - single membership selects that company and uses the membership role, not the global role
+  ---
+  duration_ms: 3.12819
+  type: 'test'
+  ...
+# Subtest: a token company must be one the user really belongs to
+ok 25 - a token company must be one the user really belongs to
+  ---
+  duration_ms: 0.447909
+  type: 'test'
+  ...
+# Subtest: several memberships need an explicit choice; the token picks among them
+ok 26 - several memberships need an explicit choice; the token picks among them
+  ---
+  duration_ms: 0.337121
+  type: 'test'
+  ...
+# Subtest: suspended, invited and removed memberships grant nothing
+ok 27 - suspended, invited and removed memberships grant nothing
+  ---
+  duration_ms: 0.355088
+  type: 'test'
+  ...
+# Subtest: a global Super Admin without a membership gets no company access
+ok 28 - a global Super Admin without a membership gets no company access
+  ---
+  duration_ms: 0.175117
+  type: 'test'
+  ...
+# Subtest: an inactive company blocks everyone in it
+ok 29 - an inactive company blocks everyone in it
+  ---
+  duration_ms: 0.4913
+  type: 'test'
+  ...
+# Subtest: founding-only features are invisible (404) to other companies and open to the founding one
+ok 30 - founding-only features are invisible (404) to other companies and open to the founding one
+  ---
+  duration_ms: 0.402518
+  type: 'test'
+  ...
+# Subtest: portal customers act for the company that owns their customer record
+ok 31 - portal customers act for the company that owns their customer record
+  ---
+  duration_ms: 0.408885
+  type: 'test'
+  ...
+# Subtest: platform routes need the platform flag
+ok 32 - platform routes need the platform flag
+  ---
+  duration_ms: 0.378865
+  type: 'test'
+  ...
+# Subtest: identical snapshots: no difference of any kind
+ok 33 - identical snapshots: no difference of any kind
+  ---
+  duration_ms: 1.459759
+  type: 'test'
+  ...
+# Subtest: a single missing row is named, with its table and primary key, and fails the comparison
+ok 34 - a single missing row is named, with its table and primary key, and fails the comparison
+  ---
+  duration_ms: 1.788392
+  type: 'test'
+  ...
+# Subtest: a row added, and a row whose content changed with the same key, are each named
+ok 35 - a row added, and a row whose content changed with the same key, are each named
+  ---
+  duration_ms: 0.483476
+  type: 'test'
+  ...
+# Subtest: a row in a table that had none (activity log) is an addition; a vanished table's rows are missing
+ok 36 - a row in a table that had none (activity log) is an addition; a vanished table's rows are missing
+  ---
+  duration_ms: 0.493811
+  type: 'test'
+  ...
+# Subtest: stored objects are compared too: a missing, an extra and an altered object
+ok 37 - stored objects are compared too: a missing, an extra and an altered object
+  ---
+  duration_ms: 0.418822
+  type: 'test'
+  ...
+# Subtest: the description lists the first entries and says how many there are
+ok 38 - the description lists the first entries and says how many there are
+  ---
+  duration_ms: 0.418813
+  type: 'test'
+  ...
+# Subtest: scope of representative paths
+ok 39 - scope of representative paths
+  ---
+  duration_ms: 1.630933
+  type: 'test'
+  ...
+# Subtest: an API path no rule knows is refused (fail closed)
+ok 40 - an API path no rule knows is refused (fail closed)
+  ---
+  duration_ms: 0.160149
+  type: 'test'
+  ...
+# Subtest: query strings and trailing slashes do not change the scope
+ok 41 - query strings and trailing slashes do not change the scope
+  ---
+  duration_ms: 0.094409
+  type: 'test'
+  ...
+# Subtest: a lookalike prefix is not treated as the real one
+ok 42 - a lookalike prefix is not treated as the real one
+  ---
+  duration_ms: 0.102973
+  type: 'test'
+  ...
+# Subtest: every /api route registered in server.ts and every router mount has a scope
+ok 43 - every /api route registered in server.ts and every router mount has a scope
+  ---
+  duration_ms: 5.928548
+  type: 'test'
+  ...
+# Subtest: branding: text is trimmed, only known fields pass, colours and links are validated
+ok 44 - branding: text is trimmed, only known fields pass, colours and links are validated
+  ---
+  duration_ms: 3.681183
+  type: 'test'
+  ...
+# Subtest: bank accounts: required fields, defaults, limits
+ok 45 - bank accounts: required fields, defaults, limits
+  ---
+  duration_ms: 0.568989
+  type: 'test'
+  ...
+# Subtest: terms: list of clauses, empty ones dropped
+ok 46 - terms: list of clauses, empty ones dropped
+  ---
+  duration_ms: 0.235616
+  type: 'test'
+  ...
+# Subtest: price settings: validity is a whole number of days
+ok 47 - price settings: validity is a whole number of days
+  ---
+  duration_ms: 0.33645
+  type: 'test'
+  ...
+# [32m✅ [Railway] Private PostgREST data API initialized.[0m
+# Subtest: a customer code taken by another company is never handed out (the existence check uses the unrestricted client)
+ok 48 - a customer code taken by another company is never handed out (the existence check uses the unrestricted client)
+  ---
+  duration_ms: 10.0064
+  type: 'test'
+  ...
+# Subtest: only a 23505 on the customer-code index counts as a code conflict
+ok 49 - only a 23505 on the customer-code index counts as a code conflict
+  ---
+  duration_ms: 0.401765
+  type: 'test'
+  ...
+# Subtest: forced collisions: the insert is retried with a NEW code each time and succeeds
+ok 50 - forced collisions: the insert is retried with a NEW code each time and succeeds
+  ---
+  duration_ms: 2.182427
+  type: 'test'
+  ...
+# Subtest: forced collisions beyond the bound: stops after the bounded number of attempts and returns the conflict (no endless loop)
+ok 51 - forced collisions beyond the bound: stops after the bounded number of attempts and returns the conflict (no endless loop)
+  ---
+  duration_ms: 0.612684
+  type: 'test'
+  ...
+# Subtest: any other error is returned at once and never retried; a given first code is used first
+ok 52 - any other error is returned at once and never retried; a given first code is used first
+  ---
+  duration_ms: 4.299985
+  type: 'test'
+  ...
+# Subtest: simultaneous inserts of one code space: with a store that enforces uniqueness every caller ends with a distinct code
+ok 53 - simultaneous inserts of one code space: with a store that enforces uniqueness every caller ends with a distinct code
+  ---
+  duration_ms: 12.440756
+  type: 'test'
+  ...
+# [32m✅ [Railway] Private PostgREST data API initialized.[0m
+# Subtest: single-company mode returns the same service client everywhere, with or without a context
+ok 54 - single-company mode returns the same service client everywhere, with or without a context
+  ---
+  duration_ms: 7.252842
+  type: 'test'
+  ...
+# Subtest: multi-company mode: no context fails closed instead of using the service role
+ok 55 - multi-company mode: no context fails closed instead of using the service role
+  ---
+  duration_ms: 0.65597
+  type: 'test'
+  ...
+# Subtest: multi-company mode: a company context gets a per-company tenant client, never the service client
+ok 56 - multi-company mode: a company context gets a per-company tenant client, never the service client
+  ---
+  duration_ms: 3.018716
+  type: 'test'
+  ...
+# Subtest: multi-company mode: explicit system work gets the service client
+ok 57 - multi-company mode: explicit system work gets the service client
+  ---
+  duration_ms: 0.314711
+  type: 'test'
+  ...
+# Subtest: multi-company mode without the tenant key refuses to hand out a client
+ok 58 - multi-company mode without the tenant key refuses to hand out a client
+  ---
+  duration_ms: 0.518838
+  type: 'test'
+  ...
+# [tenant-isolation] SERVING PAUSED: tenant_data_present - 2+ company(ies) other than "sunchaser" exist.
+# [tenant-isolation] serving resumed: none - No company tables: a single-company database.
+# Subtest: single-company mode with the isolation guard closed: the service client is NOT handed out (no unfiltered access, no null that means 'use the local file')
+ok 59 - single-company mode with the isolation guard closed: the service client is NOT handed out (no unfiltered access, no null that means 'use the local file')
+  ---
+  duration_ms: 18.790616
+  type: 'test'
+  ...
+# Subtest: quotation of a company with no settings carries no Sunchaser value
+ok 60 - quotation of a company with no settings carries no Sunchaser value
+  ---
+  duration_ms: 21.298238
+  type: 'test'
+  ...
+# Subtest: quotation of a company shows that company's own settings
+ok 61 - quotation of a company shows that company's own settings
+  ---
+  duration_ms: 1.416589
+  type: 'test'
+  ...
+# Subtest: the founding company's quotation is unchanged: Sunchaser defaults still apply
+ok 62 - the founding company's quotation is unchanged: Sunchaser defaults still apply
+  ---
+  duration_ms: 0.863999
+  type: 'test'
+  ...
+# Subtest: a quotation keeps the identity it was saved with when the settings change later
+ok 63 - a quotation keeps the identity it was saved with when the settings change later
+  ---
+  duration_ms: 1.232594
+  type: 'test'
+  ...
+# Subtest: a quotation keeps its saved terms when the company's terms change
+ok 64 - a quotation keeps its saved terms when the company's terms change
+  ---
+  duration_ms: 0.8776
+  type: 'test'
+  ...
+# Subtest: a company without terms gets generic clauses that name nobody
+ok 65 - a company without terms gets generic clauses that name nobody
+  ---
+  duration_ms: 0.917674
+  type: 'test'
+  ...
+# Subtest: validity: company default, then 7 days for other companies, 3 for the founding company
+ok 66 - validity: company default, then 7 days for other companies, 3 for the founding company
+  ---
+  duration_ms: 0.356101
+  type: 'test'
+  ...
+# Subtest: invoice of a company with no settings and no bank accounts carries no Sunchaser value and no bank account
+ok 67 - invoice of a company with no settings and no bank accounts carries no Sunchaser value and no bank account
+  ---
+  duration_ms: 25.635294
+  type: 'test'
+  ...
+# Subtest: invoice shows the company's own branding and bank accounts
+ok 68 - invoice shows the company's own branding and bank accounts
+  ---
+  duration_ms: 30.204695
+  type: 'test'
+  ...
+# Subtest: the founding company's invoice keeps its defaults, including the verified accounts
+ok 69 - the founding company's invoice keeps its defaults, including the verified accounts
+  ---
+  duration_ms: 15.657121
+  type: 'test'
+  ...
+# Subtest: neutral branding never receives the official logo, signature or bank image
+ok 70 - neutral branding never receives the official logo, signature or bank image
+  ---
+  duration_ms: 0.274294
+  type: 'test'
+  ...
+# Subtest: another company's delivery challan, delivery certificate, warranty certificate and handover carry no Sunchaser text, logo or link
+ok 71 - another company's delivery challan, delivery certificate, warranty certificate and handover carry no Sunchaser text, logo or link
+  ---
+  duration_ms: 37.976572
+  type: 'test'
+  ...
+# Subtest: the QR on the challan is generated locally (no third-party host)
+ok 72 - the QR on the challan is generated locally (no third-party host)
+  ---
+  duration_ms: 32.579087
+  type: 'test'
+  ...
+# Subtest: a company that has not set a logo gets no logo image at all
+ok 73 - a company that has not set a logo gets no logo image at all
+  ---
+  duration_ms: 18.179779
+  type: 'test'
+  ...
+# Subtest: the founding company's documents are unchanged (Sunchaser defaults still apply to Sunchaser)
+ok 74 - the founding company's documents are unchanged (Sunchaser defaults still apply to Sunchaser)
+  ---
+  duration_ms: 3.691687
+  type: 'test'
+  ...
+# Subtest: the quote editor offers another company no Sunchaser text, and Sunchaser keeps its own
+ok 75 - the quote editor offers another company no Sunchaser text, and Sunchaser keeps its own
+  ---
+  duration_ms: 0.56776
+  type: 'test'
+  ...
+# Subtest: the committed foundation SQL is exactly what the classification generates
+ok 76 - the committed foundation SQL is exactly what the classification generates
+  ---
+  duration_ms: 43.429047
+  type: 'test'
+  ...
+# Subtest: the committed ownership SQL and its rollback are exactly what the release scripts generate
+ok 77 - the committed ownership SQL and its rollback are exactly what the release scripts generate
+  ---
+  duration_ms: 40.576211
+  type: 'test'
+  ...
+# Subtest: the ownership rollback restores the released function bodies byte for byte
+ok 78 - the ownership rollback restores the released function bodies byte for byte
+  ---
+  duration_ms: 0.850913
+  type: 'test'
+  ...
+# Subtest: the migration manifest lists real files, unique ids, and dependencies that come first
+ok 79 - the migration manifest lists real files, unique ids, and dependencies that come first
+  ---
+  duration_ms: 4.004323
+  type: 'test'
+  ...
+# Subtest: no tenant migration or test script mentions the recovery schema (they cannot read or restore the cleared accounts records)
+ok 80 - no tenant migration or test script mentions the recovery schema (they cannot read or restore the cleared accounts records)
+  ---
+  duration_ms: 0.693176
+  type: 'test'
+  ...
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# [33m⚠️ [Data API Warning] Credentials missing. Running in local database.json mode as fallback.[0m
+# Subtest: a reprint shows the bank accounts and terms the invoice was issued with, not today's
+ok 81 - a reprint shows the bank accounts and terms the invoice was issued with, not today's
+  ---
+  duration_ms: 50.772416
+  type: 'test'
+  ...
+# Subtest: an invoice's own terms text still wins over the snapshot terms
+ok 82 - an invoice's own terms text still wins over the snapshot terms
+  ---
+  duration_ms: 17.43588
+  type: 'test'
+  ...
+# Subtest: a legacy invoice (no snapshot) prints from current settings and is labelled legacy; nothing is invented for it
+ok 83 - a legacy invoice (no snapshot) prints from current settings and is labelled legacy; nothing is invented for it
+  ---
+  duration_ms: 8.647424
+  type: 'test'
+  ...
+# Subtest: another company with no bank account is issued with none; Sunchaser's accounts are never captured
+ok 84 - another company with no bank account is issued with none; Sunchaser's accounts are never captured
+  ---
+  duration_ms: 6.960861
+  type: 'test'
+  ...
+# Subtest: the mode a process declares to the database follows the flag; a global-only job says so
+ok 85 - the mode a process declares to the database follows the flag; a global-only job says so
+  ---
+  duration_ms: 5.053907
+  type: 'test'
+  ...
+# Subtest: a multi-company process can never declare itself global-only, and a declaration needs a reason
+ok 86 - a multi-company process can never declare itself global-only, and a declaration needs a reason
+  ---
+  duration_ms: 0.6123
+  type: 'test'
+  ...
+# Subtest: the QR decodes to exactly the text it was given (invoice text, verification link, non-ASCII)
+ok 87 - the QR decodes to exactly the text it was given (invoice text, verification link, non-ASCII)
+  ---
+  duration_ms: 140.761402
+  type: 'test'
+  ...
+# Subtest: the QR is a local data: URI; no helper builds a third-party URL
+ok 88 - the QR is a local data: URI; no helper builds a third-party URL
+  ---
+  duration_ms: 8.396267
+  type: 'test'
+  ...
+# Subtest: no source file builds a QR through a third-party service
+ok 89 - no source file builds a QR through a third-party service
+  ---
+  duration_ms: 68.933388
+  type: 'test'
+  ...
+# Subtest: AutoSizer: off for another company, on for the founding company and in single-company mode
+ok 90 - AutoSizer: off for another company, on for the founding company and in single-company mode
+  ---
+  duration_ms: 0.983361
+  type: 'test'
+  ...
+# Subtest: AutoSizer API paths are founding-only, so another company gets 'not found' before any handler runs
+ok 91 - AutoSizer API paths are founding-only, so another company gets 'not found' before any handler runs
+  ---
+  duration_ms: 1.142492
+  type: 'test'
+  ...
+# Subtest: the WhatsApp inbox API is founding-only (it needs a WhatsApp connection, which only the founding company has)
+ok 92 - the WhatsApp inbox API is founding-only (it needs a WhatsApp connection, which only the founding company has)
+  ---
+  duration_ms: 0.242606
+  type: 'test'
+  ...
+# Subtest: after-sales (delivery, warranty, handover) is off for another company and on for the founding company
+ok 93 - after-sales (delivery, warranty, handover) is off for another company and on for the founding company
+  ---
+  duration_ms: 0.123512
+  type: 'test'
+  ...
+# Subtest: every after-sales API path is founding-only, so another company gets 'not found' before any handler runs
+ok 94 - every after-sales API path is founding-only, so another company gets 'not found' before any handler runs
+  ---
+  duration_ms: 0.311083
+  type: 'test'
+  ...
+# Subtest: no after-sales route registered in server.ts escapes the gate (a new route with these words must be gated or listed here)
+ok 95 - no after-sales route registered in server.ts escapes the gate (a new route with these words must be gated or listed here)
+  ---
+  duration_ms: 10.103021
+  type: 'test'
+  ...
+# Subtest: design tools (interactive proposals, Proposal Studio, Roof Studio): off for another company, on for the founding company and in single-company mode
+ok 96 - design tools (interactive proposals, Proposal Studio, Roof Studio): off for another company, on for the founding company and in single-company mode
+  ---
+  duration_ms: 0.343988
+  type: 'test'
+  ...
+# Subtest: every design-tool API path is founding-only, so another company gets 'not found' before any handler runs
+ok 97 - every design-tool API path is founding-only, so another company gets 'not found' before any handler runs
+  ---
+  duration_ms: 0.223538
+  type: 'test'
+  ...
+# Subtest: no staff route registered in server.ts or the interactive-proposal router that mentions design, roof, proposal studio or interactive proposals escapes the gate
+ok 98 - no staff route registered in server.ts or the interactive-proposal router that mentions design, roof, proposal studio or interactive proposals escapes the gate
+  ---
+  duration_ms: 3.918307
+  type: 'test'
+  ...
+# Subtest: assistants (AI widget, portal sizing wizard): off for another company, on for the founding company and in single-company mode
+ok 99 - assistants (AI widget, portal sizing wizard): off for another company, on for the founding company and in single-company mode
+  ---
+  duration_ms: 0.454845
+  type: 'test'
+  ...
+# Subtest: another company's record in the path is replaced by an id that does not exist; the query string survives
+ok 100 - another company's record in the path is replaced by an id that does not exist; the query string survives
+  ---
+  duration_ms: 1.743107
+  type: 'test'
+  ...
+# Subtest: the caller's own record and a record that does not exist are left alone
+ok 101 - the caller's own record and a record that does not exist are left alone
+  ---
+  duration_ms: 0.561211
+  type: 'test'
+  ...
+# Subtest: a foreign id named in the body or the query is replaced
+ok 102 - a foreign id named in the body or the query is replaced
+  ---
+  duration_ms: 0.919264
+  type: 'test'
+  ...
+# Subtest: two ids in one path are both checked
+ok 103 - two ids in one path are both checked
+  ---
+  duration_ms: 0.277203
+  type: 'test'
+  ...
+# Subtest: fixed words of the API are never looked up, and unrelated paths are ignored
+ok 104 - fixed words of the API are never looked up, and unrelated paths are ignored
+  ---
+  duration_ms: 2.296104
+  type: 'test'
+  ...
+# Subtest: an owner lookup that fails refuses the request (fail closed)
+ok 105 - an owner lookup that fails refuses the request (fail closed)
+  ---
+  duration_ms: 0.355069
+  type: 'test'
+  ...
+# Subtest: odd ids cannot smuggle path pieces or query syntax
+ok 106 - odd ids cannot smuggle path pieces or query syntax
+  ---
+  duration_ms: 0.163749
+  type: 'test'
+  ...
+# Subtest: every company-scoped core route family has a rule
+ok 107 - every company-scoped core route family has a rule
+  ---
+  duration_ms: 0.351887
+  type: 'test'
+  ...
+# Subtest: company input: id derived from the name, validated, never the founding company
+ok 108 - company input: id derived from the name, validated, never the founding company
+  ---
+  duration_ms: 1.162489
+  type: 'test'
+  ...
+# Subtest: limit overrides: known keys, whole numbers
+ok 109 - limit overrides: known keys, whole numbers
+  ---
+  duration_ms: 2.221769
+  type: 'test'
+  ...
+# Subtest: temporary passwords are long and different each time
+ok 110 - temporary passwords are long and different each time
+  ---
+  duration_ms: 0.343363
+  type: 'test'
+  ...
+# Subtest: company input: an explicit storage limit is required - no unlimited default, none from a blank, zero, negative, fractional or absurd value
+ok 111 - company input: an explicit storage limit is required - no unlimited default, none from a blank, zero, negative, fractional or absurd value
+  ---
+  duration_ms: 0.520852
+  type: 'test'
+  ...
+# Subtest: portal: a company's own name, phone and review link are used
+ok 112 - portal: a company's own name, phone and review link are used
+  ---
+  duration_ms: 1.08971
+  type: 'test'
+  ...
+# Subtest: portal: a company that has set nothing is shown NOTHING of Sunchaser's - no name, no phone, no review link
+ok 113 - portal: a company that has set nothing is shown NOTHING of Sunchaser's - no name, no phone, no review link
+  ---
+  duration_ms: 0.200802
+  type: 'test'
+  ...
+# Subtest: portal: Sunchaser's own customers are unchanged (name, fallback phone, review fallback)
+ok 114 - portal: Sunchaser's own customers are unchanged (name, fallback phone, review fallback)
+  ---
+  duration_ms: 0.205689
+  type: 'test'
+  ...
+# Subtest: welcome guide: another company's people read their own company's name, never Sunchaser
+ok 115 - welcome guide: another company's people read their own company's name, never Sunchaser
+  ---
+  duration_ms: 0.61763
+  type: 'test'
+  ...
+# Subtest: no Sunchaser wording remains in the enabled customer portal components (a new one must be handled or listed here)
+ok 116 - no Sunchaser wording remains in the enabled customer portal components (a new one must be handled or listed here)
+  ---
+  duration_ms: 10.987956
+  type: 'test'
+  ...
+# Subtest: bank accounts: an edit shows the field with its old and new value, matched by account number across saves (ids are regenerated)
+ok 117 - bank accounts: an edit shows the field with its old and new value, matched by account number across saves (ids are regenerated)
+  ---
+  duration_ms: 3.080792
+  type: 'test'
+  ...
+# Subtest: bank accounts: an added and a removed account are shown in full; the one-line summary names counts, never values
+ok 118 - bank accounts: an added and a removed account are shown in full; the one-line summary names counts, never values
+  ---
+  duration_ms: 0.491842
+  type: 'test'
+  ...
+# Subtest: bank accounts: reordering is reported; a changed account number is a removal plus an addition (it is a different account)
+ok 119 - bank accounts: reordering is reported; a changed account number is a removal plus an addition (it is a different account)
+  ---
+  duration_ms: 0.310797
+  type: 'test'
+  ...
+# Subtest: branding: only the fields that differ, with readable labels; embedded images are never printed
+ok 120 - branding: only the fields that differ, with readable labels; embedded images are never printed
+  ---
+  duration_ms: 0.695817
+  type: 'test'
+  ...
+# Subtest: terms: added and removed clauses; reorder only; no change
+ok 121 - terms: added and removed clauses; reorder only; no change
+  ---
+  duration_ms: 0.477548
+  type: 'test'
+  ...
+# Subtest: prices: the changed setting with its old and new value
+ok 122 - prices: the changed setting with its old and new value
+  ---
+  duration_ms: 0.150151
+  type: 'test'
+  ...
+# Subtest: the server writes the same one-line summary the screen's detail agrees with
+ok 123 - the server writes the same one-line summary the screen's detail agrees with
+  ---
+  duration_ms: 0.418934
+  type: 'test'
+  ...
+# Subtest: two processes, one database: concurrent uploads at the boundary never exceed the limit (exactly as many fit as fit)
+ok 124 - two processes, one database: concurrent uploads at the boundary never exceed the limit (exactly as many fit as fit)
+  ---
+  duration_ms: 188.661588
+  type: 'test'
+  ...
+# Subtest: NEGATIVE CONTROL - the previous design: processes that do not share the decision overshoot (this is what the shared store prevents)
+ok 125 - NEGATIVE CONTROL - the previous design: processes that do not share the decision overshoot (this is what the shared store prevents)
+  ---
+  duration_ms: 7.673716
+  type: 'test'
+  ...
+# Subtest: randomised: three processes, mixed sizes, failing writes, jitter - the stored total never exceeds the limit, and room freed by failures is used
+ok 126 - randomised: three processes, mixed sizes, failing writes, jitter - the stored total never exceeds the limit, and room freed by failures is used
+  ---
+  duration_ms: 1999.089625
+  type: 'test'
+  ...
+# Subtest: a failed write gives its bytes back at once, in every process
+ok 127 - a failed write gives its bytes back at once, in every process
+  ---
+  duration_ms: 4.518294
+  type: 'test'
+  ...
+# Subtest: an upload that finished in process A is counted by process B whose listing is older - and not counted twice once B lists again
+ok 128 - an upload that finished in process A is counted by process B whose listing is older - and not counted twice once B lists again
+  ---
+  duration_ms: 6.897455
+  type: 'test'
+  ...
+# [storage-limit] could not measure usage; the write is refused (retryable): db down
+# [storage-limit] could not reserve storage; the write is refused (retryable): saas_storage_reserve is missing
+# Subtest: a process that dies mid-upload leaves a pending reservation: it counts until it expires, then stops counting
+ok 129 - a process that dies mid-upload leaves a pending reservation: it counts until it expires, then stops counting
+  ---
+  duration_ms: 1.232507
+  type: 'test'
+  ...
+# [storage-limit] could not measure usage; the write is refused (retryable): timed out after 8000 ms
+# [storage-limit] could not commit reservation mem-1; it will expire by itself: db blip
+# Subtest: fail closed: the database cannot be reached for the mark, the reserve - retryable; a settle that fails is not fatal and keeps the bytes counted
+ok 130 - fail closed: the database cannot be reached for the mark, the reserve - retryable; a settle that fails is not fatal and keeps the bytes counted
+  ---
+  duration_ms: 8004.066441
+  type: 'test'
+  ...
+# Subtest: another company's reservations never count against this one
+ok 131 - another company's reservations never count against this one
+  ---
+  duration_ms: 0.956487
+  type: 'test'
+  ...
+# Subtest: never reserved - the founding company, no company, a zero-byte write, the flag off
+ok 132 - never reserved - the founding company, no company, a zero-byte write, the flag off
+  ---
+  duration_ms: 0.538262
+  type: 'test'
+  ...
+# Subtest: an upload counted twice (in B's fresh listing and as finished after B's mark) does not cause a false refusal: B re-measures and is admitted
+ok 133 - an upload counted twice (in B's fresh listing and as finished after B's mark) does not cause a false refusal: B re-measures and is admitted
+  ---
+  duration_ms: 7.261252
+  type: 'test'
+  ...
+# [storage-limit] could not read the limit; the write is refused (retryable): db down
+# [storage-limit] could not measure usage; the write is refused (retryable): store down
+# Subtest: grace period default and bounds
+ok 134 - grace period default and bounds
+  ---
+  duration_ms: 1.463294
+  type: 'test'
+  ...
+# Subtest: subscription states by date: ok, last day, grace, read-only, blocked, no subscription
+ok 135 - subscription states by date: ok, last day, grace, read-only, blocked, no subscription
+  ---
+  duration_ms: 0.894114
+  type: 'test'
+  ...
+# Subtest: a trial ends at its trial timestamp, which wins over the period date
+ok 136 - a trial ends at its trial timestamp, which wins over the period date
+  ---
+  duration_ms: 0.31986
+  type: 'test'
+  ...
+# Subtest: request time: past the grace period a company can read but cannot write (402 subscription_expired)
+ok 137 - request time: past the grace period a company can read but cannot write (402 subscription_expired)
+  ---
+  duration_ms: 2.267059
+  type: 'test'
+  ...
+# Subtest: request time: inside the grace period everything works and the response is marked
+ok 138 - request time: inside the grace period everything works and the response is marked
+  ---
+  duration_ms: 0.315586
+  type: 'test'
+  ...
+# Subtest: request time: a valid subscription is untouched and unmarked
+ok 139 - request time: a valid subscription is untouched and unmarked
+  ---
+  duration_ms: 0.199423
+  type: 'test'
+  ...
+# Subtest: request time: suspended subscription is blocked for reads too (403 subscription_inactive)
+ok 140 - request time: suspended subscription is blocked for reads too (403 subscription_inactive)
+  ---
+  duration_ms: 0.408461
+  type: 'test'
+  ...
+# Subtest: request time: the founding company and companies with no subscription are never limited
+ok 141 - request time: the founding company and companies with no subscription are never limited
+  ---
+  duration_ms: 0.526813
+  type: 'test'
+  ...
+# Subtest: request time: a renewal takes effect at once (the next evaluation sees the new end date)
+ok 142 - request time: a renewal takes effect at once (the next evaluation sees the new end date)
+  ---
+  duration_ms: 0.675788
+  type: 'test'
+  ...
+# Subtest: storage: the limit is checked against real usage; accepted bytes are held, committed, or given back
+ok 143 - storage: the limit is checked against real usage; accepted bytes are held, committed, or given back
+  ---
+  duration_ms: 5.507548
+  type: 'test'
+  ...
+# Subtest: storage: no limit set for a pilot company is refused (no unlimited default), with a coded, non-retryable message
+ok 144 - storage: no limit set for a pilot company is refused (no unlimited default), with a coded, non-retryable message
+  ---
+  duration_ms: 0.740229
+  type: 'test'
+  ...
+# Subtest: storage: never checked, never listed - the founding company, requests with no company, the flag off, a zero-byte write
+ok 145 - storage: never checked, never listed - the founding company, requests with no company, the flag off, a zero-byte write
+  ---
+  duration_ms: 0.499553
+  type: 'test'
+  ...
+# [storage-limit] could not measure usage; the write is refused (retryable): timed out after 30 ms
+# [storage-limit] could not measure usage; the write is refused (retryable): blip
+# Subtest: storage: FAILS CLOSED when the limit cannot be read, usage cannot be measured, or the store hangs - retryable, nothing touched
+ok 146 - storage: FAILS CLOSED when the limit cannot be read, usage cannot be measured, or the store hangs - retryable, nothing touched
+  ---
+  duration_ms: 34.722342
+  type: 'test'
+  ...
+# Subtest: storage: a store that blipped does not poison the company - the failure is retryable and the next request works
+ok 147 - storage: a store that blipped does not poison the company - the failure is retryable and the next request works
+  ---
+  duration_ms: 1.130108
+  type: 'test'
+  ...
+# Subtest: storage: files already stored are never affected - being over the limit only blocks new writes
+ok 148 - storage: files already stored are never affected - being over the limit only blocks new writes
+  ---
+  duration_ms: 0.480133
+  type: 'test'
+  ...
+# Subtest: storage: a refusal on an old figure is re-checked against a fresh listing (files deleted since are not counted)
+ok 149 - storage: a refusal on an old figure is re-checked against a fresh listing (files deleted since are not counted)
+  ---
+  duration_ms: 0.845864
+  type: 'test'
+  ...
+# Subtest: storage: CONCURRENT uploads at the boundary - exactly as many are accepted as fit, never more, whatever the timing
+ok 150 - storage: CONCURRENT uploads at the boundary - exactly as many are accepted as fit, never more, whatever the timing
+  ---
+  duration_ms: 74.788314
+  type: 'test'
+  ...
+# Subtest: storage: concurrent uploads of different sizes never exceed the limit in total; failed writes free their room
+ok 151 - storage: concurrent uploads of different sizes never exceed the limit in total; failed writes free their room
+  ---
+  duration_ms: 4.5869
+  type: 'test'
+  ...
+# Subtest: storage: another company's usage never counts against this one
+ok 152 - storage: another company's usage never counts against this one
+  ---
+  duration_ms: 0.633885
+  type: 'test'
+  ...
+# Subtest: cleanup
+ok 153 - cleanup
+  ---
+  duration_ms: 0.101333
+  type: 'test'
+  ...
+# Subtest: every table in tracked SQL has a tenancy class
+ok 154 - every table in tracked SQL has a tenancy class
+  ---
+  duration_ms: 8.392021
+  type: 'test'
+  ...
+# Subtest: classification has no stale entries except tables known only from code
+ok 155 - classification has no stale entries except tables known only from code
+  ---
+  duration_ms: 7.231046
+  type: 'test'
+  ...
+# Subtest: every class used is defined
+ok 156 - every class used is defined
+  ---
+  duration_ms: 0.411078
+  type: 'test'
+  ...
+# Subtest: tables with no tenant access are explicitly Sunchaser-only or dormant
+ok 157 - tables with no tenant access are explicitly Sunchaser-only or dormant
+  ---
+  duration_ms: 0.438767
+  type: 'test'
+  ...
+# Subtest: closed until the first answer; an unarmed guard (tests, scripts) lets everything through
+ok 158 - closed until the first answer; an unarmed guard (tests, scripts) lets everything through
+  ---
+  duration_ms: 1.573572
+  type: 'test'
+  ...
+# Subtest: another company exists => paused, with a 503 body on data routes; the allow-list stays reachable
+ok 159 - another company exists => paused, with a 503 body on data routes; the allow-list stays reachable
+  ---
+  duration_ms: 0.546364
+  type: 'test'
+  ...
+# Subtest: only the founding company, or no company tables at all => serving
+ok 160 - only the founding company, or no company tables at all => serving
+  ---
+  duration_ms: 0.314467
+  type: 'test'
+  ...
+# Subtest: FAIL CLOSED: a probe that throws, hangs, or a stale answer pauses serving - it never falls back to open
+ok 161 - FAIL CLOSED: a probe that throws, hangs, or a stale answer pauses serving - it never falls back to open
+  ---
+  duration_ms: 51.287007
+  type: 'test'
+  ...
+# Subtest: it recovers by itself when the other companies' data is removed, and a flag-on process is not affected
+ok 162 - it recovers by itself when the other companies' data is removed, and a flag-on process is not affected
+  ---
+  duration_ms: 0.784663
+  type: 'test'
+  ...
+# Subtest: the persistent marker pauses a flag-off process even when no company row exists and no tenant row is left
+ok 163 - the persistent marker pauses a flag-off process even when no company row exists and no tenant row is left
+  ---
+  duration_ms: 0.601986
+  type: 'test'
+  ...
+# Subtest: deleting the companies row does not lift it: rows of another company found by the deep check keep the process paused until a later deep check says otherwise
+ok 164 - deleting the companies row does not lift it: rows of another company found by the deep check keep the process paused until a later deep check says otherwise
+  ---
+  duration_ms: 1.969322
+  type: 'test'
+  ...
+# Subtest: after the operator clears the marker (which refuses while other rows exist) the remembered deep 'yes' is re-asked at once, not after the next scheduled deep check
+ok 165 - after the operator clears the marker (which refuses while other rows exist) the remembered deep 'yes' is re-asked at once, not after the next scheduled deep check
+  ---
+  duration_ms: 0.359119
+  type: 'test'
+  ...
+# Subtest: the reason follows the facts within one check: rows removed while the marker is still on => tenancy_marker, not a stale tenant_data_present
+ok 166 - the reason follows the facts within one check: rows removed while the marker is still on => tenancy_marker, not a stale tenant_data_present
+  ---
+  duration_ms: 0.525866
+  type: 'test'
+  ...
+# Subtest: a company's objects live under its own prefix; the founding company's keys are unchanged
+ok 167 - a company's objects live under its own prefix; the founding company's keys are unchanged
+  ---
+  duration_ms: 1.376158
+  type: 'test'
+  ...
+# Subtest: the company of a key is read from the key
+ok 168 - the company of a key is read from the key
+  ---
+  duration_ms: 0.141922
+  type: 'test'
+  ...
+# Subtest: multi-company links expire; the signature covers the expiry
+ok 169 - multi-company links expire; the signature covers the expiry
+  ---
+  duration_ms: 1.28315
+  type: 'test'
+  ...
+# Subtest: an expired link is refused with its own reason
+ok 170 - an expired link is refused with its own reason
+  ---
+  duration_ms: 1.50696
+  type: 'test'
+  ...
+# Subtest: a signature is valid for one object only
+ok 171 - a signature is valid for one object only
+  ---
+  duration_ms: 0.413777
+  type: 'test'
+  ...
+# Subtest: old permanent links: never for another company's key; for the founding company's own keys unless switched off
+ok 172 - old permanent links: never for another company's key; for the founding company's own keys unless switched off
+  ---
+  duration_ms: 0.546806
+  type: 'test'
+  ...
+# Subtest: without multi-company mode links stay permanent and unchanged
+ok 173 - without multi-company mode links stay permanent and unchanged
+  ---
+  duration_ms: 0.330674
+  type: 'test'
+  ...
+# Subtest: a caller acting for one company cannot write into another company's key space
+ok 174 - a caller acting for one company cannot write into another company's key space
+  ---
+  duration_ms: 1.387429
+  type: 'test'
+  ...
+# Subtest: a document row may only point into the caller's own folder and key space
+ok 175 - a document row may only point into the caller's own folder and key space
+  ---
+  duration_ms: 0.956785
+  type: 'test'
+  ...
+1..175
+# tests 175
+# suites 0
+# pass 175
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 14241.856348

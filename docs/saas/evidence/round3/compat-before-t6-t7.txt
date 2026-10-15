@@ -1,0 +1,11 @@
+PASS: t6 and t7 are rolled back (no snapshot column, no history table, no storage-limit column)
+PASS: an invoice is still created (201); it simply has no snapshot (a legacy invoice)
+PASS: it prints, labelled legacy (200, legacy_current_settings)
+PASS: settings still save, and the response says no history row was written (200, auditRecorded false)
+PASS: the history endpoint answers "not available" instead of failing (200)
+PASS: the operator overview still loads (200)
+PASS: uploads still work with no storage limit column (201)
+PASS: other writes are unaffected (201)
+PASS: t6 and t7 are applied again
+
+9 passed, 0 failed

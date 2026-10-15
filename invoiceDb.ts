@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { captureInvoiceIssuanceSnapshot } from "./invoicePdfResolve.ts";
 import {
   getSupabase,
   isSupabaseActive,
@@ -101,6 +103,21 @@ export function isMissingInvoiceOwnerColumn(err: unknown): boolean {
   );
 }
 
+function parseIssuanceSnapshot(raw: unknown): InvoiceRecord["issuanceSnapshot"] {
+  let v: any = raw;
+  if (typeof v === "string") {
+    try { v = JSON.parse(v); } catch { return null; }
+  }
+  return v && typeof v === "object" && Array.isArray(v.bankAccounts) && typeof v.companyTerms === "string" ? (v as InvoiceRecord["issuanceSnapshot"]) : null;
+}
+
+/** True when the database rejected the insert only because invoices.issuance_snapshot (migration t6) is not installed yet. */
+export function isMissingIssuanceSnapshotColumn(err: unknown): boolean {
+  const candidate = err as { code?: unknown; message?: unknown } | null;
+  const message = String(candidate?.message || "").toLowerCase();
+  return (candidate?.code === "PGRST204" || candidate?.code === "42703") && message.includes("issuance_snapshot");
+}
+
 function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] = []): InvoiceRecord {
   return {
     id: row.id,
@@ -135,6 +152,7 @@ function mapInvoiceRow(row: any, items: InvoiceLineItem[] = [], payments: any[] 
     notes: row.notes || null,
     terms: row.terms || null,
     pdfUrl: row.pdf_url || row.pdfUrl || null,
+    issuanceSnapshot: parseIssuanceSnapshot(row.issuance_snapshot ?? row.issuanceSnapshot),
     items,
     payments,
     createdBy: row.created_by || row.createdBy,
@@ -267,11 +285,30 @@ function toRequestActor(userId: string, username: string, role: string): Request
   };
 }
 
+function isMissingDbFunction(error: { message?: string; code?: string } | null | undefined): boolean {
+  const message = String(error?.message || "");
+  const code = String(error?.code || "");
+  return code === "PGRST202" || code === "42883" || /could not find the function/i.test(message);
+}
+
+/**
+ * Next invoice number for the calling company. With the numbering migration (scripts/saas/phase2c-document-numbering.sql) the number
+ * comes from a per-company counter advanced atomically in the database: two requests never get the same number and a deleted or
+ * archived invoice never frees its number. Without the migration the previous count-based numbering is used (single-company only).
+ */
 async function nextInvoiceNumber(localDb?: Database): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = `INV-${year}-`;
   let count = 0;
   if (isSupabaseActive()) {
+    const rpc = await getSupabase()!.rpc("next_document_number", { p_kind: "invoice", p_prefix: "INV", p_period: String(year), p_width: 4 });
+    if (!rpc.error && typeof rpc.data === "string" && rpc.data) return rpc.data;
+    // Only "the function is not installed" may fall back; any other failure (no company, permission, database down) must not
+    // silently number from a different source.
+    if (rpc.error && !isMissingDbFunction(rpc.error)) {
+      console.error(`[Invoice] next_document_number failed: ${rpc.error.code} ${rpc.error.message}`);
+      throw new InvoiceDbError("The next invoice number could not be reserved. Nothing was saved; please try again.", 503, "INVOICE_NUMBER_UNAVAILABLE");
+    }
     const { count: c, error } = await getSupabase()!
       .from("invoices")
       .select("id", { count: "exact", head: true })
@@ -301,7 +338,7 @@ async function loadItems(invoiceId: string, localDb?: Database): Promise<Invoice
 
 function toInvoiceItemRow(invoiceId: string, it: InvoiceLineItem, idx: number) {
   return {
-    id: it.id || `item-${Date.now()}-${idx}`,
+    id: it.id || `item-${Date.now()}-${idx}-${randomUUID().replace(/-/g, "").slice(0, 12)}`,
     invoice_id: invoiceId,
     sort_order: idx,
     item_name: it.itemName || it.description,
@@ -637,7 +674,8 @@ export async function createAdminInvoice(
 
   await assertInvoiceStaff(actor, localDb);
   const username = actor.username;
-  const id = `inv-${Date.now()}`;
+  // Unique even for two invoices built in the same millisecond (two contracts at once): a clock alone collided on the primary key.
+  const id = `inv-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const invoiceNumber = String(body.invoiceNumber || "") || (await nextInvoiceNumber(localDb));
   const rawItems = (body.items as InvoiceLineItem[]) || [];
   const totals = computeInvoiceTotals(
@@ -719,7 +757,7 @@ export async function createAdminInvoice(
   };
 
   const itemRows = totals.items.map((it, idx) => ({
-    id: it.id || `item-${Date.now()}-${idx}`,
+    id: it.id || `item-${Date.now()}-${idx}-${randomUUID().replace(/-/g, "").slice(0, 12)}`,
     invoice_id: id,
     sort_order: idx,
     item_name: it.itemName || it.description,
@@ -735,12 +773,25 @@ export async function createAdminInvoice(
   }));
 
   if (isSupabaseActive()) {
-    let { error } = await getSupabase()!.from("invoices").insert(row);
+    // Keep the bank accounts and company terms this invoice is issued with. If they cannot be read, or the column is not installed yet,
+    // the invoice is still created, without a snapshot (a legacy invoice): issuing an invoice never depends on this.
+    let insertRow: Record<string, unknown> = row;
+    try {
+      insertRow = { ...row, issuance_snapshot: await captureInvoiceIssuanceSnapshot(localDb) };
+    } catch (err: any) {
+      console.warn("[InvoiceIssuanceSnapshot] not captured:", err?.message || err);
+    }
+    let { error } = await getSupabase()!.from("invoices").insert(insertRow);
+    if (error && "issuance_snapshot" in insertRow && isMissingIssuanceSnapshotColumn(error)) {
+      const { issuance_snapshot: _s, ...withoutSnapshot } = insertRow;
+      insertRow = withoutSnapshot;
+      ({ error } = await getSupabase()!.from("invoices").insert(insertRow));
+    }
     if (error && actor.role === "Super Admin" && isMissingInvoiceOwnerColumn(error)) {
       // Some production installations predate the durable finance-owner column.
       // Preserve the legacy username owner for Super Admin operations so historical
       // data can be imported; scoped staff creates still require the durable column.
-      const { created_by_user_id: _ownerUserId, ...legacyCompatibleRow } = row;
+      const { created_by_user_id: _ownerUserId, ...legacyCompatibleRow } = insertRow;
       ({ error } = await getSupabase()!.from("invoices").insert(legacyCompatibleRow));
     }
     if (error) throw error;
@@ -808,7 +859,7 @@ async function saveInvoiceAtomically(
   if (!error) return "saved";
   const message = String(error.message || "");
   const code = String(error.code || "");
-  if (code === "PGRST202" || code === "42883" || /could not find the function/i.test(message)) return "unavailable";
+  if (isMissingDbFunction(error)) return "unavailable";
   if (message.startsWith("invoice_conflict")) {
     throw new InvoiceDbError("This invoice was changed by someone else after you opened it. Nothing was saved; reload the invoice and apply your change again.", 409, "INVOICE_CONFLICT");
   }

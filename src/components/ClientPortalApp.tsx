@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import { afterSalesEnabled } from "../lib/workspaceModules";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
 import {
   CreditCard,
   FileText,
@@ -9,10 +10,11 @@ import {
 } from "lucide-react";
 import { User as UserType } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
-import { DEFAULT_BRANDING, type CompanyBranding } from "../lib/branding";
+import { DEFAULT_BRANDING, NEUTRAL_BRANDING, type CompanyBranding } from "../lib/branding";
+import { assistantsEnabled, getPlatformInfo, setWorkspaceNeutral, subscribeWorkspace, workspaceIsNeutral, workspaceVersion } from "../lib/workspaceModules";
 import { withOfficialBranding } from "../lib/brandingAssets";
-import { CUSTOMER_PORTAL_VERSION, portal } from "../lib/clientPortalUi";
-import { fetchCompanyBranding } from "../services/api";
+import { CUSTOMER_PORTAL_VERSION, isNeutralPortal, portal } from "../lib/clientPortalUi";
+import { fetchPortalBranding } from "../services/api";
 import { displayOrNoData } from "../lib/clientPortalDisplay";
 import { projectStatusHeadline } from "../lib/clientPortalCompletion";
 import ClientPortalHome from "./ClientPortalHome";
@@ -65,7 +67,7 @@ const SERVICE_TITLES: Record<PortalServiceId, { title: string; subtitle?: string
   care: { title: "Care plans", subtitle: "Protection options" },
 };
 
-function renderServiceModule(id: PortalServiceId, user: UserType) {
+function renderServiceModule(id: PortalServiceId, user: UserType, branding?: CompanyBranding | null) {
   switch (id) {
     case "system":
       return <ClientPortalSystem user={user} />;
@@ -78,7 +80,7 @@ function renderServiceModule(id: PortalServiceId, user: UserType) {
     case "savings":
       return <ClientPortalSavings user={user} />;
     case "energy":
-      return <ClientPortalEnergyMonitor user={user} />;
+      return <ClientPortalEnergyMonitor user={user} branding={branding} />;
     case "care":
       return <ClientPortalCare user={user} />;
     default:
@@ -99,12 +101,21 @@ export default function ClientPortalApp({
   const [accountScreen, setAccountScreen] = useState<AccountScreen>("menu");
   const [homeService, setHomeService] = useState<PortalServiceId | null>(null);
   const [showOptionalWizard, setShowOptionalWizard] = useState(false);
-  const [branding, setBranding] = useState<CompanyBranding>(DEFAULT_BRANDING);
+  // Nothing is drawn until the company's own branding is known: a customer of another company must never see Sunchaser's name, logo or
+  // phone number, not even for a moment or when the branding cannot be loaded.
+  useSyncExternalStore(subscribeWorkspace, workspaceVersion, workspaceVersion); // re-render when the portal learns which modules this company has
+  const [loadedBranding, setBranding] = useState<CompanyBranding | null>(null);
+  const branding = loadedBranding ?? NEUTRAL_BRANDING;
 
   useEffect(() => {
-    fetchCompanyBranding()
-      .then((b) => setBranding(withOfficialBranding(b)))
-      .catch(() => setBranding(withOfficialBranding(DEFAULT_BRANDING)));
+    fetchPortalBranding()
+      // null = single-company mode: the portal keeps its existing (Sunchaser) look, exactly as before
+      .then((b) => { const own = withOfficialBranding(b ?? DEFAULT_BRANDING); setWorkspaceNeutral(isNeutralPortal(own)); setBranding(own); })
+      .catch(() => {
+        // Could not load: in multi-company mode show nothing of anyone's; in single-company mode keep the existing Sunchaser portal.
+        const multi = workspaceIsNeutral() || getPlatformInfo()?.multiCompany === true;
+        setBranding(withOfficialBranding(multi ? NEUTRAL_BRANDING : DEFAULT_BRANDING));
+      });
   }, []);
 
   const selectMainTab = (tab: MainTab) => {
@@ -123,7 +134,11 @@ export default function ClientPortalApp({
   const projectStatus = data?.dashboard?.projectStatus || projectStatusHeadline(data);
   const profilePending = isClientProfilePending(data) || (!loading && !error && !data?.customer?.id);
 
-  if (showOptionalWizard) {
+  if (!loadedBranding) {
+    return <div className={portal.shell} data-testid="portal-loading" aria-busy="true" />;
+  }
+
+  if (showOptionalWizard && assistantsEnabled()) {
     return (
       <div className="min-h-screen bg-slate-950 px-4 py-6">
         <SolarConsultantWizard onBackToLanding={() => setShowOptionalWizard(false)} />
@@ -138,7 +153,7 @@ export default function ClientPortalApp({
     if (accountScreen !== "menu" && meta) {
       return (
         <PortalScreen title={meta.title} subtitle={meta.subtitle} onBack={back}>
-          {renderServiceModule(accountScreen as PortalServiceId, user)}
+          {renderServiceModule(accountScreen as PortalServiceId, user, branding)}
         </PortalScreen>
       );
     }
@@ -151,6 +166,7 @@ export default function ClientPortalApp({
         onRefresh={onRefresh}
         onLogout={onLogout}
         onShowWelcomeGuide={onShowWelcomeGuide}
+        branding={branding}
       />
     );
   };
@@ -161,7 +177,7 @@ export default function ClientPortalApp({
         const meta = SERVICE_TITLES[homeService];
         return (
           <PortalScreen title={meta.title} subtitle={meta.subtitle} onBack={() => setHomeService(null)}>
-            {renderServiceModule(homeService, user)}
+            {renderServiceModule(homeService, user, branding)}
           </PortalScreen>
         );
       }
@@ -185,9 +201,9 @@ export default function ClientPortalApp({
             <button type="button" onClick={onRefresh} className={portal.btnPrimary}>
               Try again
             </button>
-            <button type="button" onClick={() => setShowOptionalWizard(true)} className={portal.btnGhost}>
+            {assistantsEnabled() && <button type="button" onClick={() => setShowOptionalWizard(true)} className={portal.btnGhost}>
               Optional solar sizing wizard
-            </button>
+            </button>}
           </div>
         );
       }
@@ -199,9 +215,9 @@ export default function ClientPortalApp({
               <p className="text-sm text-slate-400">
                 You can use the client portal now. Proposals, invoices, and warranties appear once this login is linked to your project.
               </p>
-              <button type="button" onClick={() => setShowOptionalWizard(true)} className={portal.btnPrimary}>
+              {assistantsEnabled() && <button type="button" onClick={() => setShowOptionalWizard(true)} className={portal.btnPrimary}>
                 Optional solar sizing wizard
-              </button>
+              </button>}
             </div>
             <ClientPortalHome
               user={user}
@@ -233,6 +249,7 @@ export default function ClientPortalApp({
         <PortalScreen title="Proposals & documents" subtitle="Quotations, agreements, warranties, and certificates">
           <div className="space-y-8">
             <ClientPortalDocuments user={user} />
+            {afterSalesEnabled() && (
             <section className={portal.divider + " pt-6 space-y-4"}>
               <div>
                 <h3 className="text-base font-semibold text-white">Material Deliveries</h3>
@@ -240,6 +257,7 @@ export default function ClientPortalApp({
               </div>
               <ClientPortalDeliveries user={user} />
             </section>
+            )}
           </div>
         </PortalScreen>
       );
@@ -292,7 +310,7 @@ export default function ClientPortalApp({
       >
         {CUSTOMER_PORTAL_VERSION}
       </p>
-      <div className="px-4 pb-2">
+      {assistantsEnabled() && <div className="px-4 pb-2">
         <button
           type="button"
           onClick={() => setShowOptionalWizard(true)}
@@ -300,7 +318,7 @@ export default function ClientPortalApp({
         >
           Optional solar sizing wizard
         </button>
-      </div>
+      </div>}
 
       <nav className={portal.nav} aria-label="Main navigation">
         <div className={portal.navInner}>

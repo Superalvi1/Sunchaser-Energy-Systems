@@ -1,0 +1,74 @@
+== database t_ci_stack
+Seeded 5 synthetic founding-company users.
+== PostgREST (binary)
+== object store
+== application on :3199
+stack up: PostgreSQL 17.11, PostgREST (binary), app on :3199
+-- two-company-api
+two-company-api: pass (52 passed, 0 failed)
+-- two-company-complete
+two-company-complete: pass (79 passed, 0 failed)
+-- company-settings
+company-settings: pass (57 passed, 0 failed)
+-- pdf-render
+pdf-render: pass (62 passed, 0 failed)
+-- platform-onboarding
+platform-onboarding: pass (42 passed, 0 failed)
+-- pilot-round3
+pilot-round3: pass (80 passed, 0 failed)
+-- disabled-modules
+disabled-modules: pass (17 passed, 0 failed)
+-- storage-quota
+storage-quota: pass (47 passed, 0 failed)
+-- concurrent-contracts
+concurrent-contracts: pass (6 passed, 0 failed)
+-- company-restore
+company-restore: pass (45 passed, 0 failed)
+-- compat-before-t6-t7
+compat-before-t6-t7: pass (9 passed, 0 failed)
+-- browser-company-ui
+browser-company-ui: pass (14 passed, 0 failed)
+-- browser-pilot-round4
+browser-pilot-round4: pass (77 passed, 0 failed)
+-- browser-pilot-round3
+browser-pilot-round3: pass (19 passed, 0 failed)
+-- single-company-smoke (flag off)
+single-company-smoke: pass (12 passed, 0 failed)
+-- flag-off-round3 (flag off)
+flag-off-round3: pass (18 passed, 0 failed)
+
+All journeys passed.
+## Pilot journeys
+
+Stack: PostgreSQL 17.11, PostgREST (`binary`), built SPA + server bundle, MULTI_COMPANY_ENABLED=true.
+
+| Journey | Result | Seconds | What it proves |
+|---|---|---|---|
+| `two-company-api` | pass — 52 passed, 0 failed | 16 | two companies run lead to quotation to invoice to payment; every cross-company read, write and PDF attempt is refused |
+| `two-company-complete` | pass — 79 passed, 0 failed | 4 | whole flow for two companies at the same time, attacks on each other's records, PDFs and files, canary sweep, database integrity |
+| `company-settings` | pass — 57 passed, 0 failed | 3 | per-company branding, bank accounts, terms and prices; quotations keep the settings they were saved with |
+| `pdf-render` | pass — 62 passed, 0 failed | 22 | real Chromium PDFs per company, read back as bytes (text, logo, amounts), no other company or Sunchaser identity |
+| `platform-onboarding` | pass — 42 passed, 0 failed | 14 | operator onboarding, manual subscriptions, enforced plan limits, operator audit trail |
+| `pilot-round3` | pass — 80 passed, 0 failed | 51 | invoice issuance snapshot and legacy label, local QR, AutoSizer and after-sales refused, subscription expiry at request time, storage limit, settings permissions and history |
+| `disabled-modules` | pass — 17 passed, 0 failed | 3 | every disabled module (AutoSizer, after-sales, WhatsApp inbox, design tools, AI) answers 404 to the real pilot users - administrators, sales, portal customers - before any handler runs |
+| `storage-quota` | pass — 47 passed, 0 failed | 61 | storage limit: concurrent uploads at the boundary, every upload route, usage that cannot be verified (fail closed, retryable), no limit set |
+| `concurrent-contracts` | pass — 6 passed, 0 failed | 7 | 72 contracts of two companies at the same instant: every one succeeds and provisions its own invoice (row ids no longer collide on the clock; found by the restore journey) |
+| `company-restore` | pass — 45 passed, 0 failed | 16 | company restore leaves every other company and the founding company byte-identical |
+| `compat-before-t6-t7` | pass — 9 passed, 0 failed | 8 | deploy order: the new backend keeps working on a database where migrations t6 and t7 are not applied yet (they are rolled back, checked, re-applied) |
+| `browser-company-ui` | pass — 14 passed, 0 failed | 25 | company selection and Switch company in a real browser |
+| `browser-pilot-round4` | pass — 77 passed, 0 failed | 57 | settings screen: bank account edit and delete with confirmation, history with the values before and after, a non-administrator read-only; customer portal and welcome guide with and without logo/phone/review link (no Sunchaser identity); unfinished modules not offered |
+| `browser-pilot-round3` | pass — 19 passed, 0 failed | 13 | Sunchaser Sync on sign-in and company selection, company branding in the workspace, settings screen and history, hidden modules, founding company unchanged |
+| `single-company-smoke` | pass — 12 passed, 0 failed | 1 | flag off (single-company mode) on the migrated database: login, lead, quotation, contract, invoice, payment, PDF as before; no company fields in any response |
+| `flag-off-round3` | pass — 18 passed, 0 failed | 1 | flag off: no module flags, no identity mark, AutoSizer, after-sales, WhatsApp inbox and design tools all available as before, Sunchaser sign-in kept, uploads unmetered |
+All journeys passed.
+scripts/saas/ci/run-pilot-journeys.sh: line 32: 19639 Killed                  ( export NODE_ENV=production PORT="$port" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000; export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY"; if [ "$multi" = true ]; then
+    export CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" MULTI_COMPANY_ENABLED=true;
+else
+    unset CRM_TENANT_POSTGREST_KEY MULTI_COMPANY_ENABLED;
+fi; export JWT_SECRET="$JWT_SECRET_VALUE" RAILWAY_OBJECT_PROXY_SECRET; export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto; export NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem" NO_PROXY='*' no_proxy='*'; unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY; export STORAGE_USAGE_CACHE_MS=2000 STORAGE_LIMIT_CACHE_MS=2000; export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001; export WHATSAPP_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"; export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false; exec node dist/server.cjs ) > "$log" 2>&1
+scripts/saas/ci/run-pilot-journeys.sh: line 32: 22414 Killed                  ( export NODE_ENV=production PORT="$port" JWT_EXPIRES_IN=8h LOGIN_RATE_LIMIT_MAX=5000; export RAILWAY_POSTGREST_URL="http://127.0.0.1:$PGRST_PORT" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_KEY"; if [ "$multi" = true ]; then
+    export CRM_TENANT_POSTGREST_KEY="$TENANT_KEY" MULTI_COMPANY_ENABLED=true;
+else
+    unset CRM_TENANT_POSTGREST_KEY MULTI_COMPANY_ENABLED;
+fi; export JWT_SECRET="$JWT_SECRET_VALUE" RAILWAY_OBJECT_PROXY_SECRET; export RAILWAY_S3_ENDPOINT="https://s3.local:$S3_PORT" RAILWAY_S3_BUCKET=testbucket RAILWAY_S3_ACCESS_KEY_ID=test RAILWAY_S3_SECRET_ACCESS_KEY=test RAILWAY_S3_REGION=auto; export NODE_EXTRA_CA_CERTS="$WORK/s3/cert.pem" NO_PROXY='*' no_proxy='*'; unset https_proxy HTTPS_PROXY http_proxy HTTP_PROXY; export STORAGE_USAGE_CACHE_MS=2000 STORAGE_LIMIT_CACHE_MS=2000; export WHATSAPP_CONVERSATIONS_ENABLED=true WHATSAPP_APP_SECRET="$(openssl rand -hex 24)" WHATSAPP_WEBHOOK_VERIFY_TOKEN="$(openssl rand -hex 12)" WHATSAPP_PHONE_NUMBER_ID=100000000000001; export WHATSAPP_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"; export WHATSAPP_AI_AUTO_REPLY_ENABLED=false WHATSAPP_AI_QUERY_DRAFT_ENABLED=false WHATSAPP_AI_LIVE_PROVIDER_ENABLED=false MARKETPLACE_ENABLED=false UNIFIED_MESSAGING_POSTGRES_ENABLED=false; exec node dist/server.cjs ) > "$log" 2>&1
+EXIT 0

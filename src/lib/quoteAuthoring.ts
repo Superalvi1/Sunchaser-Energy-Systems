@@ -79,6 +79,24 @@ export const DEFAULT_CONTENT_LIBRARY: ContentLibraryBlock[] = [
   },
 ];
 
+/**
+ * What another company's editor offers instead. The five blocks above make claims about Sunchaser (its group companies, its import
+ * authorisation, its structures, its utility coordination), so a company other than Sunchaser gets only a heading and writes its own
+ * text. Solar Benefits states general facts and is shared. Chosen with setAuthoringIdentityNeutral(), set from the boot payload.
+ */
+export const NEUTRAL_CONTENT_LIBRARY: ContentLibraryBlock[] = DEFAULT_CONTENT_LIBRARY.map((b) =>
+  b.id === "solar_benefits" ? b : { ...b, html: `<h2>${b.name}</h2><p></p>` }
+);
+
+let authoringNeutral = false;
+export function setAuthoringIdentityNeutral(neutral: boolean): void {
+  authoringNeutral = neutral === true;
+}
+/** The built-in blocks for the signed-in company. */
+export function builtInContentLibrary(neutral: boolean = authoringNeutral): ContentLibraryBlock[] {
+  return neutral ? NEUTRAL_CONTENT_LIBRARY : DEFAULT_CONTENT_LIBRARY;
+}
+
 const ALLOWED_TAGS =
   /^(p|h1|h2|h3|h4|strong|b|em|i|u|ul|ol|li|table|thead|tbody|tr|th|td|img|hr|div|span|br)$/i;
 
@@ -268,7 +286,7 @@ export function getDefaultBodyHtmlForPageType(type: AuthoringPageType): string {
             : type === "warranty"
               ? "solar_benefits"
               : "";
-  const block = DEFAULT_CONTENT_LIBRARY.find((b) => b.id === blockId);
+  const block = builtInContentLibrary().find((b) => b.id === blockId);
   return block?.html || "";
 }
 
@@ -484,7 +502,7 @@ export function mergeContentLibrary(
   stored: ContentLibraryBlock[] | null | undefined
 ): ContentLibraryBlock[] {
   const byId = new Map<string, ContentLibraryBlock>();
-  DEFAULT_CONTENT_LIBRARY.forEach((b) => byId.set(b.id, b));
+  builtInContentLibrary().forEach((b) => byId.set(b.id, b));
   (stored || []).forEach((b) => {
     if (b?.id && b?.name) byId.set(b.id, { ...byId.get(b.id), ...b });
   });

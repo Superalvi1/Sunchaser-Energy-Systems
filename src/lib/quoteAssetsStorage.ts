@@ -3,6 +3,7 @@ import path from "path";
 import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
 import {
   buildRailwayObjectProxyUrl,
+  scopeObjectKey,
   deleteRailwayObject,
   isRailwayObjectStorageConfigured,
   putRailwayObject,
@@ -71,7 +72,7 @@ export async function uploadQuoteWatermarkAsset(
   settingsId = "settings-1"
 ): Promise<{ globalWatermarkFile: string; publicUrl: string }> {
   const safeId = String(settingsId || "settings-1").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const storagePath = `watermarks/${safeId}-${Date.now()}.${extension}`;
+  const storagePath = scopeObjectKey(`watermarks/${safeId}-${Date.now()}.${extension}`);
 
   if (isRailwayObjectStorageConfigured()) {
     await putRailwayObject("quote-assets", storagePath, buffer, contentType);

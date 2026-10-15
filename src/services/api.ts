@@ -1,3 +1,5 @@
+import { getPlatformInfo, setPlatformInfo, setWorkspaceBrand, setWorkspaceModules, setWorkspaceNeutral } from "../lib/workspaceModules";
+import { setAuthoringIdentityNeutral } from "../lib/quoteAuthoring";
 import { Lead, Ticket, AppState, Quote, User, Product } from "../types";
 import {
   CONNECTION_ERROR_MESSAGE,
@@ -64,10 +66,30 @@ export function updateStoredUser(user: User): void {
   localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
 }
 
+const COMPANIES_KEY = "sunchaser_companies";
+const COMPANY_ID_KEY = "sunchaser_company_id";
+export type LoginCompany = { id: string; name: string; role: string };
+
+export function getStoredCompanies(): LoginCompany[] {
+  if (typeof localStorage === "undefined") return [];
+  try { const v = JSON.parse(localStorage.getItem(COMPANIES_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+export function getStoredCompanyId(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  return localStorage.getItem(COMPANY_ID_KEY);
+}
+function persistCompanies(companies: LoginCompany[] | undefined, companyId?: string | null): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(COMPANIES_KEY, JSON.stringify(companies || []));
+  if (companyId) localStorage.setItem(COMPANY_ID_KEY, companyId); else localStorage.removeItem(COMPANY_ID_KEY);
+}
+
 export function clearAuthSession(): void {
   if (typeof localStorage === "undefined") return;
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(COMPANIES_KEY);
+  localStorage.removeItem(COMPANY_ID_KEY);
 }
 
 export function withAuthHeaders(init?: RequestInit): RequestInit {
@@ -160,6 +182,14 @@ export async function fetchWithTimeout(
   }
 }
 
+/** The module flags and "another company" flag the server sent (boot payload of staff, portal payload of customers). Absent in single-company mode. */
+function applyWorkspaceFlags(payload: any): void {
+  const neutral = payload?.documentIdentity?.neutral === true;
+  setWorkspaceModules(payload?.modules);
+  setAuthoringIdentityNeutral(neutral);
+  setWorkspaceNeutral(neutral);
+}
+
 export async function fetchAppState(): Promise<AppState> {
   const url = `${API_BASE_URL}/api/state`;
   try {
@@ -169,7 +199,10 @@ export async function fetchAppState(): Promise<AppState> {
       logApiFailure("fetchAppState", url, res.status, body);
       throw new Error(CONNECTION_ERROR_MESSAGE);
     }
-    return res.json();
+    const state = await res.json();
+    applyWorkspaceFlags(state);
+    if (state?.modules) void refreshWorkspaceBrand(); // multi-company: the workspace carries the company's own name and logo
+    return state;
   } catch (err) {
     if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
     logApiFailure("fetchAppState", url, null, {}, err);
@@ -236,7 +269,9 @@ export async function fetchCustomerPortalMe(
       }
       throw new Error(CONNECTION_ERROR_MESSAGE);
     }
-    return res.json();
+    const payload = await res.json();
+    applyWorkspaceFlags(payload); // a customer of another company gets that company's modules and no Sunchaser identity
+    return payload;
   } catch (err) {
     if (err instanceof Error && err.message === CONNECTION_ERROR_MESSAGE) throw err;
     logApiFailure("fetchCustomerPortalMe", url, null, {}, err);
@@ -1440,7 +1475,7 @@ export async function signOutEverywhere(): Promise<void> {
 
 export async function loginUser(
   body: { username: string; password?: string }
-): Promise<{ success: boolean; user: User; token?: string }> {
+): Promise<{ success: boolean; user: User; token?: string; companies?: LoginCompany[]; companyId?: string }> {
   const url = `${API_BASE_URL}/api/auth/login`;
   const payload = { username: body.username, password: body.password };
   console.log("Login URL:", url);
@@ -1474,14 +1509,38 @@ export async function loginUser(
     console.log("Login success for user:", parsed.user?.username, parsed.user?.role);
     if (parsed.user && parsed.token) {
       persistAuthSession(parsed.user, parsed.token);
+      // Multi-company servers also say which companies the user can act for (and which one the session is bound to, if only one).
+      const multi = parsed as { companies?: LoginCompany[]; companyId?: string };
+      persistCompanies(multi.companies, multi.companyId);
     }
-    return parsed as { success: boolean; user: User; token?: string };
+    return parsed as { success: boolean; user: User; token?: string; companies?: LoginCompany[]; companyId?: string };
   } catch (err) {
     console.error("Login error:", err);
     throw toLoginError(err);
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Several companies: the session acts for the one the user picks (the server re-checks membership on every request). */
+export async function selectCompany(companyId: string): Promise<{ user: User; companyId: string }> {
+  const res = await apiFetch("/api/auth/select-company", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companyId }) });
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok || !parsed.token) throw new Error(parsed.error || `Could not select the company (HTTP ${res.status}).`);
+  const stored = getStoredUser();
+  if (!stored) throw new Error("Your session has ended. Please sign in again.");
+  const user = { ...stored, role: (parsed.role || stored.role) as User["role"] };
+  persistAuthSession(user, parsed.token);
+  persistCompanies(parsed.companies, parsed.companyId);
+  return { user, companyId: parsed.companyId };
+}
+
+/** Operator (platform) API helper: returns parsed JSON or throws with the server's message. */
+export async function platformRequest<T = any>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const res = await apiFetch(`/api/platform${path}`, { method, headers: { "Content-Type": "application/json" }, body: body === undefined || method === "GET" ? undefined : JSON.stringify(body) });
+  const parsed = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(parsed.error || `Request failed (HTTP ${res.status}).`);
+  return parsed as T;
 }
 
 export async function createLead(data: Partial<Lead>): Promise<Lead> {
@@ -2445,6 +2504,48 @@ export async function fetchAdminWhatsAppLogs(userId: string, username: string) {
     throw new Error(err.error || "Failed to load WhatsApp logs.");
   }
   return res.json();
+}
+
+/** The sign-in screens call themselves "Sunchaser Sync" when the server hosts several companies (nothing else is learned from it). */
+export async function loadPlatformInfo(): Promise<void> {
+  try {
+    const res = await apiFetch("/api/auth/platform-info");
+    const data = await res.json().catch(() => ({}));
+    setPlatformInfo(res.ok ? { multiCompany: data.multiCompany === true, platformName: String(data.platformName || "Sunchaser Sync") } : null);
+  } catch {
+    setPlatformInfo(null);
+  }
+}
+
+/** Reads the signed-in company's own branding for the workspace header (staff and customers alike). */
+export async function refreshWorkspaceBrand(): Promise<void> {
+  try {
+    const b: any = await fetchCompanyBranding();
+    setWorkspaceBrand({ companyName: String(b?.companyName || ""), logoUrl: String(b?.logoUrl || "") });
+    setWorkspaceNeutral(b?.legacyDefaults === false); // only a company other than Sunchaser has its Sunchaser defaults switched off
+  } catch {
+    /* the header keeps what it had */
+  }
+}
+
+/** Called once someone is signed in: on the multi-company platform the workspace takes the company's name and logo. */
+export async function initWorkspaceIdentity(): Promise<void> {
+  await loadPlatformInfo();
+  if (getPlatformInfo()?.multiCompany) await refreshWorkspaceBrand();
+}
+
+/** Called at sign-out: nothing of one company's identity stays on screen for the next person. */
+export function clearWorkspaceIdentity(): void {
+  setWorkspaceBrand(null);
+  setWorkspaceNeutral(false);
+}
+
+/** The branding a customer's portal shows: the customer's own company's public details (multi-company mode), or null (single-company mode: the portal keeps its existing look). */
+export async function fetchPortalBranding(): Promise<Record<string, any> | null> {
+  const res = await apiFetch("/api/customer-portal/branding");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Failed to load company details.");
+  return (data.branding as Record<string, any>) ?? null;
 }
 
 export async function fetchCompanyBranding() {
@@ -3462,3 +3563,31 @@ export async function fetchMarketplaceAutoImportListings(_staff?: {
     }>;
   };
 }
+
+// ---- Company settings (pilot companies): branding, bank accounts, terms, prices, with an audit history
+export type CompanySettingsView = {
+  companyId: string;
+  branding: Record<string, any>;
+  bankAccounts: Array<{ id?: string; bankName: string; accountTitle: string; accountNumber: string; iban: string; branchCode: string; isActive: boolean; showOnInvoice: boolean; sortOrder: number }>;
+  terms: string[];
+  priceSettings: { currencySettings: string; taxSettings: string; quoteValidityDays: number | null };
+  permissions: { canEdit: boolean; role: string };
+};
+export type CompanySettingsHistoryEntry = { id: string; section: string; summary: string; by: string; role: string | null; at: string; before: unknown; after: unknown };
+
+async function companySettingsJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(path, init);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as any)?.error || `Request failed (${res.status}).`);
+  return body as T;
+}
+
+export const fetchCompanySettings = () => companySettingsJson<CompanySettingsView>("/api/company/settings");
+export const fetchCompanySettingsHistory = () =>
+  companySettingsJson<{ available: boolean; history: CompanySettingsHistoryEntry[] }>("/api/company/settings/history?limit=100");
+export const saveCompanySettingsSection = (section: "branding" | "bank-accounts" | "terms" | "prices", body: Record<string, unknown>) =>
+  companySettingsJson<Record<string, any>>(`/api/company/settings/${section}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });

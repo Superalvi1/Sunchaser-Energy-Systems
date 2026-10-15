@@ -228,6 +228,8 @@ import {
   upsertSolarPackageCatalogToSupabase,
   upsertAppSettingsToSupabase,
   describeSupabaseBackendConfig,
+  getSystemSupabase,
+  getUnguardedSystemSupabase,
 } from "./dbManager.js";
 import { isSupabaseConnectivityError, SUPABASE_UNAVAILABLE_CODE } from "./supabaseConnectivity.ts";
 import {
@@ -366,16 +368,31 @@ import {
   rotateSession,
   RevocationLookupError,
 } from "./server/auth/revocation.ts";
+import { createPostgrestCompanyStore, listCompanyMemberUserIds } from "./server/saas/companyStore.ts";
+import { assertMultiCompanyConfig, FOUNDING_COMPANY_ID, isMultiCompanyEnabled } from "./server/saas/multiCompany.ts";
+import { isolationGuard, isTenantIsolationError } from "./server/saas/tenantIsolationGuard.ts";
+import { getCompanyContext, runAsFoundingCompany, runWithCompany } from "./server/saas/companyContext.ts";
+import { usesNeutralIdentity } from "./server/saas/companyIdentity.ts";
+import { moduleFlags, AUTOSIZER_DISABLED_MESSAGE } from "./server/saas/moduleGate.ts";
+import { registerCompanySettingsRoutes } from "./server/saas/companySettingsApi.ts";
+import { registerPlatformRoutes } from "./server/saas/platformApi.ts";
+import { planLimitMiddleware } from "./server/saas/subscriptionLimits.ts";
+import { reserveStorage, isStorageError, storageErrorResponse } from "./server/saas/storageQuota.ts";
+import { listLoginCompanies } from "./server/saas/loginCompanies.ts";
 import { resolveListenPort } from "./server/runtime/listenPort.ts";
 import {
   getRailwayObject,
   putRailwayObject,
+  setRailwayWriteGuard,
   isRailwayObjectStorageConfigured,
   buildRailwayObjectProxyUrl,
+  scopeObjectKey,
+  objectCompanyOf,
   verifyRailwayObjectProxySignature,
 } from "./server/storage/railwayObjectStorage.ts";
 import { assertRailwayPrivateSmokeEnvironment } from "./server/runtime/railwayPrivateSmoke.ts";
 import { createAuthorizationMiddleware } from "./server/middleware/authorization.ts";
+import { createOwnershipMiddleware, type OwnedTable } from "./server/saas/ownershipGuard.ts";
 import { createCorsMiddleware } from "./server/middleware/cors.ts";
 import { createLearningRouter } from "./server/learning/learningRoutes.ts";
 import { createRequireAuth } from "./server/middleware/auth.ts";
@@ -506,7 +523,7 @@ import {
   hardDeletePartyLedger,
 } from "./partyLedgerDb.js";
 import { findExistingCustomerIdForLinking } from "./invoiceCustomerLink.js";
-import { generateCustomerCode } from "./customerCode.js";
+import { insertWithUniqueCustomerCode } from "./customerCode.js";
 import { syncQuotationDocumentVault } from "./customerDocumentSync.js";
 import { fetchFinanceDashboard } from "./financeDashboardDb.js";
 import {
@@ -597,6 +614,15 @@ const railwayPrivateSmokeMode = assertRailwayPrivateSmokeEnvironment();
 // Never pair credentials with a wildcard — see server/middleware/cors.ts.
 app.use(createCorsMiddleware());
 
+// Company isolation does not depend on the feature flag. While the database holds another company's data and this server is not in multi-company mode
+// (or cannot tell), every data route is paused with an explicit 503 - never served unfiltered. See server/saas/tenantIsolationGuard.ts.
+app.get("/api/maintenance-status", (_req, res) => {
+  const s = isolationGuard.current();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ paused: s.blocked, reason: s.reason });
+});
+app.use(isolationGuard.middleware((req) => !(req.path === "/api" || req.path.startsWith("/api/") || req.path.startsWith("/uploads")) || req.path === "/api/maintenance-status"));
+
 // Preserve exact Meta webhook POST bytes before global JSON parsing.
 installWhatsAppRawBodyMiddleware(app);
 
@@ -639,8 +665,12 @@ app.get("/api/storage/object/:namespace/:encodedKey", async (req, res) => {
       String(req.params.namespace || ""),
       String(req.params.encodedKey || ""),
       String(req.query.sig || ""),
+      process.env,
+      req.query.exp === undefined ? undefined : String(req.query.exp),
     );
-    if (!verified.ok) return res.status(403).json({ error: "Invalid object signature." });
+    if (!verified.ok) {
+      return res.status(403).json({ error: verified.reason === "expired" ? "This link has expired. Open the document again from the CRM." : "Invalid object signature." });
+    }
     const object = await getRailwayObject(verified.namespace, verified.key);
     if (!object) return res.status(404).json({ error: "Object not found." });
     res.setHeader("Content-Type", object.contentType);
@@ -715,9 +745,51 @@ app.use(
 );
 }
 
-app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
+const companyStore = createPostgrestCompanyStore();
+// Second, independent company check for object routes: reads the record's company with the service role (not the tenant role), so it still
+// holds if a row-level policy were ever wrong.
+const ownershipGuard = createOwnershipMiddleware(async (table: OwnedTable, id: string) => {
+  const { data, error } = await getSystemSupabase()!.from(table).select("company_id").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return (data as { company_id?: string } | null)?.company_id ?? null;
+});
+app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb, companyStore, ownershipGuard }));
+
+/**
+ * Authorised file access: no link at all. The caller must hold a session of the company the object belongs to (the company is read from
+ * the key itself: `c/<company>/...`, or the founding company for an unprefixed key). Anything else answers 404, like a missing object.
+ */
+app.use(planLimitMiddleware());
+setRailwayWriteGuard((bytes) => reserveStorage(bytes));
+registerPlatformRoutes(app);
+registerCompanySettingsRoutes(app);
+
+app.get("/api/company/files/:namespace/:encodedKey", async (req, res) => {
+  try {
+    if (!isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
+    const ctx = getCompanyContext();
+    if (ctx?.kind !== "company") return res.status(403).json({ error: "No company for this request." });
+    const ns = String(req.params.namespace || "");
+    if (ns !== "customer-documents" && ns !== "quote-assets") return res.status(404).json({ error: "Not found." });
+    let key = "";
+    try { key = Buffer.from(String(req.params.encodedKey || ""), "base64url").toString("utf8"); } catch { return res.status(404).json({ error: "Not found." }); }
+    if (!key || key.length > 1024 || key.includes("\\") || key.split("/").some((p) => p === "." || p === "..")) return res.status(404).json({ error: "Not found." });
+    if (objectCompanyOf(key) !== ctx.companyId) return res.status(404).json({ error: "Not found." });
+    const object = await getRailwayObject(ns, key);
+    if (!object) return res.status(404).json({ error: "Not found." });
+    res.setHeader("Content-Type", object.contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.send(object.body);
+  } catch (err: any) {
+    console.error("[Company files]", err?.message || err);
+    return res.status(503).json({ error: "Object storage unavailable." });
+  }
+});
+
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
-if (!railwayPrivateSmokeMode) setInterval(()=>{void salesAgentRuntime.drain();},5000).unref();
+// The sales agent is a founding-company feature until WhatsApp is scoped per company.
+if (!railwayPrivateSmokeMode) setInterval(()=>{ if (isolationGuard.current().blocked) return; void runAsFoundingCompany(() => salesAgentRuntime.drain()).catch((e) => { if (!isTenantIsolationError(e)) console.error("[sales-agent] drain failed:", e); }); },5000).unref();
 
 // Sunchaser Learning Studio: protected CRM SSO handoff and learning APIs.
 // The router is feature-gated and remains inert until LEARNING_STUDIO_ENABLED=true.
@@ -760,16 +832,14 @@ async function persistPublicMarketingLead(
     const supabase = getSupabase()!;
     const customerId = `cust-${randomUUID()}`;
     persistedCustomerId = customerId;
-    const customerCode = await generateCustomerCode(db);
-
-    const { error: custErr } = await supabase.from("customers").insert({
+    const { error: custErr } = await insertWithUniqueCustomerCode((customer_code) => supabase.from("customers").insert({
       id: customerId,
       name: newLead.name,
       email: newLead.email,
       phone: newLead.phone,
       address: newLead.address,
-      customer_code: customerCode,
-    });
+      customer_code,
+    }), { localDb: db });
     if (custErr) {
       console.error("[public-leads] customer insert failed:", custErr.message);
       throw new Error("Failed to persist customer for public lead.");
@@ -913,7 +983,7 @@ async function archivePublicSmartQuotePdf(leadId: string, quoteNumber: string, p
   }
   const original = await readLead();
   if (version ? version.leadId !== leadId : parseSmartQuoteLeadNotes(original.notes)?.quoteNumber !== quoteNumber) throw new Error("Quotation does not belong to this lead.");
-  const key = quotePdfObjectKey(leadId, quoteNumber, pdf);
+  const key = scopeObjectKey(quotePdfObjectKey(leadId, quoteNumber, pdf));
   await putRailwayObject("customer-documents", key, pdf, "application/pdf");
   const archive = { quoteNumber, fileName: `Sunchaser-Quotation-${quoteNumber}.pdf`, fileUrl: buildRailwayObjectProxyUrl("customer-documents", key), sha256: createHash("sha256").update(pdf).digest("hex"), savedAt: new Date().toISOString(), sizeBytes: pdf.length };
   if (original.customerId) {
@@ -1059,14 +1129,58 @@ if (process.env.NODE_ENV === "production") {
 const DB_FILE = path.join(process.cwd(), "database.json");
 const BACKUPS_DIR = path.join(process.cwd(), "backups");
 
-let db: Database = initialSeed;
+/**
+ * The local copy of the data (database.json / the built-in seed) is Sunchaser's own legacy fallback. In multi-company mode every
+ * company other than the founding one gets its own EMPTY in-memory copy instead, resolved from the company of the running request
+ * (src/saas company context). Nothing of Sunchaser's local data, and nothing of another company's, is ever visible through `db`, and
+ * a non-founding company never writes the local file. Single-company mode: `db` is the legacy copy, exactly as before.
+ */
+let legacyDb: Database = initialSeed;
+const companyLocalDbs = new Map<string, Database>();
+function emptyCompanyDatabase(): Database {
+  return {
+    users: [], leads: [], tickets: [], netMeteringHistory: [], inventory: [], projects: [], netMeteringTrackers: [], paymentTracks: [],
+    activityLogs: [], whatsAppLogs: [], categories: [], products: [], orders: [], warranties: [], notifications: [], solarPackages: [],
+    quotations: [], quoteTemplates: [], quoteTemplatePages: [], bankAccounts: [], companyTerms: [], ceoMessages: [], socialLinks: [],
+    structureDescriptions: [], quotePdfSettings: [], purchaseOrders: [], customerDocuments: [], customerWarranties: [],
+    settings: {}, websiteContent: {}, documentIdentity: { neutral: true },
+  } as unknown as Database;
+}
+/** The company whose local copy the running code should see, or null for the legacy (founding/system/single-company) copy. */
+function localDbCompany(): string | null {
+  if (!isMultiCompanyEnabled()) return null;
+  const ctx = getCompanyContext();
+  if (ctx?.kind !== "company" || ctx.companyId === FOUNDING_COMPANY_ID) return null;
+  return ctx.companyId;
+}
+function currentLocalDb(): Database {
+  const company = localDbCompany();
+  if (!company) return legacyDb;
+  let d = companyLocalDbs.get(company);
+  if (!d) { d = emptyCompanyDatabase(); companyLocalDbs.set(company, d); }
+  return d;
+}
+const db: Database = new Proxy({} as Database, {
+  get: (_t, prop) => (currentLocalDb() as any)[prop],
+  set: (_t, prop, value) => { (currentLocalDb() as any)[prop] = value; return true; },
+  has: (_t, prop) => prop in (currentLocalDb() as object),
+  deleteProperty: (_t, prop) => delete (currentLocalDb() as any)[prop],
+  ownKeys: () => Reflect.ownKeys(currentLocalDb() as object),
+  getOwnPropertyDescriptor: (_t, prop) => {
+    const d = Reflect.getOwnPropertyDescriptor(currentLocalDb() as object, prop);
+    return d ? { ...d, configurable: true } : undefined;
+  },
+  defineProperty: (_t, prop, desc) => Reflect.defineProperty(currentLocalDb() as object, prop, desc),
+});
 
 function loadDb() {
+  // Another company has no local file: its copy is the empty in-memory one above.
+  if (localDbCompany()) return;
   try {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, "utf8");
       try {
-        db = JSON.parse(content);
+        legacyDb = JSON.parse(content);
         // Ensure all objects/fields exist
         if (!db.users) db.users = initialSeed.users;
         if (!db.leads) db.leads = initialSeed.leads;
@@ -1235,21 +1349,23 @@ function loadDb() {
         }
       } catch (parseErr) {
         console.error("Failed to parse database.json. Overwriting with seed.", parseErr);
-        db = initialSeed;
+        legacyDb = initialSeed;
         saveDb();
       }
     } else {
-      db = initialSeed;
+      legacyDb = initialSeed;
       saveDb();
     }
 
   } catch (err) {
     console.error("FS Read error inside loadDb:", err);
-    db = initialSeed;
+    legacyDb = initialSeed;
   }
 }
 
 function saveDb() {
+  // Another company never writes the local file (it holds the founding company's legacy data only).
+  if (localDbCompany()) return;
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf8");
   } catch (err) {
@@ -1373,7 +1489,8 @@ loadDb();
 /* --- AUDIT LOGGING & NOTIFICATION SYNC ACTIONS --- */
 async function appendActivityLog(userId: string, userName: string, role: string, action: string, details: string) {
   const newLog = {
-    id: `log-${Date.now()}`,
+    // Not the clock alone: two actions in the same millisecond (two requests, or two companies) built the same id and the second row was dropped silently.
+    id: `log-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`,
     timestamp: new Date().toISOString(),
     userId,
     userName,
@@ -1388,7 +1505,7 @@ async function appendActivityLog(userId: string, userName: string, role: string,
   if (isSupabaseActive()) {
     try {
       const supabase = getSupabase()!;
-      await supabase.from("activity_logs").insert({
+      const { error: logErr } = await supabase.from("activity_logs").insert({
         id: newLog.id,
         timestamp: newLog.timestamp,
         user_id: newLog.userId,
@@ -1397,6 +1514,8 @@ async function appendActivityLog(userId: string, userName: string, role: string,
         action: newLog.action,
         details: newLog.details
       });
+      // The client returns the database's refusal instead of throwing it; it used to be ignored, so a lost row left no trace.
+      if (logErr) console.error("[Supabase Error] activity log row was not saved:", logErr.code, logErr.message);
     } catch (err) {
       console.error("[Supabase Error] Failed to synclog:", err);
     }
@@ -1405,6 +1524,9 @@ async function appendActivityLog(userId: string, userName: string, role: string,
 }
 
 async function triggerWhatsAppNotification(customerName: string, phone: string, eventType: string, messageText: string) {
+  // These entries are Sunchaser-worded and only recorded, never sent. WhatsApp is outside the pilot phase: another company records
+  // nothing (no simulated "Delivered" message carrying the founding company's name and portal link).
+  if (usesNeutralIdentity()) return null;
   const newWa = {
     id: `wa-${Date.now()}`,
     timestamp: new Date().toISOString(),
@@ -1447,6 +1569,12 @@ app.use("/api/auth", (_req, res, next) => {
 });
 
 // 1. Auth — login, register, verify, reset, admin user management
+/** What the sign-in and company-selection screens should call themselves. The platform name is a product name, not company data. */
+app.get("/api/auth/platform-info", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.json(isMultiCompanyEnabled() ? { multiCompany: true, platformName: "Sunchaser Sync" } : { multiCompany: false });
+});
+
 app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   const { username, password } = req.body;
   const normalizedUsername = String(username || "").trim().toLowerCase();
@@ -1459,21 +1587,23 @@ app.post("/api/auth/login", loginRateLimit, async (req, res) => {
   try {
     loadDb();
     const { user, passwordHash, sessionEpoch } = await authenticateUserWithCredentials(normalizedUsername, normalizedPassword, db);
+    const multi = isMultiCompanyEnabled();
+    const companies = multi ? await listLoginCompanies(user, companyStore) : undefined;
+    // One company: the session is bound to it. Several: the client must choose (POST /api/auth/select-company).
+    const companyId = companies && companies.length === 1 ? companies[0].id : undefined;
     const token = signAccessToken({
       userId: user.id,
       username: user.username,
       role: user.role,
+      companyId,
       passwordVersion: passwordVersion(passwordHash),
       sessionEpoch,
     });
-    await appendActivityLog(
-      user.id,
-      user.name,
-      user.role,
-      "User Logged In",
-      `Role ${user.role} · status ${user.accountStatus}`
-    );
-    return res.json({ success: true, user, token });
+    const logLogin = () =>
+      appendActivityLog(user.id, user.name, user.role, "User Logged In", `Role ${user.role} · status ${user.accountStatus}`);
+    if (!multi) await logLogin();
+    else if (companyId) await runWithCompany({ companyId, userId: user.id, role: user.role }, logLogin);
+    return res.json({ success: true, user, token, ...(companies ? { companies, companyId } : {}) });
   } catch (err: any) {
     if (err instanceof UserAuthError) {
       return res.status(err.statusCode).json({ error: err.message });
@@ -1500,7 +1630,14 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
     if (!req.actor) {
       return res.status(401).json({ error: "Unauthorized" });
     }
-    return res.json({ success: true, user: actorToApiUser(req.actor) });
+    const user: any = actorToApiUser(req.actor);
+    // Multi-company: the role that counts is the one held in the company this token is bound to, not the global one.
+    const tokenCompany = (req as any).tokenCompanyId as string | undefined;
+    if (isMultiCompanyEnabled() && tokenCompany) {
+      const chosen = (await listLoginCompanies(req.actor, companyStore)).find((c) => c.id === tokenCompany);
+      if (chosen) { user.role = chosen.role; user.companyId = chosen.id; user.companyName = chosen.name; }
+    }
+    return res.json({ success: true, user });
   } catch (err: any) {
     console.error("[Auth Me Error]:", err);
     return res.status(500).json({ error: err.message || "Failed to load session." });
@@ -1516,14 +1653,24 @@ app.post("/api/auth/refresh", requireAuth, refreshRateLimit, async (req, res) =>
   if (!canRenewSession(session.startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
     return res.status(401).json({ error: "Your session has ended. Please sign in again.", code: "session_ended" });
   }
+  // Multi-company: the renewed token keeps the company claim (and the role held there) as long as the membership is still active.
+  let renewedCompany: string | undefined; let renewedRole = req.actor.role;
+  if (isMultiCompanyEnabled()) {
+    const wanted = ((req as any).tokenCompanyId as string | undefined) || req.actor.companyId;
+    if (wanted) {
+      const chosen = (await listLoginCompanies(req.actor, companyStore)).find((c) => c.id === wanted);
+      if (chosen) { renewedCompany = chosen.id; renewedRole = chosen.role; }
+    }
+  }
   const token = signAccessToken({
     userId: req.actor.id,
     username: req.actor.username,
-    role: req.actor.role,
+    role: renewedRole,
     sessionStartedAt: session.startedAt!,
     passwordVersion: session.passwordVersion,
     sessionEpoch: session.sessionEpoch,
     sessionId: session.sessionId || undefined,
+    companyId: renewedCompany,
   });
   // Rotation: the presented token is retired after a short grace (so requests already in flight with it still
   // succeed) and remembers its successor. If it was ALREADY revoked (logout raced this refresh), no new token is
@@ -1592,6 +1739,34 @@ app.post("/api/admin/users/:id/revoke-sessions", async (req, res) => {
     if (err instanceof UserAuthError) return res.status(err.statusCode).json({ error: err.message });
     return res.status(500).json({ error: err.message });
   }
+});
+
+// Multi-company mode: a user who belongs to several companies picks the one this session acts for.
+app.post("/api/auth/select-company", requireAuth, async (req, res) => {
+  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+  if (!isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
+  const wanted = String(req.body?.companyId || "");
+  const companies = await listLoginCompanies(req.actor, companyStore);
+  const chosen = companies.find((c) => c.id === wanted);
+  if (!chosen) return res.status(403).json({ error: "You are not a member of this company.", code: "not_a_member" });
+  const session = req.authSession;
+  if (!session) return res.status(401).json({ error: "Unauthorized" });
+  if (!canRenewSession(session.startedAt, Math.floor(Date.now() / 1000), sessionMaxAgeSeconds())) {
+    return res.status(401).json({ error: "Your session has ended. Please sign in again." });
+  }
+  // Same session family, password version and epoch as the presented token, so logout / revoke-all / password change
+  // still end the session; only the company claim differs. Membership is re-checked on every request anyway.
+  const token = signAccessToken({
+    userId: req.actor.id,
+    username: req.actor.username,
+    role: chosen.role,
+    sessionStartedAt: session.startedAt!,
+    passwordVersion: session.passwordVersion,
+    sessionEpoch: session.sessionEpoch,
+    sessionId: session.sessionId || undefined,
+    companyId: chosen.id,
+  });
+  return res.json({ success: true, token, companyId: chosen.id, role: chosen.role, companies });
 });
 
 app.post("/api/auth/register", async (req, res) => {
@@ -2134,6 +2309,10 @@ app.get("/api/leads/:id/smart-quote-versions", async (req, res) => {
   if (!staff || !(await guardSalesOwnedResource(req, res, "lead", req.params.id))) return;
   if (!isSupabaseActive()) return res.json({ available: false, versions: [] });
   try {
+    // A lead this caller cannot see (other company, or missing) answers 404, never an empty list.
+    const visible = await getSupabase()!.from("leads").select("id").eq("id", req.params.id).maybeSingle();
+    if (visible.error) throw new Error(visible.error.message);
+    if (!visible.data) return res.status(404).json({ error: "Lead not found." });
     const versions = await createPostgrestSmartQuoteVersionStore(getSupabase()!).listByLead(req.params.id);
     return res.json({ available: true, versions: versions.map(({ payloadSha256: _fingerprint, ...version }) => version) });
   } catch (error) {
@@ -2179,6 +2358,15 @@ app.post("/api/admin/customer-documents/assign", async (req, res) => {
   }
 });
 
+/** A refused upload (over the plan limit, usage not verifiable, or no limit set): answered with a clear, coded message. True when handled. */
+function respondStorageError(err: unknown, res: express.Response): boolean {
+  if (!isStorageError(err)) return false;
+  const r = storageErrorResponse(err);
+  for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
+  res.status(r.status).json(r.body);
+  return true;
+}
+
 app.post("/api/admin/customer-documents/upload", async (req, res) => {
   const staff = resolveStaffActor(req, res);
   if (!staff) return;
@@ -2218,6 +2406,7 @@ app.post("/api/admin/customer-documents/upload", async (req, res) => {
     return res.status(201).json(doc);
   } catch (err: any) {
     if (err instanceof CustomerProfileError) return res.status(err.statusCode).json({ error: err.message });
+    if (respondStorageError(err, res)) return;
     console.error("[customer-documents] upload failed:", err?.message || err);
     return res.status(500).json({ error: err.message });
   }
@@ -2244,11 +2433,13 @@ async function handleCustomerPortalMe(req: any, res: any) {
       return res.status(403).json({ error: "Not authorized for customer portal." });
     }
     loadDb();
+    // In multi-company mode the portal also learns which modules this company has and that it is not the founding company.
+    const workspace = isMultiCompanyEnabled() ? { documentIdentity: { neutral: usesNeutralIdentity() }, modules: moduleFlags() } : {};
     if (!String(req.actor.customerId || "").trim()) {
-      return res.json(buildPendingCustomerPortalPayload(req.actor));
+      return res.json({ ...buildPendingCustomerPortalPayload(req.actor), ...workspace });
     }
     const data = await fetchCustomerPortalData(req.actor.id, req.actor.username, db);
-    return res.json(data);
+    return res.json({ ...data, ...workspace });
   } catch (err: any) {
     if (ownershipErrorResponse(err, res)) return;
     console.error("[Customer Portal Error]:", err.message);
@@ -2257,6 +2448,29 @@ async function handleCustomerPortalMe(req: any, res: any) {
 }
 
 app.get("/api/customer-portal/me", handleCustomerPortalMe);
+
+/**
+ * The company's public face for ITS OWN customers' portal: name, address, phones, e-mail, website, logo, colours, review link. A customer cannot call
+ * /api/branding (staff only), so without this the portal of a company other than the founding one could not show its own name, logo or phone number.
+ * Terms, bank-account images, signature and invoice logo are not included. Single-company mode answers null: the portal keeps its existing look.
+ */
+const PORTAL_BRANDING_FIELDS = ["companyName", "officeAddress", "officeLocations", "phoneNumbers", "billingEmail", "websiteUrl", "logoUrl", "primaryColor", "secondaryColor", "accentColor", "googleReviewUrl", "legacyDefaults"] as const;
+app.get("/api/customer-portal/branding", async (req: any, res) => {
+  // Any signed-in customer, linked to a profile or not: a customer whose profile is still pending must not see another company's name either.
+  if (!req.actor) return res.status(401).json({ error: "Unauthorized" });
+  if (req.actor.role !== "Customer") return res.status(403).json({ error: "Not authorized for customer portal." });
+  try {
+    if (!isMultiCompanyEnabled()) return res.json({ branding: null });
+    loadDb();
+    const all: Record<string, unknown> = (await getCompanyBranding(db)) as any;
+    const branding: Record<string, unknown> = {};
+    for (const k of PORTAL_BRANDING_FIELDS) if (k in all) branding[k] = all[k];
+    return res.json({ branding });
+  } catch (err: any) {
+    console.error("[Customer Portal] branding:", err?.message || err);
+    return res.status(500).json({ error: "Could not load the company details." });
+  }
+});
 app.post("/api/customer-portal/me", handleCustomerPortalMe);
 
 /** Phase 1B.2A — customer portal identity from req.actor only; customerId never from request. */
@@ -2318,13 +2532,18 @@ async function resolveSalesUserByNameOrUsername(nameOrUsername: unknown): Promis
   const token = String(nameOrUsername || "").trim();
   if (!token) return null;
   loadDb();
+  const multi = isMultiCompanyEnabled();
+  const ctx = multi ? getCompanyContext() : undefined;
+  // Multi-company mode: only active members of the caller's own company can be resolved.
+  const memberIds = multi ? (ctx?.kind === "company" ? new Set(await listCompanyMemberUserIds(ctx.companyId)) : new Set<string>()) : null;
   const byUsername = await findUserByUsername(token, db);
-  if (byUsername) return byUsername;
+  if (byUsername) return memberIds && !memberIds.has(byUsername.id) ? null : byUsername;
   const normalized = token.toLowerCase();
   if (isSupabaseActive()) {
-    const supabase = getSupabase()!;
-    const { data } = await supabase.from("users").select("*").ilike("name", token).maybeSingle();
-    return data || null;
+    const query = getSystemSupabase()!.from("users").select("*").ilike("name", token);
+    const { data } = memberIds ? await query.in("id", [...memberIds]).limit(2) : await query.limit(2);
+    // Exact display-name match only: an ambiguous name resolves to nobody.
+    return data && data.length === 1 ? data[0] : null;
   }
   return (
     (db.users || []).find(
@@ -4486,6 +4705,7 @@ app.get("/api/admin/invoices/:id", async (req, res) => {
 
 /** Maps an invoice write failure to a coded 4xx; anything unexpected is logged and answered without database text. */
 function invoiceMutationErrorResponse(err: any, res: express.Response, action: string) {
+  if (respondStorageError(err, res)) return;
   if (err instanceof InvoiceDbError) {
     return res.status(err.statusCode).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   }
@@ -4609,6 +4829,7 @@ app.get("/api/export/pdf/invoice/:id", async (req, res) => {
     }
     const { invoice: inv, branding, options } = await buildInvoicePdfPayload(invoice, db);
     const html = compileInvoicePDFHtml(inv, branding, options);
+    res.setHeader("X-Invoice-Issuance", options.issuanceSource || "unspecified");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
   } catch (err: any) {
@@ -4765,7 +4986,7 @@ app.get("/api/diagnostics/phase9-tables", async (_req, res) => {
     ? { ok: false, message: tjuErr.message, hint: `Run ${schemaScript} in Supabase` }
     : { ok: true, sampleCount: tju?.length ?? 0 };
 
-  const { data: userRow, error: usersErr } = await supabase
+  const { data: userRow, error: usersErr } = await getSystemSupabase()!
     .from("users")
     .select("id, onboarding_completed, onboarding_completed_at")
     .limit(1)
@@ -5081,7 +5302,10 @@ app.get("/api/state", async (req, res) => {
   if (isSupabaseActive()) {
     try {
       const stateObj = await fetchAppStateFromSupabase();
-      const packageResolved = ensurePackageLibraryCatalog(stateObj.solarPackages, stateObj.settings);
+      // Another company's boot never generates Sunchaser's default package catalogue (its prices and equipment) for it.
+      const packageResolved = usesNeutralIdentity()
+        ? { packages: stateObj.solarPackages || [], settings: stateObj.settings || {}, migrated: false }
+        : ensurePackageLibraryCatalog(stateObj.solarPackages, stateObj.settings);
       if (packageResolved.migrated) {
         stateObj.solarPackages = packageResolved.packages;
         stateObj.settings = packageResolved.settings;
@@ -5098,6 +5322,7 @@ app.get("/api/state", async (req, res) => {
       );
       return res.json({
         ...scopedState,
+        ...(isMultiCompanyEnabled() ? { documentIdentity: { neutral: usesNeutralIdentity() }, modules: moduleFlags() } : {}),
         stats: getDashboardStats(scopedState),
         currentUser: null
       });
@@ -5174,7 +5399,7 @@ app.get("/api/diagnostics/db", async (req, res) => {
 
   if (active && supabase) {
     try {
-      const { count, error } = await supabase
+      const { count, error } = await getSystemSupabase()!
         .from("users")
         .select("*", { count: "exact", head: true });
       if (error) {
@@ -5219,6 +5444,8 @@ app.get("/api/diagnostics/db", async (req, res) => {
 });
 
 app.post("/api/admin/maintenance/production-backup-20260606", async (req, res) => {
+  // A one-off operation of 2026-06-06 that reaches the database directly (all companies, no row-level security). Not available where companies are kept apart.
+  if (isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
   try {
     assertSuperAdminCleanup(req);
     const confirm = String(req.body?.confirm || "");
@@ -5237,6 +5464,8 @@ app.post("/api/admin/maintenance/production-backup-20260606", async (req, res) =
 });
 
 app.post("/api/admin/maintenance/production-cleanup-20260606", async (req, res) => {
+  // A one-off operation of 2026-06-06 that reaches the database directly (all companies, no row-level security). Not available where companies are kept apart.
+  if (isMultiCompanyEnabled()) return res.status(404).json({ error: "Not found." });
   try {
     assertSuperAdminCleanup(req);
     const confirm = String(req.body?.confirm || "");
@@ -5316,7 +5545,7 @@ app.get("/api/diagnostics/auth-users", async (req, res) => {
   }
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getSystemSupabase()!
       .from("users")
       .select("id, username, name, email, role")
       .order("username", { ascending: true });
@@ -5436,7 +5665,7 @@ app.post("/api/leads", async (req, res) => {
       rating: 3,
       assignedSalesperson: String(assignedSalesperson || "").trim(),
       createdAt: new Date().toISOString(),
-      notes: notes || "Submitted via Sunchaser Sizing Calculator.",
+      notes: notes || (usesNeutralIdentity() ? "Submitted via the sizing calculator." : "Submitted via Sunchaser Sizing Calculator."),
       leadSource: leadSource || "Self-registration Web Portal",
       engagementLevel: engagementLevel || "Medium",
       quotes: [],
@@ -5447,16 +5676,14 @@ app.post("/api/leads", async (req, res) => {
     if (isSupabaseActive()) {
       const supabase = getSupabase()!;
       const customerId = `cust-${randomUUID()}`;
-      const customerCode = await generateCustomerCode(db);
-
-      const { error: custErr } = await supabase.from("customers").insert({
+      const { error: custErr } = await insertWithUniqueCustomerCode((customer_code) => supabase.from("customers").insert({
         id: customerId,
         name: newLead.name,
         email: newLead.email,
         phone: newLead.phone,
         address: newLead.address,
-        customer_code: customerCode,
-      });
+        customer_code,
+      }), { localDb: db });
       if (custErr) {
         console.error("[Supabase Customer Insert Error]:", custErr.message);
         return res.status(leadInsertHttpStatus(custErr)).json({ error: custErr.message });
@@ -6270,6 +6497,9 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
   const { lead, resolved, supabase } = ctx;
 
   const resolvedQuoteType = quote_type === "auto_sizer" ? "auto_sizer" : "manual_boq";
+  if (resolvedQuoteType === "auto_sizer" && !moduleFlags().autoSizer) {
+    return res.status(403).json({ error: AUTOSIZER_DISABLED_MESSAGE, code: "module_disabled" });
+  }
   if (resolvedQuoteType === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
     return res.status(403).json({ error: "Auto Sizer quote creation is temporarily disabled. Use Manual BOQ Builder." });
   }
@@ -6348,20 +6578,21 @@ app.post("/api/leads/:id/create-quote", async (req, res) => {
     clientEmail: clientEmail || lead.email,
     clientAddress: clientAddress || lead.address,
     cnic: cnic || "",
-    cityArea: cityArea || lead.location || "Lahore",
+    cityArea: cityArea || lead.location || (usesNeutralIdentity() ? "" : "Lahore"),
     bdmName: bdmName || sanitizeLeadAdvisorInput(lead.assignedSalesperson) || "",
     quoteDate: quoteDate || new Date().toISOString().split('T')[0],
     systemType: systemType || "Hybrid",
-    panelBrand: panelBrand || "Jinko",
-    panelWattage: Number(panelWattage) || 580,
-    inverterBrand: inverterBrand || "Knox",
-    inverterCapacity: inverterCapacity || "10kW",
+    // Equipment and payment defaults are the founding company's; another company states its own or nothing is printed.
+    panelBrand: panelBrand || (usesNeutralIdentity() ? "" : "Jinko"),
+    panelWattage: Number(panelWattage) || (usesNeutralIdentity() ? 0 : 580),
+    inverterBrand: inverterBrand || (usesNeutralIdentity() ? "" : "Knox"),
+    inverterCapacity: inverterCapacity || (usesNeutralIdentity() ? "" : "10kW"),
     batteryOption: batteryOption || "None",
     netMeteringRequired: netMeteringRequired || "Yes",
     discount: disc,
     discountType: resolvedDiscount.discountType,
     discountValue: resolvedDiscount.discountValue,
-    paymentSchedule: paymentSchedule || paymentTerms || "50% Advance, 40% Delivery, 10% Commissioning",
+    paymentSchedule: paymentSchedule || paymentTerms || (usesNeutralIdentity() ? "" : "50% Advance, 40% Delivery, 10% Commissioning"),
     boqItems: boqItems || [],
 
     // Redesigned Manual Builder fields
@@ -6492,6 +6723,9 @@ app.post("/api/leads/:id/update-quote", async (req, res) => {
   if (!ctx) return res.status(404).json({ error: "Lead not found" });
   const { lead, resolved, supabase } = ctx;
 
+  if (payload.quote_type === "auto_sizer" && !moduleFlags().autoSizer) {
+    return res.status(403).json({ error: AUTOSIZER_DISABLED_MESSAGE, code: "module_disabled" });
+  }
   if (payload.quote_type === "auto_sizer" && !REQUIRE_EXPLICIT_QUOTE_SAVE) {
     return res.status(403).json({ error: "Auto Sizer quote updates are temporarily disabled." });
   }
@@ -6565,6 +6799,19 @@ app.post("/api/upload", async (req, res) => {
     if (!base64Input) {
       return res.status(400).json({ error: "base64Data or base64 field is required" });
     }
+
+    // A pilot company never writes to the shared public uploads folder (one folder for everybody, served without a sign-in): its
+    // images go to the company's own key space in the object store, where the plan storage limit is enforced. Images only.
+    if (isMultiCompanyEnabled() && usesNeutralIdentity()) {
+      if (!isRailwayObjectStorageConfigured()) return res.status(503).json({ error: "File storage is not available right now. Please try again in a minute.", code: "storage_unavailable", retryable: true });
+      let parsed;
+      try { parsed = parseQuoteAssetBase64Upload(base64Input); }
+      catch (e: any) { return res.status(400).json({ error: String(e?.message || "Invalid image.").replace("watermark ", "") }); }
+      const key = scopeObjectKey(`uploads/${Date.now()}-${randomUUID().slice(0, 12)}.${parsed.extension}`);
+      await putRailwayObject("quote-assets", key, parsed.buffer, parsed.contentType);
+      const dataUrl = String(base64Input).startsWith("data:") ? base64Input : `data:${parsed.contentType};base64,${base64Input}`;
+      return res.json({ url: buildRailwayObjectProxyUrl("quote-assets", key), dataUrl });
+    }
     
     const matches = base64Input.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
     let dataBuffer;
@@ -6591,6 +6838,7 @@ app.post("/api/upload", async (req, res) => {
     // Return both the file path URL and the original base64 data URL for direct storage
     res.json({ url: `/uploads/${cleanFilename}`, dataUrl: base64Input });
   } catch (err: any) {
+    if (respondStorageError(err, res)) return;
     res.status(500).json({ error: "Failed to upload file: " + err.message });
   }
 });
@@ -6608,6 +6856,7 @@ app.post("/api/quote-assets/watermark", async (req, res) => {
     );
     res.json(uploaded);
   } catch (err: any) {
+    if (respondStorageError(err, res)) return;
     res.status(400).json({ error: err.message || "Watermark upload failed." });
   }
 });
@@ -7594,14 +7843,19 @@ app.put("/api/admin/autosizer-presets", async (req, res) => {
   if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
   try {
     loadDb();
-    let latest: unknown = db.settings;
+    // Another company starts from its own (possibly empty) settings, never from the Sunchaser settings kept in the shared local copy,
+    // and its settings are never written to that shared copy.
+    const neutral = usesNeutralIdentity();
+    let latest: unknown = neutral ? {} : db.settings;
     if (isSupabaseActive()) {
       const state = await fetchAppStateFromSupabase();
       latest = state?.settings ?? latest;
     }
     const next = patchLatestSettingsWithAutoSizerPresets(latest, req.body);
-    db.settings = next;
-    saveDb();
+    if (!neutral) {
+      db.settings = next;
+      saveDb();
+    }
     if (isSupabaseActive()) {
       await upsertAppSettingsToSupabase(next);
     }
@@ -10011,7 +10265,7 @@ app.get("/api/export/pdf/auto-sizer/:leadId/download", async (req, res) => {
     if (rendered.exportBlocked) {
       return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
     }
-    const filename = buildQuotationPdfFilename(lead, quote);
+    const filename = buildQuotationPdfFilename(lead, quote, pdfFileBrand());
     await sendQuotationPdfResponse(res, rendered.html, filename);
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);
@@ -10104,7 +10358,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
           rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."
         );
       }
-      const filename = buildQuotationPdfFilename(lead, quoteForExport);
+      const filename = buildQuotationPdfFilename(lead, quoteForExport, pdfFileBrand());
       const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
       const token = stageQuotationPdf(pdfBuffer, filename);
       return res.json({
@@ -10119,7 +10373,7 @@ app.post("/api/export/pdf/manual-quote", async (req, res) => {
           rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format."
         );
       }
-      const filename = buildQuotationPdfFilename(lead, quoteForExport);
+      const filename = buildQuotationPdfFilename(lead, quoteForExport, pdfFileBrand());
       await sendQuotationPdfResponse(res, rendered.html, filename);
       return;
     }
@@ -10197,7 +10451,7 @@ async function compileTemplatePreviewHtml(
     const pageRow = (activeState.quoteTemplatePages || []).find((p: any) => p.id === pageId);
     pageTitle = pageRow?.title || "";
   }
-  const filename = buildTemplateTestPdfFilename(pageTitle, scope);
+  const filename = buildTemplateTestPdfFilename(pageTitle, scope, usesNeutralIdentity() ? "" : "sunchaser");
   return { html, filename };
 }
 
@@ -10223,6 +10477,11 @@ function takeStagedQuotationPdf(token: string) {
   if (!entry) return null;
   stagedQuotationPdfs.delete(token);
   return entry;
+}
+
+/** File-name prefix of exported quotation PDFs: the founding company keeps "Sunchaser", every other company gets none. */
+function pdfFileBrand(): string {
+  return usesNeutralIdentity() ? "" : "Sunchaser";
 }
 
 async function sendQuotationPdfResponse(
@@ -10419,7 +10678,7 @@ app.post("/api/export/pdf/stage-saved-quote", async (req, res) => {
     const { activeState, lead, quote, options } = resolved;
     const rendered = compileManualQuoteExportHtml(activeState, quote, lead, { ...options, hideActionBar: true });
     if (rendered.exportBlocked) return res.status(409).json({ error: rendered.exportBlockReason || "Quotation cannot be exported." });
-    const filename = buildQuotationPdfFilename(lead, quote);
+    const filename = buildQuotationPdfFilename(lead, quote, pdfFileBrand());
     const pdfBuffer = await renderQuotationHtmlToPdf(rendered.html);
     const token = stageQuotationPdf(pdfBuffer, filename);
     return res.json({ downloadUrl: `/api/export/pdf/staged-public/${token}`, filename, expiresInSeconds: 120 });
@@ -10496,7 +10755,7 @@ app.get("/api/export/pdf/manual-quote/:leadId/download", async (req, res) => {
     if (rendered.exportBlocked) {
       return res.status(409).type("text/plain").send(rendered.exportBlockReason || "Quotation cannot be exported in the standard 3-page format.");
     }
-    const filename = buildQuotationPdfFilename(lead, quote);
+    const filename = buildQuotationPdfFilename(lead, quote, pdfFileBrand());
     await sendQuotationPdfResponse(res, rendered.html, filename);
   } catch (err: any) {
     console.error("[PDF DOWNLOAD]", err);
@@ -10748,8 +11007,9 @@ if (!fs.existsSync(BACKUPS_DIR)) {
   fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 }
 
-setInterval(async () => {
+setInterval(() => runAsFoundingCompany(async () => {
   try {
+    if (isolationGuard.current().blocked) return;   // a backup read through the unfiltered client would mix companies
     let backupState: Database = db;
     if (isSupabaseActive()) {
       backupState = await fetchAppStateFromSupabase();
@@ -10767,13 +11027,14 @@ setInterval(async () => {
   } catch (err: any) {
     console.error("[Database Backup Error]:", err.message);
   }
-}, 24 * 60 * 60 * 1000); // 24-hour cycle schedule
+}), 24 * 60 * 60 * 1000); // 24-hour cycle schedule
 
 // Simple health check and status endpoints for separated deployments
 app.get("/health", (req, res) => {
   const revocation = revocationStatus();
   // sessionRevocationActive=false means logout/refresh rotation cannot revoke tokens (migration not applied or disabled).
-  res.json({ status: "ok", service: "sunchaser-crm", sessionRevocationActive: revocation.active });
+  const iso = isolationGuard.current();
+  res.json({ status: "ok", service: "sunchaser-crm", sessionRevocationActive: revocation.active, tenantIsolation: iso.blocked ? { paused: true, reason: iso.reason } : { paused: false } });
 });
 
 /** PDF engine diagnostic — confirms Playwright/Chromium availability on this host (Render, not Vercel). */
@@ -10840,6 +11101,7 @@ function logServerBuildIdentity() {
 async function startServer() {
   try {
     assertProductionJwtConfig();
+    assertMultiCompanyConfig();
   } catch (err) {
     console.error(
       "\x1b[31m%s\x1b[0m",
@@ -10849,6 +11111,47 @@ async function startServer() {
   }
 
   logServerBuildIdentity();
+
+  // Company isolation does not depend on the flag. Flag off: ask the database (the persistent marker, the companies, and every few minutes the tenant rows themselves)
+  // before serving anything, and keep asking (tenantIsolationGuard.ts). Flag on: the database's row-level policies isolate; the migration t1b must be there so that
+  // pilot companies can only be created behind the database barrier.
+  const statusRpc = async (deep: boolean) => {
+    const client = getUnguardedSystemSupabase();
+    if (!client) return { client: null as null, data: null as any, error: null as any };
+    const { data, error } = await client.rpc("saas_isolation_status", { p_deep: deep });
+    return { client, data: data as any, error: error as any };
+  };
+  const rpcMissing = (error: any) => /PGRST202|PGRST205|42883|Could not find the function|does not exist/i.test(`${error?.code || ""} ${error?.message || ""}`);
+  if (!isMultiCompanyEnabled()) {
+    isolationGuard.setDeps({
+      probe: async ({ deep }) => {
+        const { client, data, error } = await statusRpc(deep);
+        if (!client) return { tablesMissing: true };   // local JSON mode: one company by construction
+        if (!error && data) return { marker: data.mode === "multi" ? "multi" : "single", otherCompanies: Number(data.other_companies || 0), ...(deep ? { foreignRows: Boolean(data.foreign_rows) } : {}) };
+        if (error && !rpcMissing(error)) throw new Error(`the isolation status could not be read: ${error.message}`);
+        // t1b is not applied: no marker and no database barrier. Fall back to the companies table; a single-company database has none.
+        const r = await client.from("companies").select("id").neq("id", FOUNDING_COMPANY_ID).limit(1);
+        if (r.error) {
+          if (/PGRST205|42P01|Could not find the table|does not exist/i.test(`${(r.error as any).code || ""} ${r.error.message || ""}`)) return { tablesMissing: true };
+          throw new Error(`companies could not be read: ${r.error.message}`);
+        }
+        return { otherCompanies: (r.data || []).length };
+      },
+    });
+    await isolationGuard.refresh();
+    isolationGuard.arm();
+    isolationGuard.start();
+    const st = isolationGuard.current();
+    if (st.blocked) console.error(`\x1b[31m%s\x1b[0m`, `🚨 [TENANT ISOLATION] Serving is PAUSED (${st.reason}): ${st.detail} Enable MULTI_COMPANY_ENABLED with the tenant key, or export and remove the other companies' data.`);
+  } else {
+    const { client, data, error } = await statusRpc(false);
+    if (client && error && rpcMissing(error)) {
+      console.error("\x1b[31m%s\x1b[0m", "🚨 [CRITICAL] MULTI_COMPANY_ENABLED=true needs migration t1b-tenancy-barrier (the database barrier that keeps older backends and scripts away from pilot data). Apply it first: node scripts/migrations/run.mjs apply --to t1b-tenancy-barrier");
+      process.exit(1);
+    }
+    if (client && error) { console.error("\x1b[31m%s\x1b[0m", `🚨 [CRITICAL] the isolation status could not be read: ${error.message}`); process.exit(1); }
+    if (client && data?.mode !== "multi") console.warn(`[tenant-isolation] the tenancy marker is OFF: pilot companies cannot be created until the operator runs select app.tenancy_enable() and node scripts/saas/verify-barrier.mjs (docs/ops/STAGING_REHEARSAL_RUNBOOK.md).`);
+  }
 
   // Optional deployment gate for hosts that must prove Playwright/Chromium
   // availability before accepting traffic. Disabled by default.

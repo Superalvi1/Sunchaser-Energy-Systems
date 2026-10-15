@@ -1,0 +1,59 @@
+PASS: both company administrators sign in bound to their own company
+PASS: ALPHA64A3A8: before any setting, its quotation document is produced (200) and carries no Sunchaser value
+PASS: ALPHA64A3A8: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
+PASS: ALPHA64A3A8: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
+PASS: ALPHA64A3A8: its boot state has no Sunchaser text at all
+PASS: BETA64A3A8: before any setting, its quotation document is produced (200) and carries no Sunchaser value
+PASS: BETA64A3A8: before any setting, its invoice document is produced (200), carries no Sunchaser value and offers no bank account
+PASS: BETA64A3A8: its boot state carries no Sunchaser default package catalogue, bank account, term or PDF setting
+PASS: BETA64A3A8: its boot state has no Sunchaser text at all
+PASS: a non-administrator (Sales Executive) cannot change branding
+PASS: a non-administrator cannot change bank accounts
+PASS: a script link as logo is refused
+PASS: a bank account without an account number is refused
+PASS: a validity of 0 days is refused
+PASS: ALPHA64A3A8: administrator saves branding, bank account, terms and price settings
+PASS: ALPHA64A3A8: reads back exactly what it saved
+PASS: BETA64A3A8: administrator saves branding, bank account, terms and price settings
+PASS: BETA64A3A8: reads back exactly what it saved
+PASS: alpha's settings contain nothing of beta's, and beta's nothing of alpha's
+PASS: settings keys are stored per company (<company>:<key>); no plain key was written for a pilot company
+PASS: the founding company's settings rows are untouched by all of that
+PASS: the bank accounts and terms are stored under the saving company only
+PASS: ALPHA64A3A8: quotation shows its own name, address, logo and terms
+PASS: ALPHA64A3A8: quotation prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: ALPHA64A3A8: quotation shows its amounts (rate 41000 x 8 = 328000)
+PASS: ALPHA64A3A8: quotation carries nothing of BETA64A3A8 and nothing of Sunchaser
+PASS: ALPHA64A3A8: quotation validity follows the company setting (14 days)
+PASS: ALPHA64A3A8: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
+PASS: ALPHA64A3A8: invoice shows its amounts (328000)
+PASS: ALPHA64A3A8: invoice carries nothing of BETA64A3A8 (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
+PASS: BETA64A3A8: quotation shows its own name, address, logo and terms
+PASS: BETA64A3A8: quotation prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: BETA64A3A8: quotation shows its amounts (rate 36000 x 9 = 324000)
+PASS: BETA64A3A8: quotation carries nothing of ALPHA64A3A8 and nothing of Sunchaser
+PASS: BETA64A3A8: quotation validity follows the company setting (5 days)
+PASS: BETA64A3A8: invoice shows its own name, address, e-mail, bank name, account title, account number and IBAN
+PASS: BETA64A3A8: invoice shows its amounts (324000)
+PASS: BETA64A3A8: invoice carries nothing of ALPHA64A3A8 (name, bank) and nothing of Sunchaser (name, bank accounts, logo, signature)
+PASS: ALPHA64A3A8: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
+PASS: ALPHA64A3A8: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
+PASS: BETA64A3A8: the quotation saved after the settings froze them (settingsSnapshot: name, address, bank, price settings; termsSnapshot)
+PASS: BETA64A3A8: the quotation saved BEFORE any setting froze the empty identity (no Sunchaser value, no other company's value)
+PASS: alpha raises the price of its panel in its own price list
+PASS: alpha's historical quotation still shows its ORIGINAL name, address and terms after they were changed
+PASS: alpha's historical quotation still shows its ORIGINAL prices and total after the price list changed
+PASS: alpha's historical quotation document is the same document in every amount (original total, original rate)
+PASS: re-saving the historical quotation keeps its original settings snapshot
+PASS: ...and it is still rendered with the original name after the re-save
+PASS: alpha's NEW quotation uses the new name, address, terms and the new price
+PASS: beta's documents are unchanged by alpha's changes (own name, terms, bank; nothing of alpha's new values)
+PASS: beta's price list is unchanged by alpha's price change
+PASS: alpha's issued invoice keeps its amounts after the price list changed
+PASS: ALPHA64A3A8: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
+PASS: BETA64A3A8: cannot change a Sunchaser seed product through the shared local copy (answers like a missing product)
+PASS: ...and no product row was copied into either company
+PASS: beta cannot change alpha's product
+PASS: the founding company's settings rows are still untouched at the end
+
+57 passed, 0 failed

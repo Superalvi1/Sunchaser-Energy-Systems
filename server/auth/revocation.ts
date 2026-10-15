@@ -15,7 +15,7 @@
  *    revocations, the state is loud (warning + /health) and identical to the not-yet-migrated state.
  */
 import type { Database } from "../../dbManager";
-import { getSupabase, isSupabaseActive } from "../../dbManager.ts";
+import { getSystemSupabase, isSupabaseActive } from "../../dbManager.ts";
 import type { SessionKeys } from "./jwt.ts";
 
 export type RevocationRow = { jti: string; user_id: string; expires_at: string; revoked_at: string };
@@ -95,7 +95,7 @@ function markActive(): void {
 }
 
 function supabaseBackend(): RevocationBackend {
-  const client = () => getSupabase()!;
+  const client = () => getSystemSupabase()!; // revoked_sessions is global identity data: never read through a company-scoped client
   return {
     async find(keys) {
       const { data, error } = await client().from("revoked_sessions").select("jti,user_id,expires_at,revoked_at").in("jti", keys);

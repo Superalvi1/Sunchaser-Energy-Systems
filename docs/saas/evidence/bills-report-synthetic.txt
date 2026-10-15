@@ -1,0 +1,18 @@
+bills report (read-only) for t_scratch_copy at 2026-10-13T20:25:59Z
+-- columns
+id text not null
+bill_number text not null
+amount numeric not null
+created_at timestamp with time zone default now()
+-- constraints
+bills_bill_number_key UNIQUE (bill_number)
+bills_pkey PRIMARY KEY (id)
+-- indexes
+CREATE UNIQUE INDEX bills_pkey ON public.bills USING btree (id)
+CREATE UNIQUE INDEX bills_bill_number_key ON public.bills USING btree (bill_number)
+-- triggers
+-- policies / grants
+-- rows
+2
+-- has company_id?
+0

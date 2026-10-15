@@ -124,12 +124,27 @@ export type InvoiceRecord = {
   notes: string | null;
   terms: string | null;
   pdfUrl: string | null;
+  /** null/absent = a legacy invoice (created before snapshots existed). */
+  issuanceSnapshot?: InvoiceIssuanceSnapshot | null;
   items?: InvoiceLineItem[];
   payments?: InvoicePaymentRow[];
   createdBy?: string | null;
   updatedBy?: string | null;
   createdAt?: string;
   updatedAt?: string;
+};
+
+/**
+ * What a NEW invoice keeps of the company's settings at the moment it is created (database: invoices.issuance_snapshot, written once).
+ * Reprints show these bank accounts and these company terms, whatever the company changes afterwards. An invoice created before the
+ * snapshot existed has none ("legacy") and prints from the company's current settings; nothing is back-filled.
+ */
+export type InvoiceIssuanceSnapshot = {
+  version: 1;
+  capturedAt: string;
+  bankAccounts: Array<{ bankName: string; accountTitle: string; accountNumber: string; iban: string; branchCode?: string; sortOrder?: number }>;
+  /** The company-level terms (settings, or the built-in wording) that applied; an invoice's own terms text still takes precedence. */
+  companyTerms: string;
 };
 
 export type InvoicePaymentRow = {

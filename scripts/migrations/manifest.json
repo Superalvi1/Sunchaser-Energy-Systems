@@ -1,0 +1,157 @@
+{
+ "version": 1,
+ "comment": "Ordered list of the database migrations the CRM release and the SaaS pilot need. The SQL files stay where they are; this file adds order, dependencies, rollbacks and a probe that says whether a migration's effect is present. Never edit a migration that has been applied anywhere: add a new one (the runner refuses on a checksum change).",
+ "migrations": [
+  {
+   "id": "r1-smart-quote-versions",
+   "series": "release",
+   "file": "scripts/smart-quote-versions-schema.sql",
+   "rollback": "scripts/smart-quote-versions-rollback.sql",
+   "requires": [],
+   "gate": "G3",
+   "probe": "select to_regclass('public.smart_quote_versions') is not null",
+   "note": "Smart Quote versions (M1 of the repair release)."
+  },
+  {
+   "id": "r2-session-revocation",
+   "series": "release",
+   "file": "scripts/session-revocation-schema.sql",
+   "rollback": "scripts/session-revocation-rollback.sql",
+   "requires": [],
+   "gate": "G3",
+   "probe": "select to_regclass('public.revoked_sessions') is not null",
+   "note": "Server-side logout and session revocation (M2)."
+  },
+  {
+   "id": "r3-invoice-payments-integrity",
+   "series": "release",
+   "file": "scripts/invoice-payments-integrity.sql",
+   "rollback": "scripts/invoice-payments-integrity-rollback.sql",
+   "requires": [],
+   "gate": "G3",
+   "probe": "select to_regprocedure('public.invoice_payments_before_insert()') is not null",
+   "note": "Payment ledger guard, revision 2 (M3). The old application code returns 500 on payments once this exists: deploy the new backend first."
+  },
+  {
+   "id": "r4-invoice-save-atomic",
+   "series": "release",
+   "file": "scripts/invoice-save-atomic.sql",
+   "rollback": "scripts/invoice-save-atomic-rollback.sql",
+   "requires": [
+    "r3-invoice-payments-integrity"
+   ],
+   "gate": "G3",
+   "probe": "select to_regprocedure('public.invoice_save_atomic(text,timestamptz,jsonb,jsonb)') is not null",
+   "note": "Atomic invoice save (M4)."
+  },
+  {
+   "id": "t1-company-foundation",
+   "series": "tenant",
+   "file": "scripts/saas/phase2-company-foundation.sql",
+   "rollback": "scripts/saas/phase2-company-foundation-rollback.sql",
+   "requires": [
+    "r2-session-revocation",
+    "r4-invoice-save-atomic"
+   ],
+   "gate": "G3+G4",
+   "probe": "select to_regclass('public.companies') is not null and to_regprocedure('app.default_company_id()') is not null",
+   "note": "Companies, memberships, tenant role, row-level security, same-company reference checks. Run scripts/saas/phase2-preflight.sql first."
+  },
+  {
+   "id": "t1b-tenancy-barrier",
+   "series": "tenant",
+   "file": "scripts/saas/phase2i-tenancy-barrier.sql",
+   "rollback": "scripts/saas/phase2i-tenancy-barrier-rollback.sql",
+   "requires": [
+    "t1-company-foundation"
+   ],
+   "gate": "G3+G4",
+   "probe": "select to_regprocedure('app.saas_pre_request()') is not null and to_regprocedure('public.saas_isolation_status(boolean)') is not null",
+   "note": "Persistent tenancy marker and database-enforced barrier (PostgREST pre-request): while the marker is on, service-role requests that do not declare multi-company mode are refused; pilot companies cannot be created until the barrier is verified. Applies right after t1 so that partial rollbacks of t2..t8 keep the barrier. Rollback is refused while any pilot company or marker exists."
+  },
+  {
+   "id": "t2-ownership",
+   "series": "tenant",
+   "file": "scripts/saas/phase2b-ownership.sql",
+   "rollback": "scripts/saas/phase2b-ownership-rollback.sql",
+   "requires": [
+    "t1-company-foundation"
+   ],
+   "gate": "G3+G4",
+   "probe": "select to_regprocedure('app.acting_company_id()') is not null",
+   "note": "Company ownership inside the invoice trigger and invoice_save_atomic paths."
+  },
+  {
+   "id": "t3-document-numbering",
+   "series": "tenant",
+   "file": "scripts/saas/phase2c-document-numbering.sql",
+   "rollback": "scripts/saas/phase2c-document-numbering-rollback.sql",
+   "requires": [
+    "t2-ownership"
+   ],
+   "gate": "G3+G4",
+   "probe": "select to_regclass('public.document_counters') is not null and to_regprocedure('public.next_document_number(text,text,text,int)') is not null",
+   "note": "Atomic per-company invoice numbers. Refuses to run for the founding company without an owner-set floor (insert into app.config ... 'document_floor.sunchaser.invoice.<year>')."
+  },
+  {
+   "id": "t4-company-settings",
+   "series": "tenant",
+   "file": "scripts/saas/phase2d-company-settings.sql",
+   "rollback": "scripts/saas/phase2d-company-settings-rollback.sql",
+   "requires": [
+    "t1-company-foundation"
+   ],
+   "gate": "G3+G4",
+   "probe": "select exists (select 1 from pg_constraint where conname = 'settings_company_key_scope')",
+   "note": "Settings and website content keys of companies other than the founding one must be '<company>:<key>' (the database enforces what the application does)."
+  },
+  {
+   "id": "t5-subscriptions",
+   "series": "tenant",
+   "file": "scripts/saas/phase2e-subscriptions.sql",
+   "rollback": "scripts/saas/phase2e-subscriptions-rollback.sql",
+   "requires": [
+    "t1-company-foundation"
+   ],
+   "gate": "G3+G4",
+   "probe": "select to_regclass('public.saas_subscriptions') is not null and to_regprocedure('public.saas_create_company(text,text,text,integer,jsonb,jsonb)') is not null",
+   "note": "Plans, manual subscriptions and payment ledger, audit trail, plan limits enforced by triggers, atomic company onboarding. The pilot plan is a placeholder (pricing is undecided)."
+  },
+  {
+   "id": "t6-invoice-issuance-snapshot",
+   "series": "tenant",
+   "file": "scripts/saas/phase2f-invoice-issuance-snapshot.sql",
+   "rollback": "scripts/saas/phase2f-invoice-issuance-snapshot-rollback.sql",
+   "requires": [
+    "t1-company-foundation"
+   ],
+   "gate": "G3+G4",
+   "probe": "select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'issuance_snapshot')",
+   "note": "New invoices keep the bank accounts and company terms they were issued with (write-once). Older invoices stay NULL and print from current settings, labelled legacy. The backend works with or without this column."
+  },
+  {
+   "id": "t7-company-admin",
+   "series": "tenant",
+   "file": "scripts/saas/phase2g-company-admin.sql",
+   "rollback": "scripts/saas/phase2g-company-admin-rollback.sql",
+   "requires": [
+    "t5-subscriptions"
+   ],
+   "gate": "G3+G4",
+   "probe": "select to_regclass('public.company_settings_audit') is not null",
+   "note": "Plan storage limit (max_storage_mb) and the append-only history of company settings changes. The backend works without it (no storage limit, no history)."
+  },
+  {
+   "id": "t8-storage-reservations",
+   "series": "tenant",
+   "file": "scripts/saas/phase2h-storage-reservations.sql",
+   "rollback": "scripts/saas/phase2h-storage-reservations-rollback.sql",
+   "requires": [
+    "t7-company-admin"
+   ],
+   "gate": "G3+G4",
+   "probe": "select to_regclass('public.saas_storage_reservations') is not null and to_regprocedure('public.saas_storage_reserve(text,bigint,bigint,bigint,bigint,integer,integer)') is not null",
+   "note": "Atomic storage reservations across server processes: a per-company locked reserve/settle function pair. Pilot companies' uploads need it (without it they are refused with a retryable 'could not verify storage'); the founding company and single-company mode never use it."
+  }
+ ]
+}

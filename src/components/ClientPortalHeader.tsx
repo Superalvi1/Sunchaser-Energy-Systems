@@ -1,7 +1,7 @@
 import React from "react";
 import { LogOut, MessageCircle, Phone } from "lucide-react";
 import type { CompanyBranding } from "../lib/branding";
-import { CUSTOMER_PORTAL_VERSION, portal, supportPhoneFromBranding, whatsAppHref } from "../lib/clientPortalUi";
+import { CUSTOMER_PORTAL_VERSION, portal, isNeutralPortal, portalCompanyLabel, portalCompanyName, supportPhoneFromBranding, whatsAppHref } from "../lib/clientPortalUi";
 import { withOfficialBranding } from "../lib/brandingAssets";
 import AppLogo from "./AppLogo";
 
@@ -32,17 +32,18 @@ export default function ClientPortalHeader({
   onLogout,
 }: ClientPortalHeaderProps) {
   const branding = withOfficialBranding(rawBranding);
-  const phone = supportPhoneFromBranding(branding.phoneNumbers);
-  const waLink = whatsAppHref(phone, `Hello Sunchaser, I need assistance. Customer: ${customerName}`);
+  const phone = supportPhoneFromBranding(branding.phoneNumbers, branding);
+  const waLink = phone ? whatsAppHref(phone, `Hello ${portalCompanyLabel(branding)}, I need assistance. Customer: ${customerName}`) : "";
+  const companyName = portalCompanyName(branding);
 
   return (
     <header className={portal.header}>
       <div className={`${portal.main} py-4 space-y-4`}>
         <div className="flex items-start gap-3">
-          <AppLogo logoUrl={branding.logoUrl} className="h-11 w-auto shrink-0" />
+          <AppLogo logoUrl={branding.logoUrl} className="h-11 w-auto shrink-0" neutral={isNeutralPortal(branding)} alt={companyName || undefined} nameFallback={false} />
           <div className="min-w-0 flex-1">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-amber-400/90">
-              Sunchaser Energy Systems
+              {companyName}
             </p>
             <h1 className="text-lg font-bold text-white truncate mt-0.5">{customerName}</h1>
             <p className="text-[11px] text-slate-500 font-mono mt-1 truncate">ID {customerId}</p>
@@ -71,7 +72,7 @@ export default function ClientPortalHeader({
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        {phone && <div className="grid grid-cols-2 gap-2">
           <a
             href={waLink}
             target="_blank"
@@ -88,7 +89,7 @@ export default function ClientPortalHeader({
             <Phone className="h-4 w-4 text-amber-400" />
             Call
           </a>
-        </div>
+        </div>}
 
         <div className={portal.divider} aria-hidden />
       </div>

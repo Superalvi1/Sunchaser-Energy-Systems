@@ -1,0 +1,15 @@
+PASS: two-company user: the company-selection screen appears after sign-in, listing both companies with their roles
+PASS: ...and the CRM has NOT loaded behind it: the server answers a refusal and no data until a company is chosen
+PASS: choosing Alpha opens the CRM bound to Alpha with the role held there
+PASS: 'Switch company' (/select-company) lists both companies and marks the current one
+PASS: after switching AND a full page reload (session restore + token renewal), the session is still bound to Beta with Beta's role (not the global role)
+PASS: single-company user: no selection screen, straight into the CRM of the one company
+PASS: a user who belongs to no company gets a clear message, not a broken CRM
+PASS: operator without a company lands on the platform console and sees the company list
+PASS: onboarding through the form shows the temporary password once and the new company in the list
+PASS: a manual payment recorded in the console shows in the company's paid total and period end
+PASS: suspending from the console shows the status
+PASS: the new company's administrator signs in with the temporary password and opens an empty CRM of their own company
+PASS: typing /platform as a company user shows no console
+
+13 passed, 0 failed

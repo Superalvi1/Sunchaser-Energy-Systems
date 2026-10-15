@@ -1,3 +1,5 @@
+import { usePlatformInfo, PlatformWordmark } from "./PlatformMark";
+import { loadPlatformInfo } from "../services/api";
 import React, { useEffect, useMemo, useState } from "react";
 import { Key, Lock, Loader2, UserPlus, Mail, ArrowLeft } from "lucide-react";
 import {
@@ -11,6 +13,8 @@ import { LOGIN_UNABLE_CONNECT_MESSAGE } from "../lib/startupFetch";
 import { SELF_REGISTER_ROLES } from "../lib/roles";
 import type { User } from "../types";
 import AppLogo from "./AppLogo";
+import CompanySelectScreen from "./CompanySelectScreen";
+import type { LoginCompany } from "../services/api";
 
 type AuthMode = "login" | "register" | "forgot" | "reset" | "verify";
 
@@ -38,6 +42,8 @@ function readUrlAuthHint(): { mode: AuthMode; token: string } | null {
 
 export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHubProps) {
   const urlHint = useMemo(() => readUrlAuthHint(), []);
+  const platform = usePlatformInfo();
+  useEffect(() => { void loadPlatformInfo(); }, []);
   const [mode, setMode] = useState<AuthMode>(urlHint?.mode || "login");
   const [username, setUsername] = useState(initialUsername);
   const [password, setPassword] = useState("");
@@ -52,6 +58,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [picking, setPicking] = useState<{ user: User; companies: LoginCompany[] } | null>(null);
 
   useEffect(() => {
     if (urlHint?.mode === "verify" && urlHint.token) {
@@ -87,6 +94,20 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
       const res = await loginUser({ username, password });
       if (!res.success || !res.user) {
         setError("Login authorization rejected.");
+        return;
+      }
+      // Several companies: the user chooses which one this session acts for before the CRM loads.
+      if (res.companies && res.companies.length > 1 && !res.companyId) {
+        setPicking({ user: res.user, companies: res.companies });
+        return;
+      }
+      // An operator who belongs to no company goes to the platform console.
+      if (res.companies && res.companies.length === 0 && res.user.isPlatformAdmin) {
+        window.location.assign("/platform");
+        return;
+      }
+      if (res.companies && res.companies.length === 0 && res.user.role !== "Customer") {
+        setError("Your account is not active in any company. Contact your administrator.");
         return;
       }
       await onLoginSuccess(res.user);
@@ -183,14 +204,18 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
             ? "Email verification"
             : "Sign in";
 
+  if (picking) {
+    return <CompanySelectScreen companies={picking.companies} onSelected={async (user) => { setPicking(null); await onLoginSuccess(user); }} onCancel={() => setPicking(null)} />;
+  }
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 py-6 fade-in-entry">
       <div className="text-center space-y-2">
-        <AppLogo className="h-14 w-auto mx-auto mb-2" />
+        {platform ? <PlatformWordmark name={platform.platformName} /> : <AppLogo className="h-14 w-auto mx-auto mb-2" />}
         <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold">
-          SUNCHASER ACCESS
+          {platform ? platform.platformName.toUpperCase() : "SUNCHASER ACCESS"}
         </span>
-        <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-white">Solar Business Login Hub</h2>
+        <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-white">{platform ? "Sign in to your company" : "Solar Business Login Hub"}</h2>
         <p className="text-slate-400 text-sm max-w-lg mx-auto">
           Staff, technicians, sales, and customers — register or sign in with role-based access.
         </p>
@@ -247,7 +272,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
                 className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-extrabold text-sm py-3 rounded-xl flex items-center justify-center gap-2"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Key className="h-4 w-4" />}
-                {busy ? "Connecting to Sunchaser..." : "Sign in"}
+                {busy ? `Connecting to ${platform ? platform.platformName : "Sunchaser"}...` : "Sign in"}
               </button>
               <div className="flex flex-col gap-2 pt-2 text-center text-[11px] text-slate-400">
                 <button type="button" className="hover:text-amber-400" onClick={() => setMode("forgot")}>
@@ -314,7 +339,7 @@ export default function AuthHub({ onLoginSuccess, initialUsername = "" }: AuthHu
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm font-mono"
                   />
                   <p className="text-[10px] text-slate-500">
-                    Enter the code from Sunchaser staff to link your existing quotations and invoices. Leave blank if you do not have one.
+                    Enter the code from {platform ? "your company" : "Sunchaser staff"} to link your existing quotations and invoices. Leave blank if you do not have one.
                   </p>
                 </>
               )}

@@ -1,0 +1,84 @@
+PASS: both companies sign in bound to their own company
+PASS: ALPHA2761C6: lead created
+PASS: ALPHA2761C6: quotation created
+PASS: ALPHA2761C6: contracting the lead created an invoice
+PASS: ALPHA2761C6: invoice is stored under co_alpha
+PASS: ALPHA2761C6: the atomic edit replaced the lines (2 lines, total 125000)
+PASS: ALPHA2761C6: every line belongs to co_alpha
+PASS: ALPHA2761C6: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: ALPHA2761C6: over-payment refused
+PASS: ALPHA2761C6: final payment accepted and the invoice is Paid with balance 0
+PASS: ALPHA2761C6: all payments carry co_alpha
+PASS: ALPHA2761C6: invoice document produced and contains its own lines and customer
+PASS: ALPHA2761C6: quotation document produced and contains its own customer
+PASS: ALPHA2761C6: document uploaded, stored under co_alpha
+PASS: BETA2761C6: lead created
+PASS: BETA2761C6: quotation created
+PASS: BETA2761C6: contracting the lead created an invoice
+PASS: BETA2761C6: invoice is stored under co_beta
+PASS: BETA2761C6: the atomic edit replaced the lines (2 lines, total 68000)
+PASS: BETA2761C6: every line belongs to co_beta
+PASS: BETA2761C6: the partial payment, and its replay with the same request id, recorded ONE payment
+PASS: BETA2761C6: over-payment refused
+PASS: BETA2761C6: final payment accepted and the invoice is Paid with balance 0
+PASS: BETA2761C6: all payments carry co_beta
+PASS: BETA2761C6: invoice document produced and contains its own lines and customer
+PASS: BETA2761C6: quotation document produced and contains its own customer
+PASS: BETA2761C6: document uploaded, stored under co_beta
+   invoice numbers: alpha INV-2026-0001, beta INV-2026-0001
+PASS: each company's first invoice is INV-<year>-0001: two independent sequences (run on a clean stack: seed --cleanup first)
+PASS: both companies hold the same invoice number without a conflict
+PASS: each company's counter stands at 1
+PASS: the founding company's invoice counter is untouched by the pilot companies' invoices (stays at 167)
+PASS: ALPHA2761C6->BETA2761C6: cannot read the invoice
+PASS: ALPHA2761C6->BETA2761C6: cannot get the invoice PDF
+PASS: ALPHA2761C6->BETA2761C6: cannot get the quotation PDF
+PASS: ALPHA2761C6->BETA2761C6: cannot edit the invoice
+PASS: ALPHA2761C6->BETA2761C6: cannot pay the invoice
+PASS: ALPHA2761C6->BETA2761C6: cannot delete the invoice
+PASS: ALPHA2761C6->BETA2761C6: cannot list the customer's documents
+PASS: ALPHA2761C6->BETA2761C6: cannot upload onto the customer
+PASS: ALPHA2761C6->BETA2761C6: cannot change the lead
+PASS: ALPHA2761C6->BETA2761C6: cannot read the quotation versions
+PASS: BETA2761C6->ALPHA2761C6: cannot read the invoice
+PASS: BETA2761C6->ALPHA2761C6: cannot get the invoice PDF
+PASS: BETA2761C6->ALPHA2761C6: cannot get the quotation PDF
+PASS: BETA2761C6->ALPHA2761C6: cannot edit the invoice
+PASS: BETA2761C6->ALPHA2761C6: cannot pay the invoice
+PASS: BETA2761C6->ALPHA2761C6: cannot delete the invoice
+PASS: BETA2761C6->ALPHA2761C6: cannot list the customer's documents
+PASS: BETA2761C6->ALPHA2761C6: cannot upload onto the customer
+PASS: BETA2761C6->ALPHA2761C6: cannot change the lead
+PASS: BETA2761C6->ALPHA2761C6: cannot read the quotation versions
+PASS: the victims' invoices, lines, payments, documents and leads are byte-for-byte unchanged by all of those attacks
+PASS: ALPHA2761C6: its own stored file downloads through its signed link and is the file it uploaded
+PASS: ALPHA2761C6: the object key does not contain the other company's ids
+PASS: BETA2761C6: its own stored file downloads through its signed link and is the file it uploaded
+PASS: BETA2761C6: the object key does not contain the other company's ids
+PASS: every file link is an expiring link (exp is in the URL and covered by the signature)
+PASS: stored object keys sit under the company's own prefix (c/<company>/...)
+PASS: alpha cannot fetch beta's file with alpha's signature (the signature belongs to one object)
+PASS: beta cannot fetch alpha's file with beta's signature
+PASS: a guessed signature is refused
+PASS: alpha's link with a LONGER expiry is refused (the expiry is signed)
+PASS: alpha's link without the expiry does not become a permanent link
+PASS: a file link without a signature is refused
+PASS: alpha's signature cannot be re-used for beta's key (key swapped in the URL)
+PASS: a permanent (v1) link for alpha's key, signed with the real secret, is refused
+PASS: authorised access: alpha's session downloads alpha's file without any link
+PASS: authorised access: beta's session cannot download alpha's file
+PASS: authorised access: alpha's session cannot download beta's file
+PASS: authorised access: no session, no file
+PASS: authorised access: a path-traversal key is refused
+PASS: authorised access: a company cannot ask for a founding-company (unprefixed) key
+PASS: a founding-company permanent link (existing stored links) still works while STORAGE_LEGACY_LINKS is not off
+   swept (HTTP 200): alpha /api/state /api/admin/invoices /api/admin/invoices/contracted-ready /api/admin/finance/summary /api/admin/finance/projects /api/admin/finance/dashboard /api/export/leads | beta /api/state /api/admin/invoices /api/admin/invoices/contracted-ready /api/admin/finance/summary /api/admin/finance/projects /api/admin/finance/dashboard /api/export/leads
+PASS: canary sweep: nothing of beta's (names, items, file text, ids, file links) appears in anything alpha received (18 responses and documents)
+PASS: canary sweep: nothing of alpha's appears in anything beta received (18 responses and documents)
+PASS: the sweep really covered list, export and state endpoints for both companies
+PASS: sanity: each company's own canary IS visible to itself (the sweep can detect canaries)
+PASS: no invoice line, payment or document belongs to a different company than its parent
+PASS: each company's ledger equals its invoice header
+   KNOWN GAPS (not hidden): the SPA still downloads documents through links (it does not yet use the authorised route); documents are checked as server-rendered HTML here - the Chromium PDF check is a separate run; company branding/bank/terms are proven in company-settings.mjs.
+
+79 passed, 0 failed

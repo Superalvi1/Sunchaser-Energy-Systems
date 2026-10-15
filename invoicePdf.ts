@@ -1,7 +1,10 @@
 import type { InvoiceRecord } from "./src/lib/invoices.ts";
 import { amountInWordsPkr } from "./src/lib/amountInWords.ts";
-import type { InvoicePdfOptions, InvoiceProjectInfo } from "./src/lib/invoicePdfMeta.ts";
+import type { InvoiceProjectInfo } from "./src/lib/invoicePdfMeta.ts";
+import type { InvoicePdfOptions } from "./invoicePdfResolve.ts";
 import { stripInvoiceMeta } from "./src/lib/invoicePdfMeta.ts";
+import { identityDefault, isNeutralBranding } from "./src/lib/documentIdentity.ts";
+import { qrDataUri } from "./src/lib/localQr.ts";
 
 export type BrandingConfig = {
   companyName?: string;
@@ -28,6 +31,8 @@ export type BrandingConfig = {
     showOnInvoice?: boolean;
   }>;
   signatureConfigured?: boolean;
+  /** false = another company: no Sunchaser default is used (src/lib/documentIdentity.ts). */
+  legacyDefaults?: boolean;
 };
 
 function isValidIban(iban: string): boolean {
@@ -67,7 +72,7 @@ export const DEFAULT_INVOICE_BANK_ACCOUNTS = [
 ];
 
 /** Invoice PDF: only active accounts explicitly marked show_on_invoice with verified fields. */
-export function normalizeInvoiceBankAccounts(accounts: any[] = []) {
+export function normalizeInvoiceBankAccounts(accounts: any[] = [], options: { neutral?: boolean } = {}) {
   const normalized = (accounts || [])
     .filter((b) => b && b.isActive !== false && b.is_active !== false)
     .filter((b) => !!(b.showOnInvoice ?? b.show_on_invoice))
@@ -77,6 +82,9 @@ export function normalizeInvoiceBankAccounts(accounts: any[] = []) {
       accountNumber: String(b.accountNumber || b.account_number || b.accountNo || "").trim(),
       iban: String(b.iban || "N/A").trim() || "N/A",
       sortOrder: Number(b.sortOrder ?? b.sort_order ?? 0),
+      // Normalising twice (the payload builder, then the template) must keep the accounts. For the founding company the second pass
+      // drops them and the three default accounts print; that existing behaviour is left as it is (see docs/saas/PILOT_FOUNDATION_REPORT.md).
+      ...(options.neutral ? { isActive: true, showOnInvoice: true } : {}),
     }))
     .filter(
       (b) =>
@@ -87,7 +95,18 @@ export function normalizeInvoiceBankAccounts(accounts: any[] = []) {
     )
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
+  // Another company with no visible account shows none: Sunchaser's accounts must never be offered as where to pay it.
+  if (options.neutral) return normalized;
   return normalized.length ? normalized : DEFAULT_INVOICE_BANK_ACCOUNTS;
+}
+
+/** The built-in company-level terms line, used when a company has set none. */
+export function defaultInvoiceTerms(neutral: boolean): string {
+  return identityDefault(
+    neutral,
+    "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for choosing Sunchaser Energy Systems.",
+    "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for your business."
+  );
 }
 
 const fmt = (n: number) => "Rs " + Math.round(n || 0).toLocaleString("en-PK");
@@ -121,7 +140,7 @@ export function normalizeBankAccounts(accounts: any[] = []) {
 }
 
 function paymentQrUrl(invoice: InvoiceRecord, branding: BrandingConfig): string {
-  const company = branding.companyName || "Sunchaser Energy Systems";
+  const company = branding.companyName || identityDefault(isNeutralBranding(branding), "Sunchaser Energy Systems", "");
   const text = [
     company,
     `Invoice: ${invoice.invoiceNumber}`,
@@ -129,7 +148,7 @@ function paymentQrUrl(invoice: InvoiceRecord, branding: BrandingConfig): string 
     `Balance: ${fmt(invoice.balanceDue)}`,
     `Due: ${formatDate(invoice.dueDate)}`,
   ].join("\n");
-  return `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(text)}`;
+  return qrDataUri(text, 140); // generated locally; the invoice details are not sent to any QR service
 }
 
 function statusBadgeClass(status: string): string {
@@ -167,25 +186,23 @@ export function compileInvoicePDFHtml(
   const purple = branding.primaryColor || "#7c6cf0";
   const navy = branding.secondaryColor || "#1a2b4c";
   const gold = branding.accentColor || "#c5a028";
-  const company = branding.companyName || "Sunchaser Energy Systems";
+  const neutral = isNeutralBranding(branding);
+  const company = branding.companyName || identityDefault(neutral, "Sunchaser Energy Systems", "");
   const offices = branding.officeLocations?.length
     ? branding.officeLocations
-    : (branding.officeAddress || "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore")
+    : (branding.officeAddress || identityDefault(neutral, "Plaza No. 47-MB, 2nd Floor, DHA Phase 6, Lahore", ""))
         .split("|")
         .map((s) => s.trim())
         .filter(Boolean);
-  const phones = branding.phoneNumbers || "0321-8486752, 0309-0236666";
-  const email = branding.billingEmail || "ceo.sunchaser@gmail.com";
-  const website = branding.websiteUrl || "www.sunchaserenergy.co";
-  const logo = branding.invoiceLogoUrl || branding.logoUrl || "/assets/sunchaser-logo.png";
+  const phones = branding.phoneNumbers || identityDefault(neutral, "0321-8486752, 0309-0236666", "");
+  const email = branding.billingEmail || identityDefault(neutral, "ceo.sunchaser@gmail.com", "");
+  const website = branding.websiteUrl || identityDefault(neutral, "www.sunchaserenergy.co", "");
+  const logo = branding.invoiceLogoUrl || branding.logoUrl || identityDefault(neutral, "/assets/sunchaser-logo.png", "");
   const signature = branding.signatureUrl || "";
   const hasSignature = !!(branding.signatureConfigured && signature);
-  const terms =
-    stripInvoiceMeta(invoice.terms || "") ||
-    branding.terms ||
-    "Payment is due by the due date shown. Bank transfer details are on the last page. Thank you for choosing Sunchaser Energy Systems.";
+  const terms = stripInvoiceMeta(invoice.terms || "") || branding.terms || defaultInvoiceTerms(neutral);
 
-  const banks = normalizeInvoiceBankAccounts(branding.bankAccounts || []);
+  const banks = normalizeInvoiceBankAccounts(branding.bankAccounts || [], { neutral });
   const bankTableHtml = banks.length
     ? `<table class="bank-table">
         <thead>
@@ -243,7 +260,7 @@ export function compileInvoicePDFHtml(
   const status = String(invoice.paymentStatus || "Unpaid");
 
   return `<!DOCTYPE html>
-<html>
+${options.issuanceSource ? `<!-- invoice-issuance: ${options.issuanceSource} -->\n` : ""}<html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -327,13 +344,13 @@ export function compileInvoicePDFHtml(
   </style>
 </head>
 <body>
-  <p class="print-hint no-print">Sunchaser Premium Invoice v3 — Print or Save as PDF (Ctrl/Cmd+P). Optimized for A4, mobile preview, and tablet.</p>
+  <p class="print-hint no-print">${escapeHtml(identityDefault(neutral, "Sunchaser ", ""))}Premium Invoice v3 — Print or Save as PDF (Ctrl/Cmd+P). Optimized for A4, mobile preview, and tablet.</p>
 
   <!-- PAGE 1 -->
   <div class="page page-1">
     <span class="v3-tag">Premium Invoice v3</span>
     <div class="hero">
-      <img class="logo" src="${escapeAttr(logo)}" alt="${escapeAttr(company)}"/>
+      ${logo ? `<img class="logo" src="${escapeAttr(logo)}" alt="${escapeAttr(company)}"/>` : ""}
       <div class="hero-meta">
         <h1>${escapeHtml(company)}</h1>
         <div class="sub">
@@ -431,7 +448,7 @@ export function compileInvoicePDFHtml(
           ${hasSignature ? `<img src="${escapeAttr(signature)}" alt="Authorized Signature" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"/>` : ""}
           <div class="sig-blank" style="${hasSignature ? "display:none" : "display:block"}"></div>
           <div class="sig-label">Authorized Signatory</div>
-          <div class="sig-for">For Sunchaser Energy Systems</div>
+          <div class="sig-for">${company ? `For ${escapeHtml(company)}` : ""}</div>
         </div>
       </div>
       <div class="totals-box">
@@ -450,7 +467,7 @@ export function compileInvoicePDFHtml(
   <!-- LAST PAGE — Bank accounts (show_on_invoice only) -->
   <div class="page page-bank">
     <div class="bank-page-header">
-      <img src="${escapeAttr(logo)}" alt="${escapeAttr(company)}"/>
+      ${logo ? `<img src="${escapeAttr(logo)}" alt="${escapeAttr(company)}"/>` : ""}
       <div>
         <h2 class="bank-page-title">Payment — Bank Accounts</h2>
         <p style="font-size:8.5px;color:#64748b;margin:4px 0 0">Transfer to an account below. Reference: <strong>${escapeHtml(invoice.invoiceNumber)}</strong></p>

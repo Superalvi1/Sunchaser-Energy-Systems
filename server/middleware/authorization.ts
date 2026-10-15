@@ -3,6 +3,10 @@ import type { Database } from "../../dbManager";
 import { hydrateActorFromJwt, readBearerToken } from "./actor.ts";
 import { isCustomerAllowedApiRoute } from "./customerRoutePolicy.ts";
 import { isProtectedApiRoute, resolveRouteAccessPolicy } from "./routePolicy.ts";
+import { runAsFoundingCompany, runWithCompany } from "../saas/companyContext.ts";
+import { resolveCompany, type CompanyStore } from "../saas/companyResolver.ts";
+import { resolveCompanyScope } from "../saas/companyScopePolicy.ts";
+import { isMultiCompanyEnabled } from "../saas/multiCompany.ts";
 
 declare global {
   namespace Express {
@@ -16,6 +20,10 @@ declare global {
 
 export type AuthorizationMiddlewareDeps = {
   resolveLocalDb: () => Database;
+  /** Required when MULTI_COMPANY_ENABLED=true. */
+  companyStore?: CompanyStore;
+  /** Second, independent company check for object routes (see server/saas/ownershipGuard.ts). Runs after the company is resolved. */
+  ownershipGuard?: (req: Request, res: Response, next: NextFunction, companyId: string) => Promise<void>;
 };
 
 function sendAuthFailure(
@@ -41,14 +49,25 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
   ): Promise<void> {
     const path = req.path;
 
+    const multi = isMultiCompanyEnabled();
+    const scope = multi ? resolveCompanyScope(req.method, path) : "none";
+
+    if (multi && scope === "unmatched") {
+      sendAuthFailure(res, 403, "This route is not enabled for company accounts.");
+      return;
+    }
+
     if (!isProtectedApiRoute(req.method, path)) {
-      next();
+      // Non-API paths and public intake. Public intake is not yet resolved per company: it runs as the founding company.
+      if (multi && scope !== "none") runAsFoundingCompany(() => next());
+      else next();
       return;
     }
 
     const policy = resolveRouteAccessPolicy(req.method, path);
     if (policy.kind === "public") {
-      next();
+      if (multi && scope !== "none") runAsFoundingCompany(() => next());
+      else next();
       return;
     }
 
@@ -74,8 +93,45 @@ export function createAuthorizationMiddleware(deps: AuthorizationMiddlewareDeps)
 
     req.actor = hydrated.actor;
     req.authSession = hydrated.session;
+    // The company the token is bound to (multi-company mode). Identity routes (/api/auth/me, /refresh) are not company-scoped, so they read it from here.
+    (req as any).tokenCompanyId = hydrated.tokenCompanyId;
     if (req.actor.role === "Customer" && !isCustomerAllowedApiRoute(path)) {
       sendAuthFailure(res, 403, "Not authorized for staff routes.");
+      return;
+    }
+
+    if (multi && scope !== "none" && scope !== "signed_link") {
+      if (!deps.companyStore) {
+        sendAuthFailure(res, 403, "Company access is not configured.");
+        return;
+      }
+      let resolution;
+      try {
+        resolution = await resolveCompany(
+          { actor: req.actor, tokenCompanyId: hydrated.tokenCompanyId, scope, method: req.method },
+          deps.companyStore
+        );
+      } catch (err) {
+        console.error("[company] could not resolve company:", err instanceof Error ? err.message : err);
+        res.status(503).json({ error: "Company lookup is temporarily unavailable." });
+        return;
+      }
+      if (!resolution.ok) {
+        res.status(resolution.status).json({ error: resolution.error, code: resolution.code });
+        return;
+      }
+      if (resolution.subscription) {
+        // Past the end date but inside the grace period (or read-only afterwards): tell the interface and the operator's tooling.
+        res.setHeader("X-Subscription-State", resolution.subscription);
+        if (resolution.subscriptionEndsAt) res.setHeader("X-Subscription-Ended", resolution.subscriptionEndsAt);
+      }
+      // Permissions follow the role the user holds in THIS company, not a global role.
+      req.actor = { ...req.actor, role: resolution.role, companyId: resolution.companyId };
+      const companyId = resolution.companyId;
+      runWithCompany(
+        { companyId, userId: req.actor.id, role: resolution.role, membershipId: resolution.membershipId },
+        () => (deps.ownershipGuard ? void deps.ownershipGuard(req, res, next, companyId) : next())
+      );
       return;
     }
     next();

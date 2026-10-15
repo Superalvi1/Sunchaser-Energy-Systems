@@ -1,9 +1,10 @@
+import { randomUUID } from "crypto";
 import {
   getSupabase,
   isSupabaseActive,
   type Database,
 } from "./dbManager.js";
-import { generateCustomerCode } from "./customerCode.js";
+import { generateCustomerCode, insertWithUniqueCustomerCode } from "./customerCode.js";
 import { pickQuoteForInvoice, resolveLeadCustomerId } from "./src/lib/invoiceFromLead.ts";
 import { createInvoiceFromContractedLead } from "./invoiceDb.js";
 import { provisionInternalCostingSheet } from "./internalCostingDb.js";
@@ -94,24 +95,23 @@ async function ensureCustomerForLead(lead: any, localDb?: Database): Promise<str
     return customerId;
   }
 
-  const customerCode = await generateCustomerCode(localDb);
-  const row = {
+  const buildRow = (customer_code: string) => ({
     id: customerId,
     name,
     email,
     phone,
     address,
-    customer_code: customerCode,
+    customer_code,
     created_at: new Date().toISOString(),
-  };
+  });
 
   if (isSupabaseActive()) {
-    const { error } = await getSupabase()!.from("customers").insert(row);
+    const { error } = await insertWithUniqueCustomerCode((code) => getSupabase()!.from("customers").insert(buildRow(code)), { localDb });
     if (error) throw error;
   } else {
     const db = localDb as any;
     db.customers = db.customers || [];
-    db.customers.push(row);
+    db.customers.push(buildRow(await generateCustomerCode(localDb)));
   }
 
   return customerId;
@@ -143,7 +143,7 @@ async function ensureProjectForLead(
     : findLocalProject(lead.id, localDb);
   if (existing) return existing.id || existing.project_id;
 
-  const projId = `project-${Date.now()}`;
+  const projId = `project-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 12)}`;   // not the clock alone: two contracts in one millisecond lost a project row silently
   const sizeKw = Number(quote?.systemSizekW) || 0;
   const row = {
     id: projId,
@@ -164,7 +164,7 @@ async function ensureProjectForLead(
   };
 
   if (supabase) {
-    await supabase.from("projects").insert({
+    const { error: projErr } = await supabase.from("projects").insert({
       id: projId,
       lead_id: lead.id,
       quotation_id: quote?.id || null,
@@ -174,6 +174,8 @@ async function ensureProjectForLead(
       system_size_kw: sizeKw,
       stage: "Advance Received",
     });
+    // The client returns the database's refusal instead of throwing it; it used to be ignored, so a project row could be missing with no trace.
+    if (projErr) console.error("[ContractToInvoice] project row was not saved:", projErr.code, projErr.message, `(lead ${lead.id})`);
   } else {
     const db = localDb as any;
     db.projects = db.projects || [];
@@ -237,7 +239,7 @@ async function ensurePaymentTrack(
       .maybeSingle();
     if (existing?.id) return false;
 
-    await supabase.from("payments").insert({
+    const { error: trackErr } = await supabase.from("payments").insert({
       lead_id: lead.id,
       project_id: projectId,
       customer_id: customerId,
@@ -247,6 +249,8 @@ async function ensurePaymentTrack(
       invoice_status: "Draft",
       milestones: JSON.stringify(milestones),
     });
+    // The client returns the database's refusal instead of throwing it. This row references the project row, so a lost project row used to lose it too, silently.
+    if (trackErr) { console.error("[ContractToInvoice] payment track was not saved:", trackErr.code, trackErr.message, `(lead ${lead.id})`); return false; }
     return true;
   }
 

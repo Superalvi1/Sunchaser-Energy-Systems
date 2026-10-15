@@ -1,13 +1,18 @@
+import { assistantsEnabled, getWorkspaceBrand, subscribeWorkspace, workspaceIsNeutral } from "./lib/workspaceModules";
+import { usePlatformInfo } from "./components/PlatformMark";
 import AccountsWorkspace from "./components/AccountsWorkspace";
 import { canCreateInvoice } from "./lib/invoices";
 import { filterCrmState } from "./lib/crmLeadQualification";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { 
   Sun, Users, Wrench, Bot, Shield, FileText, UserCircle, GraduationCap,
   Loader2, Inbox, RefreshCw, LogOut, ClipboardList, Send, FileSpreadsheet, Download,
   ChevronRight, ChevronLeft, Battery, Zap,
 } from "lucide-react";
 import AuthHub from "./components/AuthHub";
+import CompanySelectScreen from "./components/CompanySelectScreen";
+import PlatformConsole from "./components/PlatformConsole";
+import { getStoredCompanies, getStoredCompanyId, initWorkspaceIdentity, clearWorkspaceIdentity } from "./services/api";
 import { useToast } from "./lib/toast";
 import { AppState, UserRole, User } from "./types";
 import {
@@ -130,6 +135,10 @@ function AuthenticatedApp() {
       ? "/"
       : new URLSearchParams(window.location.search).get("next") || "/";
   const [appState, setAppState] = useState<AppState | null>(null);
+  // Multi-company platform: the open workspace shows the COMPANY's own name and logo (single-company mode keeps the existing Sunchaser header).
+  const workspaceBrand = useSyncExternalStore(subscribeWorkspace, getWorkspaceBrand, getWorkspaceBrand);
+  const platformInfo = usePlatformInfo();
+  const neutralWorkspace = useSyncExternalStore(subscribeWorkspace, workspaceIsNeutral, workspaceIsNeutral);
   /*
    * Native cold start opens on Login; web keeps the marketing landing.
    *
@@ -287,6 +296,7 @@ function AuthenticatedApp() {
       }
 
       setCurrentUser(user);
+      void initWorkspaceIdentity();
       if (learningEntry) {
         setLearningLaunching(true);
         try {
@@ -349,6 +359,7 @@ function AuthenticatedApp() {
 
   const handleAuthLoginSuccess = async (user: User) => {
     setCurrentUser(user);
+    void initWorkspaceIdentity();
     if (learningEntry) {
       setLearningLaunching(true);
       try {
@@ -375,6 +386,7 @@ function AuthenticatedApp() {
   const handleLogout = async () => {
     // Revoke this device's token on the server FIRST (best effort, bounded wait), then clear local state regardless.
     await logoutSession();
+    clearWorkspaceIdentity();
     setCurrentUser(null);
     setPortalData(null);
     setPortalError(null);
@@ -638,14 +650,25 @@ function AuthenticatedApp() {
    * primary; anything beyond goes into More alongside the module groups.
    */
   const shellTabs: ShellTab[] = currentUser ? [
-    ...(getAllowedTabs() as ShellTab[]).filter(t => !isNativeApp() || !["Learning Studio", "Sunchaser AI", "Activity Telemetry"].includes(t.id)),
+    ...(getAllowedTabs() as ShellTab[])
+      .filter(t => !isNativeApp() || !["Learning Studio", "Sunchaser AI", "Activity Telemetry"].includes(t.id))
+      // Learning Studio runs on Sunchaser's own platform (founding company only); another company's workspace does not offer it.
+      .filter(t => !(neutralWorkspace && t.id === "Learning Studio"))
+      // The AI assistant tab and the floating assistant speak as "Sunchaser AI" with Sunchaser's equipment and prices; they are not offered to
+      // another company (server/saas/moduleGate.ts, "assistants"; the API refuses them too).
+      .filter(t => t.id !== "Sunchaser AI" || assistantsEnabled()),
     ...(canCreateInvoice(currentUser.username,currentUser.role) ? [{id:"Accounts",label:"Accounts",icon:FileText}] : [])
   ] : [];
   if (isNativeApp()) { const i = shellTabs.findIndex(t => t.id === "Accounts"); if(i > 1) shellTabs.splice(1,0,...shellTabs.splice(i,1)); }
   const mobileScreenTitle =
-    shellTabs.find((t) => t.id === activeTab)?.label ?? "Sunchaser CRM";
+    shellTabs.find((t) => t.id === activeTab)?.label ?? (neutralWorkspace && workspaceBrand?.companyName ? workspaceBrand.companyName : "Sunchaser CRM");
 
   if (!currentUser && sessionRestoreUnavailable) return <main className="min-h-screen grid place-items-center bg-slate-950 px-6 text-slate-100"><section className="max-w-md space-y-4 text-center"><h1 className="text-xl font-bold">Reconnect to your saved session</h1><p className="text-slate-400">Your login is still saved. The server could not be reached. Check your connection and retry.</p><button onClick={()=>window.location.reload()} className="min-h-12 w-full rounded-xl bg-amber-400 font-bold text-slate-950">Retry connection</button><button onClick={()=>{void logoutSession();setSessionRestoreUnavailable(false);setGuestView("login");}} className="min-h-11 text-slate-400">Use another account</button></section></main>;
+  // Multi-company: operator console, and "Switch company" for a user who works for several companies.
+  if (currentUser?.isPlatformAdmin && window.location.pathname === "/platform") return <PlatformConsole onExit={() => { window.location.assign("/"); }} />;
+  if (currentUser && window.location.pathname === "/select-company" && getStoredCompanies().length > 1) {
+    return <CompanySelectScreen companies={getStoredCompanies()} currentCompanyId={getStoredCompanyId()} onSelected={() => { window.location.assign("/"); }} onCancel={() => { window.location.assign("/"); }} />;
+  }
   if (currentUser && !showOnboarding && activeTab === "Accounts" && canCreateInvoice(currentUser.username,currentUser.role)) return <AccountsWorkspace staffUser={currentUser} leads={appState?.leads || []} products={appState?.products || []} initialView={accountsInitialView} onAddParty={handleAddLead} onExit={()=>{window.history.replaceState(null,"","/");setActiveTab("Admin Dashboard");}}/>;
   if (currentUser && showOnboarding) {
     const variant =
@@ -675,7 +698,7 @@ function AuthenticatedApp() {
           onLogout={handleLogout}
           onShowWelcomeGuide={() => setShowOnboarding(false)}
         />
-        {!isNativeApp() && <AICommandCenter layout="customer" />}
+        {!isNativeApp() && assistantsEnabled() && <AICommandCenter layout="customer" />}
       </>
     );
   }
@@ -700,7 +723,7 @@ function AuthenticatedApp() {
           onLogout={handleLogout}
           onShowWelcomeGuide={() => setShowOnboarding(true)}
         />
-        {!isNativeApp() && <AICommandCenter />}
+        {!isNativeApp() && assistantsEnabled() && <AICommandCenter />}
         {isGlobalSearchAllowedForUser(currentUser) ? (
           <GlobalSearch
             appState={null}
@@ -756,13 +779,33 @@ function AuthenticatedApp() {
       <header className="safe-area-top sticky top-0 z-50 hidden md:block bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 md:py-4 flex flex-col md:flex-row justify-between items-center gap-2 md:gap-4">
           <div className="flex w-full md:w-auto items-center gap-2 md:gap-3">
-            <AppLogo className="h-8 md:h-11 w-auto shrink-0" />
-            <div>
-              <h1 className="text-sm md:text-lg font-extrabold tracking-tight font-sans truncate">
-                SUNCHASER <span className="text-amber-400 font-medium">Energy Systems</span>
-              </h1>
-              <p className="hidden md:block text-[10px] font-mono tracking-widest text-slate-400">ENTERPRISE CLOUD GRID • SECURE DB HARNESS</p>
-            </div>
+            {workspaceBrand && neutralWorkspace ? (
+              <>
+                <AppLogo className="h-8 md:h-11 w-auto shrink-0" logoUrl={workspaceBrand.logoUrl} alt={workspaceBrand.companyName || "Company"} nameFallback={false} />
+                <div>
+                  <h1 className="text-sm md:text-lg font-extrabold tracking-tight font-sans truncate" data-testid="workspace-company-name">{workspaceBrand.companyName || "Your company"}</h1>
+                  <p className="hidden md:block text-[10px] font-mono tracking-widest text-slate-400">POWERED BY SUNCHASER SYNC</p>
+                </div>
+              </>
+            ) : platformInfo && !currentUser ? (
+              <>
+                <span className="grid h-8 w-8 md:h-11 md:w-11 shrink-0 place-items-center rounded-xl bg-amber-500 text-lg font-black text-slate-950" aria-hidden="true">S</span>
+                <div>
+                  <h1 className="text-sm md:text-lg font-extrabold tracking-tight font-sans truncate" data-testid="platform-name">{platformInfo.platformName}</h1>
+                  <p className="hidden md:block text-[10px] font-mono tracking-widest text-slate-400">SIGN IN TO YOUR COMPANY</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <AppLogo className="h-8 md:h-11 w-auto shrink-0" />
+                <div>
+                  <h1 className="text-sm md:text-lg font-extrabold tracking-tight font-sans truncate">
+                    SUNCHASER <span className="text-amber-400 font-medium">Energy Systems</span>
+                  </h1>
+                  <p className="hidden md:block text-[10px] font-mono tracking-widest text-slate-400">ENTERPRISE CLOUD GRID • SECURE DB HARNESS</p>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex w-full md:w-auto items-center justify-end gap-1.5 md:gap-3 flex-wrap">
@@ -1258,7 +1301,7 @@ function AuthenticatedApp() {
       <footer className="hidden md:block bg-slate-900 border-t border-slate-800 py-6 text-center text-slate-500 text-xs font-mono mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex flex-col items-center md:items-start text-[11px] text-slate-500">
-            <span>&copy; {new Date().getFullYear()} Sunchaser Energy Systems Inc. All Rights Reserved.</span>
+            <span>&copy; {new Date().getFullYear()} {workspaceBrand && neutralWorkspace ? `${workspaceBrand.companyName || "Your company"}. Powered by Sunchaser Sync.` : platformInfo && !currentUser ? `${platformInfo.platformName}. All Rights Reserved.` : "Sunchaser Energy Systems Inc. All Rights Reserved."}</span>
             <span className="text-[10px] text-slate-600">STATE CONTROL COMPLIANCE • CONTAINER ISOLATED LAYER</span>
             {/* Public compliance pages — required to be reachable from inside the app. */}
             <span className="mt-1 flex items-center gap-2 text-[10px]">
@@ -1308,6 +1351,16 @@ function AuthenticatedApp() {
           userRole={currentUser.role}
           onLogout={handleLogout}
         >
+          {getStoredCompanies().length > 1 || currentUser.isPlatformAdmin ? (
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+              {getStoredCompanies().length > 1 ? (
+                <a href="/select-company" data-testid="switch-company" className="flex min-h-[48px] w-full items-center gap-3 px-3 py-2.5 text-sm font-bold text-amber-300 hover:bg-slate-800/50">
+                  Switch company{getStoredCompanies().find((c) => c.id === getStoredCompanyId()) ? ` (now: ${getStoredCompanies().find((c) => c.id === getStoredCompanyId())!.name})` : ""}
+                </a>
+              ) : null}
+              {currentUser.isPlatformAdmin ? <a href="/platform" className="flex min-h-[48px] w-full items-center gap-3 border-t border-slate-800 px-3 py-2.5 text-sm font-bold text-amber-300 hover:bg-slate-800/50">Platform console</a> : null}
+            </div>
+          ) : null}
           <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
             <a
               href={STAFF_QUOTE_PATH}
@@ -1334,7 +1387,7 @@ function AuthenticatedApp() {
         </MobileMoreSheet>
       </>
     )}
-    {currentUser && !isNativeApp() ? <AICommandCenter /> : null}
+    {currentUser && !isNativeApp() && assistantsEnabled() ? <AICommandCenter /> : null}
     {currentUser && isGlobalSearchAllowedForUser(currentUser) ? (
       <GlobalSearch
         appState={appState}

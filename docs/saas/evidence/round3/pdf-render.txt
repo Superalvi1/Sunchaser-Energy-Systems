@@ -1,0 +1,39 @@
+PASS: both companies sign in bound to their own company
+PASS: ALPHAFD89B4: settings saved
+PASS: BETAFD89B4: settings saved
+PASS: ALPHAFD89B4: the quotation downloads as a real PDF (application/pdf, %PDF header, 282980 bytes)
+PASS: ALPHAFD89B4: the download file name carries no Sunchaser name
+PASS: ALPHAFD89B4: quotation PDF has the standard 3 pages (3)
+PASS: ALPHAFD89B4: quotation PDF shows its own name, address and terms
+PASS: ALPHAFD89B4: quotation PDF prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: ALPHAFD89B4: quotation PDF shows its amounts (rate 41000, quantity 8, total 328000)
+PASS: ALPHAFD89B4: quotation PDF embeds the company's own logo (colour 200,30,30) and not the other company's
+PASS: ALPHAFD89B4: quotation PDF carries nothing of BETAFD89B4 and nothing of Sunchaser
+PASS: ALPHAFD89B4: the invoice renders as a real PDF through the same engine (543159 bytes)
+PASS: ALPHAFD89B4: invoice PDF shows its identity (name, address, phone, e-mail, website)
+PASS: ALPHAFD89B4: invoice PDF shows ALL its bank accounts (bank, title, account number, IBAN)
+PASS: ALPHAFD89B4: invoice PDF shows its amounts (total 328000, paid 82000, balance 246000)
+PASS: ALPHAFD89B4: invoice PDF embeds its own logo and carries nothing of BETAFD89B4 (name, bank accounts) or Sunchaser (name, accounts, signature)
+PASS: BETAFD89B4: the quotation downloads as a real PDF (application/pdf, %PDF header, 282952 bytes)
+PASS: BETAFD89B4: the download file name carries no Sunchaser name
+PASS: BETAFD89B4: quotation PDF has the standard 3 pages (3)
+PASS: BETAFD89B4: quotation PDF shows its own name, address and terms
+PASS: BETAFD89B4: quotation PDF prints no equipment brand the company never entered (no default Jinko / Knox)
+PASS: BETAFD89B4: quotation PDF shows its amounts (rate 36000, quantity 9, total 324000)
+PASS: BETAFD89B4: quotation PDF embeds the company's own logo (colour 30,60,200) and not the other company's
+PASS: BETAFD89B4: quotation PDF carries nothing of ALPHAFD89B4 and nothing of Sunchaser
+PASS: BETAFD89B4: the invoice renders as a real PDF through the same engine (535728 bytes)
+PASS: BETAFD89B4: invoice PDF shows its identity (name, address, phone, e-mail, website)
+PASS: BETAFD89B4: invoice PDF shows ALL its bank accounts (bank, title, account number, IBAN)
+PASS: BETAFD89B4: invoice PDF shows its amounts (total 324000, paid 81000, balance 243000)
+PASS: BETAFD89B4: invoice PDF embeds its own logo and carries nothing of ALPHAFD89B4 (name, bank accounts) or Sunchaser (name, accounts, signature)
+PASS: sanity: the founding company's own quotation PDF DOES show its Sunchaser name and address (the detector can see them in a real PDF)
+PASS: sanity: the founding company's download file name is unchanged (Sunchaser-Quotation-...)
+PASS: ALPHAFD89B4 cannot download BETAFD89B4's quotation PDF (404)
+PASS: ALPHAFD89B4 cannot get BETAFD89B4's invoice document (404)
+PASS: BETAFD89B4 cannot download ALPHAFD89B4's quotation PDF (404)
+PASS: BETAFD89B4 cannot get ALPHAFD89B4's invoice document (404)
+PASS: alpha's earlier quotation PDF still shows the ORIGINAL name and address after they were changed
+PASS: alpha's NEW quotation PDF shows the new name and the new price
+
+37 passed, 0 failed

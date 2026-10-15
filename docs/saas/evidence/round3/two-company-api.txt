@@ -1,0 +1,54 @@
+PASS: alpha_admin signs in bound to co_alpha
+PASS: beta_admin signs in bound to co_beta
+PASS: Sunchaser staff sign in bound to the founding company
+PASS: a user in two companies gets the list and no company yet
+PASS: a portal customer is bound to the company that owns their customer record
+PASS: a user with no membership signs in with an empty company list
+PASS: a multi-company user without a chosen company is asked to choose (409)
+PASS: select-company issues a token for a company the user belongs to
+PASS: select-company refuses a company the user is not in (403)
+PASS: a Super Admin with no membership cannot reach company routes (403)
+PASS: each company can create a lead
+PASS: leads are stored under the creating company
+PASS: alpha's boot state contains its lead and none of beta's or Sunchaser's
+PASS: beta's boot state contains only beta's lead
+PASS: Sunchaser's boot state contains its lead and none from the pilot companies
+PASS: beta cannot update alpha's lead
+PASS: beta cannot delete alpha's lead
+PASS: beta cannot assign alpha's lead
+PASS: beta cannot read alpha's quotation versions
+PASS: beta cannot create a quotation on alpha's lead
+PASS: alpha can create a quotation on its own lead
+PASS: contracting alpha's lead creates alpha's invoice
+PASS: beta cannot read alpha's invoice
+PASS: beta's invoice list does not contain alpha's invoice
+PASS: alpha's invoice list contains its invoice
+PASS: beta cannot record a payment on alpha's invoice
+PASS: beta cannot edit alpha's invoice
+PASS: beta cannot export alpha's invoice PDF
+PASS: beta cannot delete alpha's invoice
+PASS: alpha can record a payment on its own invoice, stored under alpha
+PASS: alpha can export its own invoice PDF
+PASS: alpha can upload a document for its customer
+PASS: beta cannot upload a document onto alpha's customer
+PASS: beta cannot list alpha customer's documents
+PASS: the stored document belongs to alpha
+PASS: beta cannot reach user administration (/api/admin/users)
+PASS: beta cannot reach role administration (/api/admin/roles)
+PASS: beta cannot reach marketplace admin (/api/marketplace/admin/products)
+PASS: beta cannot reach diagnostics (/api/diagnostics/phase7-columns)
+PASS: beta cannot reach full backup export (/api/backup/export)
+PASS: beta cannot reach learning studio (/api/learning/courses)
+PASS: the founding company still reaches user administration
+PASS: an unknown API path is refused for companies
+PASS: an x-company-id header sent by a client is ignored
+PASS: a companyId query parameter is ignored
+PASS: a token with a tampered signature is rejected
+PASS: a token whose company claim was edited is rejected
+PASS: a portal customer can reach their own portal route
+PASS: a portal customer cannot reach staff routes
+PASS: a suspended membership loses access within seconds
+PASS: a suspended company is locked out with a clear code
+PASS: the other company is unaffected by that suspension
+
+52 passed, 0 failed

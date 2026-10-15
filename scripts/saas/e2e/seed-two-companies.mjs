@@ -1,0 +1,91 @@
+// Seeds two SYNTHETIC companies for the isolation journeys. Disposable database only.
+//   E2E_PSQL="-h /srv/s -p 55432 -U postgres -d sunchaser_test" TEST_PW=... node scripts/saas/e2e/seed-two-companies.mjs
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import pg from "pg";
+import { hashPassword } from "../../../src/lib/passwordHash.ts";
+
+const arg = (flag) => { const a = (process.env.E2E_PSQL || "").split(/\s+/); const i = a.indexOf(flag); return i >= 0 ? a[i + 1] : undefined; };
+const host = arg("-h"), port = Number(arg("-p") || 5432), user = arg("-U") || "postgres", database = arg("-d");
+if (!host || !database || /railway|supabase|rlwy/i.test(`${host} ${database}`)) { console.error("Set E2E_PSQL to a disposable local database."); process.exit(2); }
+if (!process.env.TEST_PW) { console.error("Set TEST_PW (synthetic password)."); process.exit(2); }
+
+const db = new pg.Client({ host, port, user, database });
+await db.connect();
+
+if (process.argv.includes("--cleanup")) {
+  // Remove everything the journeys created for the two synthetic companies (rows, memberships, users, companies).
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const classes = JSON.parse(fs.readFileSync(path.join(here, "..", "table-classification.json"), "utf8")).tables;
+  const tenant = Object.entries(classes).filter(([, v]) => ["tenant", "tenant_config", "tenant_existing_company_id", "tenant_system"].includes(v.class)).map(([k]) => k);
+  // Every company other than the founding one (the two synthetic ones and any another journey left behind, e.g. by operator onboarding).
+  const ids = (await db.query("select id from companies where id <> 'sunchaser'")).rows.map((r) => r.id);
+  if (!ids.includes("co_alpha")) ids.push("co_alpha"); if (!ids.includes("co_beta")) ids.push("co_beta");
+  await db.query("set session_replication_role = replica");
+  for (const t of tenant) {
+    const has = await db.query("select 1 from information_schema.columns where table_schema='public' and table_name=$1 and column_name='company_id'", [t]);
+    if (has.rowCount) await db.query(`delete from public."${t}" where company_id = any($1)`, [ids]);
+  }
+  // Platform rows of the removed companies too: a payment that still names a removed company makes the next re-apply of t5 (which restores the ledger from its rollback copy) fail on the foreign key.
+  await db.query("delete from saas_payments where company_id = any($1)", [ids]);
+  if ((await db.query("select to_regclass('public.saas_storage_reservations') as t")).rows[0].t) await db.query("delete from saas_storage_reservations where company_id = any($1)", [ids]);
+  await db.query("delete from saas_subscriptions where company_id = any($1)", [ids]);
+  await db.query("delete from company_memberships where company_id = any($1)", [ids]);
+  await db.query("delete from users where id like 'u-alpha%' or id like 'u-beta%' or id in ('u-both','u-nobody','u-platform')");
+  await db.query("delete from companies where id = any($1)", [ids]);
+  await db.query("set session_replication_role = origin");
+  console.log("Removed the synthetic companies, their users and rows.");
+  // The tenancy marker is NOT cleared by removing data: only app.tenancy_disable() clears it (and it refuses while any other company's row exists).
+  if (process.argv.includes("--clear-marker")) {
+    const has = await db.query("select to_regprocedure('app.tenancy_disable()') as f");
+    if (has.rows[0].f) { const r = await db.query("select app.tenancy_disable() as m"); console.log(`Tenancy marker: ${r.rows[0].m}`); }
+  }
+  await db.end();
+  process.exit(0);
+}
+// Pilot companies can only be created behind the database barrier (t1b): the marker on and the barrier verified. The runner verifies the barrier over HTTP once;
+// after a journey cleared the marker, this puts it back (the proof of the barrier itself is scripts/saas/verify-barrier.mjs).
+if ((await db.query("select to_regprocedure('app.tenancy_enable()') as f")).rows[0].f) await db.query("select app.tenancy_enable(), app.tenancy_confirm_barrier()");
+const pw = () => hashPassword(process.env.TEST_PW);
+const COMPANIES = [["co_alpha", "alpha", "Alpha Solar"], ["co_beta", "beta", "Beta Energy"]];
+for (const [id, slug, name] of COMPANIES) await db.query("insert into companies (id, slug, name, status) values ($1,$2,$3,'active') on conflict (id) do update set status='active'", [id, slug, name]);
+
+// A subscription with an EXPLICIT storage limit, as operator onboarding creates one (a company with no limit cannot upload: there is no unlimited default).
+for (const [id] of COMPANIES) {
+  await db.query(
+    `insert into saas_subscriptions (id, company_id, plan_id, status, current_period_start, current_period_end, limit_overrides)
+     values ($1,$2,'pilot','active', current_date - 5, current_date + 30, '{"max_storage_mb": 512}'::jsonb)
+     on conflict (company_id) do update set plan_id='pilot', status='active', current_period_end=current_date + 30, limit_overrides='{"max_storage_mb": 512}'::jsonb`, [`sub-${id}`, id]);
+}
+
+// users: [id, username, name, role, companyMemberships[[company, role]], customerId]
+const USERS = [
+  ["u-alpha-admin", "alpha_admin", "Alpha Admin", "Admin", [["co_alpha", "Admin"]]],
+  ["u-alpha-sales", "alpha_sales", "Alpha Sales", "Sales Executive", [["co_alpha", "Sales Executive"]]],
+  ["u-alpha-manager", "alpha_manager", "Alpha Manager", "Sales Manager", [["co_alpha", "Sales Manager"]]],
+  ["u-beta-admin", "beta_admin", "Beta Admin", "Admin", [["co_beta", "Admin"]]],
+  ["u-beta-sales", "beta_sales", "Beta Sales", "Sales Executive", [["co_beta", "Sales Executive"]]],
+  ["u-both", "both_user", "Works For Both", "Admin", [["co_alpha", "Sales Manager"], ["co_beta", "Sales Executive"]]],
+  ["u-nobody", "nobody", "No Company", "Super Admin", []],
+  ["u-platform", "platform_op", "Platform Operator", "Admin", []],
+];
+for (const [id, username, name, role, mem] of USERS) {
+  await db.query(
+    `insert into users (id, username, password, name, email, role, account_status, email_verified, onboarding_completed)
+     values ($1,$2,$3,$4,$5,$6,'Approved',true,true) on conflict (id) do update set password=excluded.password, role=excluded.role, account_status='Approved'`,
+    [id, username, pw(), name, `${username}@example.test`, role]);
+  await db.query("delete from company_memberships where user_id=$1", [id]);
+  for (const [company, mrole] of mem) await db.query("insert into company_memberships (id, company_id, user_id, role, status) values ($1,$2,$3,$4,'active')", [`mem-${company}-${id}`, company, id, mrole]);
+}
+await db.query("update users set is_platform_admin = true where id = 'u-platform'");
+// Portal customers: one per company, linked to a customer row owned by that company.
+for (const [company, tag] of [["co_alpha", "alpha"], ["co_beta", "beta"]]) {
+  await db.query("insert into customers (id, name, email, company_id) values ($1,$2,$3,$4) on conflict (id) do nothing", [`cust-${tag}-portal`, `${tag} portal client`, `${tag}.portal@example.test`, company]);
+  await db.query(
+    `insert into users (id, username, password, name, email, role, account_status, email_verified, onboarding_completed, customer_id)
+     values ($1,$2,$3,$4,$5,'Customer','Approved',true,true,$6) on conflict (id) do update set password=excluded.password, customer_id=excluded.customer_id`,
+    [`u-${tag}-portal`, `${tag}_portal`, pw(), `${tag} portal client`, `${tag}.portal@example.test`, `cust-${tag}-portal`]);
+}
+console.log("Seeded companies co_alpha, co_beta with users:", USERS.map((u) => u[1]).join(", "), "+ alpha_portal, beta_portal");
+await db.end();

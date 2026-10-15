@@ -14,7 +14,7 @@ import {
 import { User } from "../types";
 import type { ClientPortalPayload } from "../lib/clientPortalTracker";
 import { displayOrNoData } from "../lib/clientPortalDisplay";
-import { portal } from "../lib/clientPortalUi";
+import { portal, portalCompanyName } from "../lib/clientPortalUi";
 import {
   ACCOUNT_DELETION_URL,
   EXTERNAL_LINK_PROPS,
@@ -33,6 +33,7 @@ interface ClientPortalAccountProps {
   onRefresh: () => void;
   onLogout: () => void;
   onShowWelcomeGuide?: () => void;
+  branding?: { legacyDefaults?: boolean; companyName?: string | null } | null;
 }
 
 export default function ClientPortalAccount({
@@ -42,6 +43,7 @@ export default function ClientPortalAccount({
   onRefresh,
   onLogout,
   onShowWelcomeGuide,
+  branding,
 }: ClientPortalAccountProps) {
   const customer = data?.customer;
 
@@ -61,7 +63,7 @@ export default function ClientPortalAccount({
           </span>
           <div>
             <p className="text-base font-semibold text-white">{displayOrNoData(customer?.name || user.name)}</p>
-            <p className="text-xs text-slate-500 mt-0.5">Sunchaser customer</p>
+            <p className="text-xs text-slate-500 mt-0.5">{portalCompanyName(branding) ? `${portalCompanyName(branding)} customer` : "Customer"}</p>
           </div>
         </div>
 

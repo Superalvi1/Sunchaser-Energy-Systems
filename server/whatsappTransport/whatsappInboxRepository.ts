@@ -90,7 +90,8 @@ export function createDefaultWhatsAppInboxRepositories(
   clientFactory?: () => SupabaseClient | null
 ): WhatsAppInboxRepositories {
   const factory = clientFactory ?? getSupabase;
-  if (!isSupabaseActive() || factory() === null) {
+  // Availability only: the default factory is context-aware (multi-company mode) and must not be called at boot.
+  if (!isSupabaseActive() || (clientFactory !== undefined && clientFactory() === null)) {
     throw new Error(
       "WhatsApp inbox repositories require active Supabase persistence. " +
         "Use createInMemoryWhatsAppInboxRepositories() for tests."

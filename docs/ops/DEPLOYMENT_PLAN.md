@@ -1,5 +1,7 @@
 # Deployment plan for PR #111 (release candidate)
 
+> **Scope: release A (the repair release) only.** The SaaS release (PR #113, migrations t1 to t8) is a separate release with the opposite order (migrations first), and the combined ordering, the proof of every intermediate state and the rollback table are in `COMBINED_DEPLOYMENT_AND_ROLLBACK.md`. Never interleave the two.
+
 Status: **plan only. Nothing in this document has been run in production.** Every production step needs the owner's explicit approval at its gate.
 Merging to `main` deploys the CRM (Railway builds `main`). Public-safe: variable names and files, never secret values.
 Where things run: `PRODUCTION_TOPOLOGY.md`. Rehearsal evidence: `DEPLOYMENT_REHEARSAL.md`. Every claim with its evidence class: `EVIDENCE_LEDGER.md`. The restore rehearsal for your Mac: `MAC_RESTORE_REHEARSAL.md`. PostgREST pin: `POSTGREST_PIN.md`.

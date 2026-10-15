@@ -1,5 +1,5 @@
 import type { CompanyBranding } from "./branding";
-import { DEFAULT_BRANDING } from "./branding";
+import { DEFAULT_BRANDING, NEUTRAL_BRANDING } from "./branding";
 
 /** Official uploaded Sunchaser logo (PNG in /public/assets). */
 export const OFFICIAL_SUNCHASER_LOGO = "/assets/sunchaser-logo.png";
@@ -16,6 +16,8 @@ export function resolveOfficialLogoUrl(_url?: string | null): string {
 }
 
 export function withOfficialBranding(raw?: Partial<CompanyBranding> | null): CompanyBranding {
+  // Another company: its own values only. The Sunchaser logo, signature and bank image are never substituted.
+  if (raw?.legacyDefaults === false) return { ...NEUTRAL_BRANDING, ...raw, legacyDefaults: false } as CompanyBranding;
   const merged = { ...DEFAULT_BRANDING, ...(raw || {}) };
   const logo = resolveOfficialLogoUrl(merged.logoUrl);
   return {

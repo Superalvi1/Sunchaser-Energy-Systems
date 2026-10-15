@@ -1,3 +1,4 @@
+import { afterSalesEnabled, autoSizerEnabled, designToolsEnabled } from "../lib/workspaceModules";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   FileText, Sun, Battery, Settings2, ShieldCheck, Mail, Phone, MapPin, Link2, 
@@ -327,10 +328,10 @@ export default function SalesTeamApp({
   const [sizerEditingQuoteId, setSizerEditingQuoteId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (activeModule === "proposal_studio" && !PROPOSAL_STUDIO_ENABLED) {
+    if (activeModule === "proposal_studio" && !(PROPOSAL_STUDIO_ENABLED && designToolsEnabled())) {
       setActiveModule("boq_builder");
     }
-    if (activeModule === "roof_studio" && !DESIGN_PROJECT_ENABLED) {
+    if (activeModule === "roof_studio" && !(DESIGN_PROJECT_ENABLED && designToolsEnabled())) {
       setActiveModule("boq_builder");
     }
   }, [activeModule]);
@@ -2281,7 +2282,7 @@ export default function SalesTeamApp({
         : resolveQuoteValidityDays(quote, { companyTerms, settings }).days
     );
     if (quote.termsAndConditions) setTermsAndConditions(quote.termsAndConditions);
-    setActiveModule(quote.quote_type === "auto_sizer" ? "sizer" : "boq_builder");
+    setActiveModule(quote.quote_type === "auto_sizer" && autoSizerEnabled() ? "sizer" : "boq_builder");
   };
 
   const resolvePageLayoutMode = (page: any) =>
@@ -3024,7 +3025,7 @@ export default function SalesTeamApp({
                         Save as New Package
                       </button>
 
-                      {REQUIRE_EXPLICIT_QUOTE_SAVE && (
+                      {REQUIRE_EXPLICIT_QUOTE_SAVE && autoSizerEnabled() && (
                       <button
                         type="button"
                         onClick={handleCopyAutoSizerToManualBoq}
@@ -3302,7 +3303,7 @@ export default function SalesTeamApp({
                       {clientWorkspaceOpen ? "Hide client workspace" : "Open Client Portal"}
                     </button>
                   )}
-                  {DESIGN_PROJECT_ENABLED && (
+                  {DESIGN_PROJECT_ENABLED && designToolsEnabled() && (
                   <button
                     type="button"
                     onClick={() => setActiveModule("roof_studio")}
@@ -3311,7 +3312,7 @@ export default function SalesTeamApp({
                     <DraftingCompass className="h-3.5 w-3.5" /> Roof Studio
                   </button>
                   )}
-                  {REQUIRE_EXPLICIT_QUOTE_SAVE && (
+                  {REQUIRE_EXPLICIT_QUOTE_SAVE && autoSizerEnabled() && (
                   <button
                     type="button"
                     disabled={!latestAutoSizerSavedQuote}
@@ -3384,11 +3385,11 @@ export default function SalesTeamApp({
               >
                 {[
                   { id: 'smart_quote_leads', label: `Smart Quote Leads (${smartQuoteLeads.length})`, icon: Inbox },
-                  { id: 'sizer', label: 'Auto Sizer', icon: Sparkles },
-                  ...(PROPOSAL_STUDIO_ENABLED
+                  ...(autoSizerEnabled() ? [{ id: 'sizer' as const, label: 'Auto Sizer', icon: Sparkles }] : []),
+                  ...(PROPOSAL_STUDIO_ENABLED && designToolsEnabled()
                     ? [{ id: 'proposal_studio' as const, label: 'Proposal Studio', icon: LayoutGrid }]
                     : []),
-                  ...(DESIGN_PROJECT_ENABLED
+                  ...(DESIGN_PROJECT_ENABLED && designToolsEnabled()
                     ? [{ id: 'roof_studio' as const, label: 'Roof Studio', icon: DraftingCompass }]
                     : []),
                   { id: 'boq_builder', label: 'Manual BOQ Builder', icon: FileSpreadsheet },
@@ -3398,7 +3399,7 @@ export default function SalesTeamApp({
                   ...(staffUser
                     ? [{ id: 'inventory' as const, label: 'Inventory', icon: Package }]
                     : []),
-                  ...(staffUser
+                  ...(staffUser && afterSalesEnabled()
                     ? [{ id: 'after_sales' as const, label: 'After Sales Admin', icon: Headphones }]
                     : []),
                 ].map((mod) => {
@@ -3515,8 +3516,8 @@ export default function SalesTeamApp({
               )}
 
               {/* MODULE: Project Design Workspace (HelioScope) — RoofIntelligenceStudio is canvas-only inside */}
-              {activeModule === "proposal_studio" && PROPOSAL_STUDIO_ENABLED && <SolarProposalStudio />}
-              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && activeLead && (
+              {activeModule === "proposal_studio" && PROPOSAL_STUDIO_ENABLED && designToolsEnabled() && <SolarProposalStudio />}
+              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && designToolsEnabled() && activeLead && (
                 <RoofStudioErrorBoundary title="Roof Studio failed to render">
                   <ProjectDesignWorkspace
                     lead={activeLead}
@@ -3524,7 +3525,7 @@ export default function SalesTeamApp({
                   />
                 </RoofStudioErrorBoundary>
               )}
-              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && !activeLead && (
+              {activeModule === "roof_studio" && DESIGN_PROJECT_ENABLED && designToolsEnabled() && !activeLead && (
                 <StudioEmptyState
                   icon={DraftingCompass}
                   title="Select a lead to open Roof Studio"
@@ -4937,7 +4938,7 @@ export default function SalesTeamApp({
                                     >
                                       <Download className="h-3 w-3" />
                                     </button>
-                                    <button
+                                    {designToolsEnabled() && <button
                                       type="button"
                                       onClick={() => setInteractiveProposalQuote(q)}
                                       className="bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/50 text-emerald-300 p-1.5 rounded-lg cursor-pointer transition"
@@ -4945,7 +4946,7 @@ export default function SalesTeamApp({
                                       aria-label={`Create interactive client link for quote ${q.id}`}
                                     >
                                       <Link2 className="h-3 w-3" />
-                                    </button>
+                                    </button>}
                                     {onDeleteQuote && (
                                       <button
                                         type="button"
@@ -5778,7 +5779,7 @@ export default function SalesTeamApp({
         customerCode={leadCustomerRecord?.customerCode}
       />
     )}
-    {activeLead && interactiveProposalQuote && (
+    {activeLead && interactiveProposalQuote && designToolsEnabled() && (
       <InteractiveProposalShareModal
         open
         lead={activeLead}

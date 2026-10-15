@@ -102,7 +102,10 @@
     "test:whatsapp-sales-agent": "node --import tsx --test server/whatsappAgent/*.test.ts",
     "test:crm-repair": "node --import tsx --test src/lib/aiDraftNoAutoSave.test.ts server/publicLeads/smartQuoteVersions.test.ts server/publicLeads/smartQuoteLink.test.ts server/finance/paymentLedger.test.ts server/finance/invoiceLock.test.ts server/finance/recordInvoicePayment.test.ts src/lib/smartQuoteNotes.test.ts server/documents/customerDocumentSignature.test.ts src/lib/authSession.test.ts server/auth/sessionRenewal.test.ts server/publicLeads/crmQuotationPersistence.test.ts src/lib/clientIdentity.test.ts invoiceCustomerLink.nameGate.test.ts server/auth/sessionRevocation.test.ts server/auth/sessionLogout.test.ts src/lib/logoutSession.test.ts userAuthDb.resetLink.test.ts server/storage/railwayObjectStorage.test.ts server/storage/railwayObjectStorageHardening.test.ts",
     "typecheck": "tsc --noEmit",
-    "test:ci": "node scripts/ci/run-suites.mjs"
+    "typecheck:server": "node scripts/ci/check-server-typecheck.mjs",
+    "test:ci": "node scripts/ci/run-suites.mjs",
+    "test:saas": "node --import tsx --test server/saas/*.test.ts server/storage/companyObjectKeys.test.ts",
+    "test:saas-db": "E2E_ADMIN=\"${E2E_ADMIN:-$MIGRATION_TEST_PSQL}\" bash scripts/saas/tests/run-db-tests.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
@@ -129,6 +132,7 @@
     "openai": "^5.0.0",
     "pg": "^8.16.0",
     "playwright": "^1.52.0",
+    "qrcode-generator": "2.0.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.8.1",
@@ -143,6 +147,7 @@
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
+    "jsqr": "1.4.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

@@ -1,3 +1,5 @@
+import { qrDataUri } from "./localQr.ts";
+
 /** QR + public verification URL helpers for delivery challans */
 
 export function appPublicBase(): string {
@@ -23,5 +25,5 @@ export function buildDeliveryVerificationUrl(token: string, base?: string): stri
 }
 
 export function qrCodeImageUrl(targetUrl: string, size = 180): string {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(targetUrl)}`;
+  return qrDataUri(targetUrl, size); // generated locally; the link is not sent to any QR service
 }
