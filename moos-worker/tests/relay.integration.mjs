@@ -103,7 +103,7 @@ function stubCrm(quotes) {
 
 const QUOTES = [{ id: "q10", capacityKw: 10, title: "10kW Hybrid", description: "10kW Hybrid", systemType: "hybrid", expiresAt: "2030-01-01T00:00:00Z" }];
 
-async function setup() {
+async function setup(envOverrides = {}) {
   const store = fakeStore();
   const { server: crmServer, calls } = stubCrm(QUOTES);
   await new Promise((r) => crmServer.listen(0, "127.0.0.1", r));
@@ -116,6 +116,7 @@ async function setup() {
     MOOS_PHONE_NUMBER_ID: PHONE_NUMBER_ID,
     FAQ_FILE: "/nonexistent-faqs.json",
     NODE_ENV: "test",
+    ...envOverrides,
   };
   const crm = new CrmClient(env);
   const agent = new Agent(store, crm, env);
@@ -227,5 +228,17 @@ test("full custom flow over relay: requirements → recommended package → conf
     assert.equal(calls.handoffs.length, 1);
     assert.equal(calls.handoffs[0].reason, "custom_quote_draft_ready");
     assert.equal(calls.pdfs.length, 0); // no PDF invented or sent
+  } finally { await close(); }
+});
+
+
+test("restricted pilot rejects signed events outside approved recipient", async () => {
+  const { store, relay, close } = await setup({
+    NODE_ENV: "production",
+    MOOS_TEST_ONLY_RECIPIENT_E164: "+923218486752"
+  });
+  try {
+    assert.equal(await relay("10kw hybrid quotation", "wamid.not-approved"), 403);
+    assert.equal(store._inbound.size, 0);
   } finally { await close(); }
 });
