@@ -40,5 +40,5 @@ export class Store{
    await c.query('COMMIT');return r.rows;
   }catch(e){await c.query('ROLLBACK');throw e}finally{c.release();}
  }
- async history(phone){const r=await this.query(`SELECT payload FROM wa_inbound WHERE phone=$1 ORDER BY received_at DESC LIMIT 20`,[phone]);return r.rows.reverse().map(x=>({role:'customer',type:x.payload.type,text:x.payload.text||''}));}
+ async history(phone){const r=await this.query(`SELECT payload FROM wa_inbound WHERE phone=$1 ORDER BY received_at DESC LIMIT 20`,[phone]);return r.rows.reverse().map(x=>({role:'customer',type:x.payload.type,text:String(x.payload.text||'').slice(0,500)}));}
 }
