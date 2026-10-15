@@ -1,3 +1,4 @@
+import { fetchWithSessionRecovery, SESSION_EXPIRED_EVENT } from "../lib/sessionRecovery";
 import { Lead, Ticket, AppState, Quote, User, Product } from "../types";
 import {
   CONNECTION_ERROR_MESSAGE,
@@ -83,12 +84,19 @@ export function withAuthHeaders(init?: RequestInit): RequestInit {
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
-  return fetch(url, withAuthHeaders(init));
+  return fetchWithSessionRecovery(url, withAuthHeaders(init), {
+    fetch: (input, options) => fetch(input, options),
+    getToken: getStoredAuthToken,
+    onUnauthorized: () => {
+      const user = getStoredUser();
+      clearAuthSession();
+      if (user && typeof window !== "undefined") window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: { id: user.id, username: user.username, role: user.role } }));
+    },
+  });
 }
 
 export async function authorizedFetch(pathOrUrl: string, init?: RequestInit): Promise<Response> {
-  const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${API_BASE_URL}${pathOrUrl}`;
-  return fetch(url, withAuthHeaders(init));
+  return apiFetch(pathOrUrl, init);
 }
 
 /** Staff portal PATCH/POST with request/response logging and backend error text. */

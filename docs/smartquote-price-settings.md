@@ -17,3 +17,7 @@ Saved CRM lead snapshots and original archived PDFs retain their original prices
 - Local development without a data API persists `smartQuoteSettings` in the existing file database.
 
 Run `npm run test:smart-quote-settings` and `npm run test:smart-quote-pdf`. The payment milestones are editable commercial text; no payment collection or payment-status changes are performed by this feature.
+
+## Session recovery
+
+If the server rejects the current JWT with 401 while Accounts is open, the CRM clears the rejected credential and shows an in-place sign-in dialog. Signing back into the same account/role retains the open workspace and unsaved prices. A failed initial price read is retried; writes are never replayed. An account or role change reloads the application before displaying any prior workspace. On startup, rejected cached credentials go directly to sign-in. Network errors, 5xx responses and permission denials do not trigger this recovery.
