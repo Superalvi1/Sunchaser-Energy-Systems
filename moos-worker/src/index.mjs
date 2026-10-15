@@ -4,6 +4,7 @@ import { Store } from "./store.mjs";
 import { Agent } from "./agent.mjs";
 import { CrmClient } from "./crm.mjs";
 import { verifyRelaySignature, validRelayEvent } from "./signature.mjs";
+import { pilotRecipientAllowed } from "./pilotScope.mjs";
 
 function bodyOf(req) {
   return new Promise((resolve, reject) => {
@@ -66,6 +67,11 @@ export function createWorkerServer({ store, crm, agent, env }) {
         if (!validRelayEvent(m)) { res.writeHead(422); res.end("invalid event"); return; }
         // Phone-number binding: ignore events for a different WhatsApp number.
         if (m.phoneNumberId !== env.MOOS_PHONE_NUMBER_ID) { res.writeHead(422); res.end("wrong number"); return; }
+        // Signed relays outside the explicitly approved pilot phone cannot
+        // become queue jobs, even if the CRM relay were misconfigured.
+        if (!pilotRecipientAllowed(m.phone, env)) {
+          res.writeHead(403); res.end("outside approved Muse pilot scope"); return;
+        }
         await store.add({ ...m, text: typeof m.text === "string" ? m.text.slice(0, 4000) : "" });
         res.writeHead(200); res.end("accepted"); return;
       }
