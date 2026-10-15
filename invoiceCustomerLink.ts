@@ -1,5 +1,6 @@
 import { getSupabase, isSupabaseActive, type Database } from "./dbManager.js";
 import { generateCustomerCode } from "./customerCode.js";
+import { newInvoiceCustomerId } from "./invoiceIds.js";
 import { normalizePakistanPhone, phonesMatch } from "./src/lib/phoneNormalize.ts";
 
 export type InvoiceCustomerInput = {
@@ -154,7 +155,7 @@ export async function resolveInvoiceCustomerId(
 
   if (!name || !phone) return null;
 
-  const customerId = `cust-inv-${Date.now()}`;
+  const customerId = newInvoiceCustomerId();
   const customerEmail = email || placeholderEmail(phone, customerId);
   await insertCustomer(
     {

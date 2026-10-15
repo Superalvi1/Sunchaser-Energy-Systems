@@ -1,3 +1,4 @@
+import { newInvoiceId, newInvoiceItemId } from "./invoiceIds.js";
 import {
   getSupabase,
   isSupabaseActive,
@@ -491,7 +492,7 @@ export async function createAdminInvoice(
 
   await assertInvoiceStaff(actor, localDb);
   const username = actor.username;
-  const id = `inv-${Date.now()}`;
+  const id = newInvoiceId();
   const invoiceNumber = String(body.invoiceNumber || "") || (await nextInvoiceNumber(localDb));
   const rawItems = (body.items as InvoiceLineItem[]) || [];
   const totals = computeInvoiceTotals(
@@ -573,7 +574,7 @@ export async function createAdminInvoice(
   };
 
   const itemRows = totals.items.map((it, idx) => ({
-    id: it.id || `item-${Date.now()}-${idx}`,
+    id: it.id || newInvoiceItemId(idx),
     invoice_id: id,
     sort_order: idx,
     item_name: it.itemName || it.description,
@@ -710,7 +711,7 @@ export async function updateAdminInvoice(
     patch.amount_in_words = amountWords;
 
     const itemRows = totals.items.map((it, idx) => ({
-      id: it.id || `item-${Date.now()}-${idx}`,
+      id: it.id || newInvoiceItemId(idx),
       invoice_id: invoiceId,
       sort_order: idx,
       item_name: it.itemName || it.description,
