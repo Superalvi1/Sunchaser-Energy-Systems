@@ -117,5 +117,31 @@ rm -f "$NOFIX"
 $P -f "$SAAS/phase2e-subscriptions-rollback.sql" > /dev/null 2>&1; $P -f "$SAAS/phase2e-subscriptions.sql" > /dev/null 2>&1   # leave the real migration applied
 check "the real migration is back and an insert works again" "$($P -c "insert into saas_audit (actor_username, action, company_id, detail) values ('t','restored',null,'{}')" > /dev/null 2>&1; echo $?)" "0"
 
+
+# t10: model the stricter restored quotation-settings schema, not just the permissive fixture.
+for field in office_address hotline_phones billing_email website_url; do
+  $P -c "alter table quote_pdf_settings add column if not exists $field text; update quote_pdf_settings set $field='' where $field is null; alter table quote_pdf_settings alter column $field drop default; alter table quote_pdf_settings alter column $field set not null" > /dev/null 2>&1
+done
+strict_onboard() {
+  as service_role '' "select public.saas_create_company('$1','Strict synthetic company','open',14,jsonb_build_object('id','u-$1','username','u_$1','password_hash','s1:synthetic-fixture','name','Synthetic admin','email','$1@example.test'),jsonb_build_object('username','test-operator'))"
+}
+check "NEGATIVE CONTROL: old onboarding fails on required PDF contact fields" "$(strict_onboard strict_before | grep -c 'not-null')" "1"
+check "failed strict onboarding leaves no company, user, subscription or membership" "$($Q -c "select (select count(*) from companies where id='strict_before')+(select count(*) from users where id='u-strict_before')+(select count(*) from saas_subscriptions where company_id='strict_before')+(select count(*) from company_memberships where company_id='strict_before')")" "0"
+PDF_BEFORE="$($Q -c "select md5(coalesce(string_agg(to_jsonb(q)::text,'|' order by id),'')) from quote_pdf_settings q")"
+$P -f "$SAAS/phase2k-onboarding-required-fields.sql" > /dev/null 2>&1
+$P -f "$SAAS/phase2k-onboarding-required-fields.sql" > /dev/null 2>&1
+check "t10 is idempotent and leaves existing quotation settings unchanged" "$($Q -c "select md5(coalesce(string_agg(to_jsonb(q)::text,'|' order by id),'')) from quote_pdf_settings q")" "$PDF_BEFORE"
+check "new onboarding works on the strict schema" "$(strict_onboard strict_after)" ""
+check "strict onboarding still creates company, user, subscription and membership atomically" "$($Q -c "select (select count(*) from companies where id='strict_after')||'/'||(select count(*) from users where id='u-strict_after')||'/'||(select count(*) from saas_subscriptions where company_id='strict_after')||'/'||(select count(*) from company_memberships where company_id='strict_after')")" "1/1/1/1"
+check "new PDF contact fields are neutral, not copied from Sunchaser" "$($Q -c "select company_name='Strict synthetic company' and office_address='' and hotline_phones='' and billing_email='' and website_url='' and not use_default_company_content from quote_pdf_settings where company_id='strict_after'")" "t"
+check "t10 keeps company and anonymous roles away from platform onboarding" "$($Q -c "select has_function_privilege('crm_tenant','public.saas_create_company(text,text,text,integer,jsonb,jsonb)','execute') or has_function_privilege('anon','public.saas_create_company(text,text,text,integer,jsonb,jsonb)','execute')")" "f"
+check "the service role retains platform onboarding access" "$($Q -c "select has_function_privilege('service_role','public.saas_create_company(text,text,text,integer,jsonb,jsonb)','execute')")" "t"
+$P -f "$SAAS/phase2k-onboarding-required-fields-rollback.sql" > /dev/null 2>&1
+check "rollback restores the old strict-schema refusal" "$(strict_onboard strict_rollback | grep -c 'not-null')" "1"
+check "rollback never removes an existing company" "$($Q -c "select count(*) from companies where id='strict_after'")" "1"
+$P -f "$SAAS/phase2k-onboarding-required-fields.sql" > /dev/null 2>&1
+check "re-apply restores strict-schema onboarding" "$(strict_onboard strict_reapply)" ""
+check "re-applied onboarding wrote its audit row without an id collision" "$($Q -c "select count(*) from saas_audit where company_id='strict_reapply' and action='company.created'")" "1"
+
 echo; echo "subscription/limits tests: $ok passed, $bad failed"
 [ "$bad" = 0 ]
