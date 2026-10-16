@@ -2,6 +2,7 @@
 import {spawnSync} from "node:child_process";
 if(process.env.RAILWAY_PROJECT_ID!=="ea5d5d07-e276-4fa3-85af-320d92dbdcaa"||process.env.PGHOST!=="rehearsal-postgres.railway.internal")throw new Error("Refusing other target");
 const phases={
+ upgrade_core:"scripts/rehearsal/upgrade-hosted-core.mjs",
  core:"scripts/rehearsal/run-hosted-core.mjs",
  storage:"scripts/rehearsal/run-hosted-storage.mjs",
  barrier:"scripts/rehearsal/run-hosted-barrier.mjs",
