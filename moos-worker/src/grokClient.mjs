@@ -55,7 +55,9 @@ export class GrokReplyClient {
   async respond(text,history=[]) {
     if (!this.enabled() || !this.env.XAI_API_KEY) return null;
     const model=String(this.env.XAI_MODEL||"grok-4.3");
-    if (!/^grok-[a-zA-Z0-9.-]{2,60}$/.test(model)) return null;
+    // Pin the evaluated low-latency model for this pilot. Other model versions
+    // require a separate evaluation before they can serve customers.
+    if (model !== "grok-4.3") return null;
     const prev=(Array.isArray(history)?history:[])
       .filter(v=>v?.role==="customer" && typeof v.text==="string")
       .slice(-4)
@@ -68,6 +70,7 @@ export class GrokReplyClient {
         headers:{"Authorization":"Bearer "+this.env.XAI_API_KEY,"Content-Type":"application/json"},
         body:JSON.stringify({
           model,store:false,stream:false,max_output_tokens:440,
+          reasoning:{effort:"none"},
           input:[{role:"system",content:SYSTEM},...prev,{role:"user",content:current}],
           text:{format:FORMAT}
         }),
