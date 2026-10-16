@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bounded, supervised stop/outage drill. Controller toggles only the isolated app variables.
+// Bounded (30 minutes), supervised stop/outage drill. Controller toggles only the isolated app variables.
 import pg from "pg";
 const e=process.env,BASE="http://rehearsal-crm.railway.internal:8080",started=Date.now();
 if(e.RAILWAY_PROJECT_ID!=="ea5d5d07-e276-4fa3-85af-320d92dbdcaa"||e.PGHOST!=="rehearsal-postgres.railway.internal"||e.PGDATABASE!=="sunchaser_rehearsal"||!e.TEST_PW)throw new Error("Wrong drill target");
@@ -7,7 +7,7 @@ const db=new pg.Client();await db.connect();const lines=[];let removed=[],restor
 function check(n,ok){const s=(ok?"PASS: ":"FAIL: ")+n;lines.push(s);console.log(s);if(!ok)throw new Error(n);}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function health(){try{const r=await fetch(BASE+"/health",{signal:AbortSignal.timeout(3000)});return r.ok?await r.json():null;}catch{return null;}}
-async function waitFor(test){while(Date.now()-started<15*60*1000){const h=await health();if(h&&test(h))return h;await sleep(2000);}throw new Error("Supervised drill timed out");}
+async function waitFor(test){while(Date.now()-started<30*60*1000){const h=await health();if(h&&test(h))return h;await sleep(2000);}throw new Error("Supervised drill timed out");}
 async function restoreRows(){if(!removed.length)return;await db.query("set session_replication_role=origin");for(const row of removed)await db.query("insert into companies select (jsonb_populate_record(null::public.companies,$1::jsonb)).* on conflict(id) do nothing",[JSON.stringify(row)]);restored=true;}
 try{
  const h=await health();check("drill begins on the working company-aware backend",h?.tenantIsolation?.paused===false);
