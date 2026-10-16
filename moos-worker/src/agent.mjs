@@ -455,6 +455,52 @@ export class Agent {
     };
   }
 
+  /** In the initial live pilot, handle text enquiries only.
+   * Never enter the approved-PDF, custom quote, catalogue or draft actions.
+   * An absent setting defaults to text-only in production (fail closed).
+   */
+  textOnly() {
+    return this.env.MUSE_TEXT_ONLY_MODE === "true" ||
+      (this.env.NODE_ENV === "production" && this.env.MUSE_TEXT_ONLY_MODE !== "false");
+  }
+
+  async processTextOnly(msg, text) {
+    const t = String(text || "").trim();
+    if (shouldHandoff(t) || requiresStaffPolicyReview(t)) {
+      await this.text(msg, "text_only_staff", "Thank you for contacting Sunchaser Energy Systems. Our team will review your question and reply shortly.");
+      await this.handoff(msg, "text_only_staff_review", t.slice(0, 500));
+      return { review: true, reason: "text_only_handoff" };
+    }
+
+    // Only facts in the tiny approved baseline knowledge file are eligible
+    // for automatic factual replies. Unapproved 64-FAQ patch stays excluded.
+    const faq = matchFaq(t, await this.faqs());
+    if (faq) {
+      await this.text(msg, `faq:${faq.id}`, faq.answer);
+      return { review: false, reason: "text_only_faq" };
+    }
+
+    if (/^(hi|hello|hey|aoa|a\.?o\.?a\.?|assalamu?\s*alaikum|asalamualaikum|salam|السلام\s*علیکم|سلام|اسلام\s*علیکم)[!.,\s]*$/i.test(t)) {
+      await this.text(msg, "text_only_welcome", "Assalam-o-Alaikum! Welcome to Sunchaser Energy Systems. How can I help you with your solar enquiry? You can write in Urdu, Roman Urdu or English.");
+      return { review: false, reason: "text_only_greeting" };
+    }
+
+    // A price, system-size, custom-solar or quotation question is NOT a request
+    // to send a file. Defer commercial terms to a person during the pilot.
+    const classified = classifyRequest(t);
+    if (classified.quoteIntent || classified.sizes.length || classified.custom ||
+        /\b(price|cost|rate|estimate|quotation|quote|kitne|qeemat)\b|قیمت|ریٹ|کوٹیشن/i.test(t)) {
+      await this.text(msg, "text_only_sales", "Thank you! Please share your city and whether you need an on-grid or hybrid solar system. Our sales team will confirm the suitable system and current price. I will not send a quotation automatically.");
+      await this.handoff(msg, "text_only_sales_enquiry", t.slice(0, 500));
+      return { review: true, reason: "text_only_sales_handoff" };
+    }
+
+    // Do not pretend this rule-based pilot can answer an arbitrary question.
+    await this.text(msg, "text_only_review", "Thank you for your message. Our Sunchaser team will review your enquiry and get back to you. You can also share your city and solar requirements.");
+    await this.handoff(msg, "text_only_unreviewed_question", t.slice(0, 500));
+    return { review: true, reason: "text_only_review_handoff" };
+  }
+
   // ---------- main turn ----------
 
   async process(msg) {
@@ -465,6 +511,7 @@ export class Agent {
       return { review: true, reason: "unsupported_media" };
     }
     const t = String(msg.text || "").slice(0, 2000);
+    if (this.textOnly()) return this.processTextOnly(msg, t);
 
     if (shouldHandoff(t)) {
       await this.text(msg, "human_ack", "Ji, main aapki baat hamari team se karwa deta hoon. Koi team member jald rabta karega.");
