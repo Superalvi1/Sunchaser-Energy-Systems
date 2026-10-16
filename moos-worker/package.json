@@ -11,7 +11,8 @@
   "scripts": {
     "start": "node src/index.mjs",
     "test": "node --test tests/*.mjs",
-    "migrate": "node src/migrate.mjs"
+    "migrate": "node src/migrate.mjs",
+    "smoke:xai": "node src/grokSmoke.mjs"
   },
   "type": "module",
   "version": "0.1.0"
