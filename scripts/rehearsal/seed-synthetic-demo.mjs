@@ -2,7 +2,7 @@
 import pg from "pg";
 import {randomBytes,scryptSync} from "node:crypto";
 const e=process.env,BASE="http://rehearsal-crm.railway.internal:8080";
-if(e.RAILWAY_PROJECT_ID!=="ea5d5d07-e276-4fa3-85af-320d92dbdcaa"||e.PGHOST!=="rehearsal-postgres.railway.internal"||e.PGDATABASE!=="sunchaser_demo"||e.ALLOW_SYNTHETIC_DEMO!=="true")throw new Error("Refusing other demo target");
+if(e.RAILWAY_PROJECT_ID!=="ea5d5d07-e276-4fa3-85af-320d92dbdcaa"||e.PGHOST!=="sync-postgres.railway.internal"||e.PGDATABASE!=="sunchaser_demo"||e.ALLOW_SYNTHETIC_DEMO!=="true")throw new Error("Refusing other demo target");
 for(const k of ["DEMO_OPERATOR_PW","DEMO_OWNER_PW","DEMO_OTHER_PW"])if(!e[k]||e[k].length<24)throw new Error("Fresh demo password missing");
 const db=new pg.Client();await db.connect();
 const call=t=>(p,m="GET",b)=>fetch(BASE+p,{method:m,signal:AbortSignal.timeout(45000),headers:{"content-type":"application/json",...(t?{authorization:"Bearer "+t}:{})},...(b===undefined?{}:{body:JSON.stringify(b)})});
@@ -18,10 +18,10 @@ try{
  await json(await op("/api/platform/plans/demo_only","PUT",{name:"Demonstration — sample data only",maxStaff:3,maxLeads:100,maxDocuments:50,maxStorageMb:50,monthlyPricePkr:0}));
  const owners={};
  for(const c of [{id:"demo_solar",name:"Demo Solar — Sunchaser Sync",username:"demo_owner",pw:e.DEMO_OWNER_PW},{id:"demo_other",name:"Separate Demo Company",username:"demo_other_owner",pw:e.DEMO_OTHER_PW}]){
-  const created=await json(await op("/api/platform/companies","POST",{id:c.id,name:c.name,ownerName:"Demonstration Administrator",ownerUsername:c.username,ownerEmail:c.username+"@example.test",planId:"demo_only",storageLimitMb:50,trialDays:30}));
+  const created=await json(await op("/api/platform/companies","POST",{id:c.id,name:c.name,ownerName:"Demonstration Administrator",ownerUsername:c.username,ownerEmail:c.username+"@example.test",planId:"demo_only",storageLimitMb:50,trialDays:365}));
   if(!created.owner?.temporaryPassword)throw new Error("Normal onboarding did not finish");
   const {rows:[u]}=await db.query("select id from users where username=$1",[c.username]);
-  await db.query("update users set password=$1 where id=$2",[hash(c.pw),u.id]);
+  await db.query("update users set password=$1,onboarding_completed=true where id=$2",[hash(c.pw),u.id]);
   await db.query("insert into saas_audit(actor_user_id,actor_username,action,company_id,detail) values('demo-operator-20261016','sync_operator','demo.credentials_set',$1,$2::jsonb)",[c.id,JSON.stringify({userId:u.id,synthetic:true})]);
   const api=await login(c.username,c.pw);owners[c.id]=api;
   await json(await api("/api/company/settings/branding","PUT",{companyName:c.name,officeAddress:"Demonstration only — no real customer address"}));
