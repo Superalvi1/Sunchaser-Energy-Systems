@@ -60,15 +60,17 @@ pass "bills described in bills-report.txt (owner: classify it; tenant if it hold
 HAS_BILLS="$(Q -c "select to_regclass('public.bills') is not null")"
 
 echo "== 1. fingerprints BEFORE"
-# original columns only: tables that had no company_id before are compared without it afterwards; invoices.issuance_snapshot (t6) is a new
-# column and is left out for the same reason (it is NULL for every existing invoice, which the migration test proves)
-Q -c "select table_name from information_schema.columns where table_schema='public' and column_name='company_id'" | sort > "$OUT/had_company_id.txt"
-fp() { # $1 = label; strips company_id (and other columns added by the migrations) from tables that did not have it before
+# Capture the exact original projection once. Added migration columns must not alter old-row fingerprints.
+Q -c "select table_name from information_schema.tables where table_schema='public' and table_type='BASE TABLE' order by 1" > "$OUT/original_tables.txt"
+while IFS= read -r t; do
+  Q -c "select string_agg(format('%I',column_name),',' order by ordinal_position) from information_schema.columns where table_schema='public' and table_name='$t'" > "$OUT/columns_$t.txt"
+done < "$OUT/original_tables.txt"
+fp() {
   local f="$OUT/fp_$1.txt"; : > "$f"
-  for t in $(Q -c "select table_name from information_schema.tables where table_schema='public' and table_type='BASE TABLE' and table_name not in ('companies','company_memberships','document_counters','company_settings_audit','saas_plans','saas_subscriptions','saas_payments','saas_audit') order by 1"); do
-    local strip=""; grep -qx "$t" "$OUT/had_company_id.txt" || strip="- 'company_id'::text"
-    echo "$t|$(Q -c "select count(*)||'|'||md5(coalesce(string_agg((to_jsonb(x) - 'issuance_snapshot'::text $strip)::text, '|' order by (to_jsonb(x) - 'issuance_snapshot'::text $strip)::text), '')) from public.\"$t\" x")" >> "$f"
-  done
+  while IFS= read -r t; do
+    local projection; projection="$(cat "$OUT/columns_$t.txt")"
+    echo "$t|$(Q -c "select count(*)||'|'||md5(coalesce(string_agg(to_jsonb(x)::text, '|' order by to_jsonb(x)::text), '')) from (select $projection from public.\"$t\") x")" >> "$f"
+  done < "$OUT/original_tables.txt"
 }
 fp before; pass "fingerprint of $(wc -l < "$OUT/fp_before.txt" | tr -d ' ') tables taken"
 psql -X -qAt -d "$DB" -f "$REPO/scripts/saas/tests/schema-snapshot.sql" > "$OUT/schema_before.txt" 2>&1
