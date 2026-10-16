@@ -29,8 +29,19 @@ This document records actions performed by Codex, separately from Claude's synth
 ## Not yet verified
 
 The original backup has no row-count manifest. The archive transfer checksum and successful restore do not prove equality with a point-in-time source row manifest.
-Tenant migration/rollback/data-preservation rehearsal has started from pinned ops commit cede509019279fae6321d2002a20ce156ab60810. It is not reported as passed yet.
-No real-storage quota, cross-company, PDF or browser acceptance result is claimed.
+The corrected tenant rehearsal completed with zero failures on 16 October, deployment d08f10a4-bd12-48a3-8a49-d7d9398db3bf, run 2026-10-16T21:44:04.893Z. It applied t1-t9, compared 168 original public tables, checked ownership and numbering, rolled back all tenant migrations, compared data and schema, re-applied, and verified the ledger. Its older output labels say t1-t8, but retained runner logs explicitly include t9.
+An independent original-column check after the completed run matched all 179 baseline tables, with only the tracked synthetic user and seven login audit rows excluded; recovery rows are unchanged.
+The deployed candidate at c2d86ce4bf8f7fd6897e3135515c6f297d9bfa2f builds server.cjs SHA-256 2e7376397c17bd1996d761d939970dfd38d35eec977f69ac7ff83239f2b33268, matching the earlier tested runtime.
+HTTP barrier verification passed all seven checks and recorded verified at 2026-10-16T21:51:27.179Z. Multi-company mode was then enabled.
+Real provider storage checks passed C1-C6 including C1b: 25 strict next-list observations, 1100-object pagination, listing p95 65 ms, unsigned-request refusal and byte parity; run 2026-10-16T21:54:02.542Z.
+Core cross-company financial/PDF/upload acceptance and browser acceptance are not yet reported as passed.
+
+### Issues found and changes
+- The rehearsal compared added columns and a newly created table against the old schema. It now fingerprints the exact original tables and column projections.
+- Existing shared role templates intentionally have company_id NULL; the assertion now preserves these while rejecting other-company ownership.
+- A real number formatter defect truncated 10000 and 10001 to 1000. Additive t9 preserves all digits, keeping the prior ownership checks and locking. The old SQL migrations are unchanged. Its rollback refuses oversized issuance instead of restoring truncation.
+- The hosted negative control reproduced truncation; 17 focused checks passed after the fix, including large bigint values, narrow widths and tenant/anonymous restrictions. CI adds concurrent boundary and rollback/re-apply checks; exact-head CI is still pending.
+- One test-runner build failed because command quoting removed a string literal. The command was corrected; this was not an application failure.
 The staging application is private and is not a customer-ready demo.
 The real restore does not resolve the historical synthetic restore-deficit incident.
 
@@ -40,7 +51,7 @@ The owner renewed authorisation to complete staging. The earlier audit-helper ap
 No approval question is pending for this isolated rehearsal.
 
 Current jobs are one-shot with restart policy NEVER. Production services, data and integration credentials are outside these actions.
-Next gates: tenant migration/rollback parity, repair financial writes, candidate backend, HTTP isolation barrier, real storage, two synthetic companies, recovery drills and a separate synthetic-only demo.
+Next gates: complete the two-company financial/file acceptance, recovery drills and recovery test, then provision and review a synthetic-only demo. The schema-only demo factory refuses an existing target and never copies customer rows.
 PR #111/#113 and any production release remain separate.
 
 ## Minimum sellable pilot
