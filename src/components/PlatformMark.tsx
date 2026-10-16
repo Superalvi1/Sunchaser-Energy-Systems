@@ -7,7 +7,7 @@ const SYNC_BUILD_INFO: PlatformInfo = { multiCompany: true, platformName: "Sunch
 export function usePlatformInfo(): PlatformInfo | null {
   const info = useSyncExternalStore(subscribeWorkspace, getPlatformInfo, getPlatformInfo);
   // Branding only: this build flag never enables server permissions or company access.
-  return info && info.multiCompany ? info : import.meta.env.VITE_APP_VARIANT === "sync" ? SYNC_BUILD_INFO : null;
+  return info && info.multiCompany ? info : import.meta.env?.VITE_APP_VARIANT === "sync" ? SYNC_BUILD_INFO : null;
 }
 
 /** A plain wordmark: the platform has no logo image of its own, and a company's logo must not stand in for it before anyone has signed in. */
