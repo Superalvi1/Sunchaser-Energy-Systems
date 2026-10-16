@@ -893,6 +893,40 @@ await test("test-only recipient scope blocks other customer texts and PDFs", asy
   }
 });
 
+
+// During the text-only pilot, even an authorized worker cannot send a PDF
+// or create a Smart Quote draft if a worker bug sends the wrong action.
+await test("text-only mode blocks documents and custom drafts at CRM boundary",async()=>{
+  const ctx=await setup([validQuote("text-only-pdf")]);
+  ctx.seedConversation("text-only", {phone:"923218486752"});
+  const previous=process.env.MUSE_TEXT_ONLY_MODE;
+  process.env.MUSE_TEXT_ONLY_MODE="true";
+  try {
+    const document=await api(ctx,"POST","/send-approved-pdf",{
+      conversationId:"text-only", quoteId:"text-only-pdf", idempotencyKey:"blocked-text-only-doc"
+    });
+    assert.equal(document.status,403);
+    assert.equal(document.data.error,"muse_text_only_mode");
+    const draft=await api(ctx,"POST","/custom-quote-draft",{
+      conversationId:"text-only", inboundMessageId:"wamid.synth", requirements:{capacityKw:10}
+    });
+    assert.equal(draft.status,403);
+    assert.equal(draft.data.error,"muse_text_only_mode");
+    assert.equal(ctx.calls.deliverDocument.length,0);
+    assert.equal(ctx.calls.createQuote.length,0);
+    // Text replies remain possible under the same CRM feature switch.
+    const text=await api(ctx,"POST","/send-text",{
+      conversationId:"text-only",text:"Sunchaser welcome",idempotencyKey:"allowed-text-only-reply"
+    });
+    assert.equal(text.status,200);
+    assert.equal(ctx.calls.sendText.length,1);
+  } finally {
+    if(previous===undefined) delete process.env.MUSE_TEXT_ONLY_MODE;
+    else process.env.MUSE_TEXT_ONLY_MODE=previous;
+    await ctx.close();
+  }
+});
+
 if (failed > 0) {
   console.error(`\n${failed} test(s) failed`);
   process.exit(1);
