@@ -1,10 +1,13 @@
 import React, { useSyncExternalStore } from "react";
 import { getPlatformInfo, subscribeWorkspace, type PlatformInfo } from "../lib/workspaceModules";
 
+const SYNC_BUILD_INFO: PlatformInfo = { multiCompany: true, platformName: "Sunchaser Sync" };
+
 /** The platform's name as the sign-in screens show it. null in single-company mode (those screens keep their existing Sunchaser wording). */
 export function usePlatformInfo(): PlatformInfo | null {
   const info = useSyncExternalStore(subscribeWorkspace, getPlatformInfo, getPlatformInfo);
-  return info && info.multiCompany ? info : null;
+  // Branding only: this build flag never enables server permissions or company access.
+  return info && info.multiCompany ? info : import.meta.env?.VITE_APP_VARIANT === "sync" ? SYNC_BUILD_INFO : null;
 }
 
 /** A plain wordmark: the platform has no logo image of its own, and a company's logo must not stand in for it before anyone has signed in. */

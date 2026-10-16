@@ -152,6 +152,42 @@
    "gate": "G3+G4",
    "probe": "select to_regclass('public.saas_storage_reservations') is not null and to_regprocedure('public.saas_storage_reserve(text,bigint,bigint,bigint,bigint,integer,integer)') is not null",
    "note": "Atomic storage reservations across server processes: a per-company locked reserve/settle function pair. Pilot companies' uploads need it (without it they are refused with a retryable 'could not verify storage'); the founding company and single-company mode never use it."
+  },
+  {
+   "id": "t9-document-number-width",
+   "series": "tenant",
+   "file": "scripts/saas/phase2j-document-number-width.sql",
+   "rollback": "scripts/saas/phase2j-document-number-width-rollback.sql",
+   "requires": [
+    "t3-document-numbering"
+   ],
+   "gate": "G3+G4",
+   "probe": "select position('greatest(p_width, length(v_next::text))' in pg_get_functiondef('public.next_document_number(text,text,text,integer)'::regprocedure)) > 0",
+   "note": "Preserve all counter digits beyond the padding width; rollback refuses oversized issuance instead of truncating it."
+  },
+  {
+   "id": "t10-onboarding-required-fields",
+   "series": "tenant",
+   "file": "scripts/saas/phase2k-onboarding-required-fields.sql",
+   "rollback": "scripts/saas/phase2k-onboarding-required-fields-rollback.sql",
+   "requires": [
+    "t5-subscriptions"
+   ],
+   "gate": "G3+G4",
+   "probe": "select position('company_name, office_address, hotline_phones, billing_email, website_url' in pg_get_functiondef('public.saas_create_company(text,text,text,integer,jsonb,jsonb)'::regprocedure)) > 0",
+   "note": "Explicit blank contact fields allow atomic onboarding on restored strict quotation-settings schemas without inheriting founding-company identity."
+  },
+  {
+   "id": "t11-invoice-creator",
+   "series": "tenant",
+   "file": "scripts/saas/phase2l-invoice-creator.sql",
+   "rollback": "scripts/saas/phase2l-invoice-creator-rollback.sql",
+   "requires": [
+    "t1-company-foundation"
+   ],
+   "gate": "G3+G4",
+   "probe": "select exists(select 1 from information_schema.columns where table_schema='public' and table_name='invoices' and column_name='created_by_user_id') and to_regclass('public.invoices_company_creator_idx') is not null",
+   "note": "Required creator id for scoped staff invoice creation; preserves legacy rows and refuses to drop recorded attribution."
   }
  ]
 }

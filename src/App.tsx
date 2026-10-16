@@ -10,6 +10,7 @@ import {
   ChevronRight, ChevronLeft, Battery, Zap,
 } from "lucide-react";
 import AuthHub from "./components/AuthHub";
+import SyncPilotLanding from "./components/SyncPilotLanding";
 import CompanySelectScreen from "./components/CompanySelectScreen";
 import PlatformConsole from "./components/PlatformConsole";
 import { getStoredCompanies, getStoredCompanyId, initWorkspaceIdentity, clearWorkspaceIdentity } from "./services/api";
@@ -139,6 +140,12 @@ function AuthenticatedApp() {
   const workspaceBrand = useSyncExternalStore(subscribeWorkspace, getWorkspaceBrand, getWorkspaceBrand);
   const platformInfo = usePlatformInfo();
   const neutralWorkspace = useSyncExternalStore(subscribeWorkspace, workspaceIsNeutral, workspaceIsNeutral);
+  useEffect(() => {
+    if (!platformInfo?.platformName) return;
+    document.title = neutralWorkspace && workspaceBrand?.companyName
+      ? workspaceBrand.companyName + " · " + platformInfo.platformName
+      : platformInfo.platformName;
+  }, [platformInfo?.platformName, neutralWorkspace, workspaceBrand?.companyName]);
   /*
    * Native cold start opens on Login; web keeps the marketing landing.
    *
@@ -937,6 +944,7 @@ function AuthenticatedApp() {
                * Guest path off the Login screen. Native starts here, so the solar
                * wizard would otherwise be unreachable on a fresh install.
                */}
+              {platformInfo ? null : (
               <div className="rounded-2xl border border-slate-800 bg-slate-900/65 p-3 space-y-2.5">
                 <p className="text-[11px] text-slate-400 text-center leading-relaxed">
                   Not a client or staff member yet?
@@ -950,7 +958,10 @@ function AuthenticatedApp() {
                   Continue as Guest — Solar Consultant Wizard
                 </button>
               </div>
+              )}
             </div>
+          ) : platformInfo ? (
+            <SyncPilotLanding onSignIn={() => setGuestView("login")} />
           ) : guestView === "wizard" ? (
             <div className="max-w-xl mx-auto py-4">
               <SolarConsultantWizard onBackToLanding={() => setGuestView("landing")} />
@@ -1302,7 +1313,7 @@ function AuthenticatedApp() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex flex-col items-center md:items-start text-[11px] text-slate-500">
             <span>&copy; {new Date().getFullYear()} {workspaceBrand && neutralWorkspace ? `${workspaceBrand.companyName || "Your company"}. Powered by Sunchaser Sync.` : platformInfo && !currentUser ? `${platformInfo.platformName}. All Rights Reserved.` : "Sunchaser Energy Systems Inc. All Rights Reserved."}</span>
-            <span className="text-[10px] text-slate-600">STATE CONTROL COMPLIANCE • CONTAINER ISOLATED LAYER</span>
+            {platformInfo || neutralWorkspace ? null : <span className="text-[10px] text-slate-600">STATE CONTROL COMPLIANCE • CONTAINER ISOLATED LAYER</span>}
             {/* Public compliance pages — required to be reachable from inside the app. */}
             <span className="mt-1 flex items-center gap-2 text-[10px]">
               <a
