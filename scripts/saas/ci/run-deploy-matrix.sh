@@ -111,7 +111,7 @@ step() { # label (state reached)
   echo "| $label | $n | $r |" >> "$REPORT_DIR/matrix.md"
 }
 step "before M1 (schema before the repair release)"
-for m in r1-smart-quote-versions r2-session-revocation r3-invoice-payments-integrity r4-invoice-save-atomic t1-company-foundation t1b-tenancy-barrier t2-ownership t3-document-numbering t4-company-settings t5-subscriptions t6-invoice-issuance-snapshot t7-company-admin t8-storage-reservations; do
+for m in r1-smart-quote-versions r2-session-revocation r3-invoice-payments-integrity r4-invoice-save-atomic t1-company-foundation t1b-tenancy-barrier t2-ownership t3-document-numbering t4-company-settings t5-subscriptions t6-invoice-issuance-snapshot t7-company-admin t8-storage-reservations t9-document-number-width; do
   runner apply --to "$m" > "$REPORT_DIR/apply-$m.log" || { tail -5 "$REPORT_DIR/apply-$m.log"; die "could not apply $m"; }
   step "after $m"
 done
