@@ -1,0 +1,132 @@
+name: Moos WhatsApp AI staging verification
+
+on:
+  push:
+    branches:
+      - moos-whatsapp-agent
+    paths:
+      - "server/moos/**"
+      - "moos-worker/**"
+      - "server/whatsappAgent/**"
+      - "server/whatsappTransport/**"
+      - "scripts/moos-relay-outbox-schema.sql"
+      - ".github/workflows/moos-staging-verification.yml"
+  pull_request:
+    paths:
+      - "server/moos/**"
+      - "moos-worker/**"
+      - "server/whatsappAgent/**"
+      - "server/whatsappTransport/**"
+      - "scripts/moos-relay-outbox-schema.sql"
+      - ".github/workflows/moos-staging-verification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crm-no-send-tests:
+    name: CRM Moos security and integration tests (no Meta sends)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MOOS_ENABLED: "false"
+      MOOS_RELAY_ENABLED: "false"
+      WHATSAPP_AI_AUTO_REPLY_ENABLED: "false"
+      WHATSAPP_CONVERSATIONS_ENABLED: "false"
+      PLAYWRIGHT_BROWSERS_PATH: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify test-recipient allowlist fails closed
+        run: npx tsx server/moos/moosTestScope.test.ts
+      - name: Validate CRM Moos HTTP security tests
+        run: npx tsx server/moos/moosRouter.integration.test.ts
+      - name: Validate relay signature and mutual exclusion
+        run: npx tsx server/moos/moosRelay.test.ts
+      - name: Validate outbox retry/dedup and dead lettering
+        run: npx tsx server/moos/moosRelayOutbox.test.ts
+      - name: Validate actual Graph API document payload serialization with fake HTTP
+        run: npx tsx server/whatsappTransport/whatsappGraphClient.test.ts
+      - name: Validate existing WhatsApp webhook and repository tests
+        run: |
+          npx tsx server/whatsappTransport/whatsappWebhook.test.ts
+          npx tsx server/whatsappTransport/whatsappRepository.test.ts
+      - name: Check migration has privacy controls
+        run: |
+          grep -q 'enable row level security' scripts/moos-relay-outbox-schema.sql
+          grep -q 'revoke all' scripts/moos-relay-outbox-schema.sql
+          grep -q 'moos_relay_outbox' scripts/moos-relay-outbox-schema.sql
+
+
+  worker-integration:
+    name: Worker source + relay HTTP integration (required)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: moos_ci
+          POSTGRES_PASSWORD: moos_test_ci_only
+          POSTGRES_DB: moos_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U moos_ci -d moos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Require source-controlled worker (not just a local archive)
+        run: |
+          test -f moos-worker/package.json || { echo "::error::moos-worker source is not committed on this branch"; exit 1; }
+          test -f moos-worker/src/index.mjs
+          test -f moos-worker/tests/relay.integration.mjs
+      - name: Locked dependency install
+        working-directory: moos-worker
+        run: npm ci --ignore-scripts
+      - name: Verify worker schema migration in isolated Postgres 17
+        working-directory: moos-worker
+        env:
+          DATABASE_URL: postgresql://moos_ci:moos_test_ci_only@localhost:5432/moos_ci
+        run: |
+          node src/migrate.mjs
+          node src/migrate.mjs
+          node --input-type=module -e "
+            import pg from 'pg';
+            const c=new pg.Client({connectionString:process.env.DATABASE_URL});
+            await c.connect();
+            const r=await c.query(\"SELECT to_regclass('moos_worker.wa_inbound') AS isolated, to_regclass('public.wa_inbound') AS leaked\");
+            if(!r.rows[0].isolated||r.rows[0].leaked)process.exitCode=1;
+            await c.end();
+          "
+      - name: Run entire worker unit and relay integration suite
+        working-directory: moos-worker
+        env:
+          ENABLE_AUTOSEND: "false"
+          MOOS_TEST_DATABASE_URL: postgresql://moos_ci:moos_test_ci_only@localhost:5432/moos_ci
+        run: npm test
+
+  production-switch-audit:
+    name: Static no-send release audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check documented opt-in gates
+        run: |
+          grep -q 'MOOS_ENABLED' server/moos/moosRouter.ts
+          grep -q 'MOOS_RELAY_ENABLED' server/moos/moosRelay.ts
+          grep -q 'isLegacyAiEnabledFresh' server/moos/moosRouter.ts
+          if grep -R -E 'MOOS_ENABLED=(true|1)' -- .env.production 2>/dev/null; then
+            echo 'Unsafe production Moos default'; exit 1
+          fi

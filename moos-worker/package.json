@@ -1,0 +1,19 @@
+{
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "description": "Moos WhatsApp AI sales agent worker for Sunchaser Energy Systems (staging)",
+  "engines": {
+    "node": ">=20"
+  },
+  "name": "moos-whatsapp-worker",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test tests/*.mjs",
+    "migrate": "node src/migrate.mjs",
+    "smoke:xai": "node src/grokSmoke.mjs"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

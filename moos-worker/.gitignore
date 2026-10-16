@@ -1,0 +1,7 @@
+.env
+node_modules/
+pdfs/*.pdf
+*.log
+.DS_Store
+node_modules/
+.env

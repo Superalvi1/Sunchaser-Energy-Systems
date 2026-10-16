@@ -47,12 +47,15 @@ export function createSalesAgentRouter(invalidate: () => void) {
       if (!b || b.approved !== true || typeof b.title !== "string" || !b.title.trim() || b.title.length > 200 || typeof b.description !== "string" || b.description.length > 2000 || ![6,8,10,12,15,20].includes(b.capacityKw) || !Number.isFinite(Date.parse(b.expiresAt)) || Date.parse(b.expiresAt) <= Date.now() || typeof b.pdfBase64 !== "string" || b.pdfBase64.length > 14*1024*1024 || !Number.isInteger(b.revision)) return res.status(400).json({error:"Provide a reviewed PDF, package details and a future expiry date."});
       const pdf=Buffer.from(b.pdfBase64,"base64");
       if (pdf.length > 10*1024*1024 || pdf.subarray(0,5).toString() !== "%PDF-") return res.status(400).json({error:"Upload a valid PDF up to 10 MB."});
+      const systemType = ["on_grid","hybrid","off_grid"].includes(b.systemType) ? b.systemType : undefined;
+      const phase = ["single","three"].includes(b.phase) ? b.phase : undefined;
+      const batteryIncluded = typeof b.batteryIncluded === "boolean" ? b.batteryIncluded : undefined;
       const existing=await loadAgentSettings();
       if (existing.settings.revision !== b.revision) return res.status(409).json({error:"Settings changed. Refresh and retry."});
       if (existing.settings.quotations.length >= 100) return res.status(400).json({error:"The library supports up to 100 quotations."});
       const id=randomUUID(), storagePath=`whatsapp-agent/approved/${id}.pdf`;
       await putRailwayObject("customer-documents",storagePath,pdf,"application/pdf");
-      const settings=await updateAgentSettings(b.revision,c=>({...c,quotations:[...c.quotations,{id,title:b.title.trim(),description:b.description.trim(),capacityKw:b.capacityKw,expiresAt:new Date(b.expiresAt).toISOString(),storagePath,approved:true}]}));
+      const settings=await updateAgentSettings(b.revision,c=>({...c,quotations:[...c.quotations,{id,title:b.title.trim(),description:b.description.trim(),capacityKw:b.capacityKw,expiresAt:new Date(b.expiresAt).toISOString(),storagePath,approved:true,systemType,phase,batteryIncluded}]}));
       invalidate(); const config=resolveSalesProvider(process.env,settings); res.json({settings:{...settings,provider:config.provider,model:config.model},readiness:agentReadiness(process.env,settings),providers:providerStatuses()});
     } catch(e:any) { res.status(e.status||503).json({error:e.status === 409 ? e.message : "Could not save the approved quotation."}); }
   });

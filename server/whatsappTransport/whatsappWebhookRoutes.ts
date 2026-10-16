@@ -23,6 +23,11 @@ import {
   type WhatsAppRepository,
 } from "./whatsappRepository.ts";
 import { dirtyUnreadIndexForConversation } from "./whatsappInboxUnreadIndexCache.ts";
+import { moosRelayEnabled } from "../moos/moosRelay.ts";
+import { moosTestRecipientAllowed } from "../moos/moosTestScope.ts";
+import {
+  getDefaultMoosRelayOutboxStore,
+} from "../moos/moosRelayOutbox.ts";
 import { sha256Hex, verifyWhatsAppSignature } from "./whatsappSignature.ts";
 import { recordWebhookPing } from "./whatsappConnectionService.ts";
 import type { MessagingRepository } from "../unifiedMessaging/messagingRepository.ts";
@@ -170,6 +175,40 @@ async function persistNormalizedEvents(
           },
         });
         if (enqueueSalesAgent && textBody && messageType === "text") await enqueueSalesAgent(conversation.id, inserted.row.id);
+        // Moos relay: enqueue the verified, recorded inbound text into the
+        // durable relay outbox (unique wamid). A periodic drain delivers it
+        // to the Moos worker with bounded retry/backoff, so a worker outage
+        // cannot silently lose the event while the webhook returns 200.
+        // Relay disabled (MOOS_RELAY_ENABLED unset) → skip entirely: no
+        // enqueue, no audit noise. Mutual exclusion with the legacy AI agent
+        // is enforced fresh at drain/delivery time (see moosRelayOutbox.ts).
+        if (textBody && messageType === "text" && moosRelayEnabled(process.env) && moosTestRecipientAllowed(contact.phoneE164)) {
+          const relayEvent = {
+            conversationId: conversation.id,
+            messageId: event.waMessageId,
+            phone: contact.phoneE164,
+            phoneNumberId: channel.phoneNumberId,
+            type: "text" as const,
+            text: textBody.slice(0, 4000),
+            sentAt: Date.parse(event.occurredAt) || Date.now(),
+          };
+          await getDefaultMoosRelayOutboxStore()
+            .enqueue(relayEvent)
+            .catch(async (err) => {
+              await safeAudit(repo, {
+                eventType: "MOOS_RELAY_ENQUEUE_FAILED",
+                entityType: "message",
+                entityId: inserted.row.id,
+                metadata: {
+                  conversationId: conversation.id,
+                  error: String(err instanceof Error ? err.message : err).slice(0, 200),
+                },
+              });
+              // Keep the webhook incomplete so Meta can safely retry the
+              // deduplicated inbound and persist its relay after DB recovery.
+              throw new Error("Muse relay enqueue failed");
+            });
+        }
         continue;
       }
 

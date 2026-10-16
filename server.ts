@@ -5,6 +5,15 @@ import path from "path";
 import fs from "fs";
 import { createSalesAgentRuntime, absoluteCrmFileUrl } from "./server/whatsappAgent/agentRuntime.ts";
 import { createSalesAgentRouter } from "./server/whatsappAgent/agentRoutes.ts";
+import { createMoosRouter, type MoosCreateQuote } from "./server/moos/moosRouter.ts";
+import {
+  drainMoosRelayOutbox,
+  getDefaultMoosRelayOutboxStore,
+} from "./server/moos/moosRelayOutbox.ts";
+import {
+  createDefaultWhatsAppRepository,
+  safeAudit,
+} from "./server/whatsappTransport/whatsappRepository.ts";
 import { calculateAgentQuote } from "./server/whatsappAgent/quoteTools.ts";
 import { buildSmartQuotationPdf } from "./src/lib/smartQuotationPdf.ts";
 import { toPublicLeadInput } from "./server/publicLeads/smartQuoteLead.ts";
@@ -638,7 +647,7 @@ let productionAutoLinkLead: ReturnType<
  */
 const messagingProductionWiring = createMessagingProductionWiring();
 const messagingRepository = messagingProductionWiring.repository;
-const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,messageId)=> {
+const createServerQuote: MoosCreateQuote = async (requirements, phone, messageId) => {
   const smartQuotePricing = await smartQuoteSettingsStore.read();
   const {result}=calculateAgentQuote(requirements,phone,smartQuotePricing);
   const hash=createHash("sha256").update(messageId).digest("hex");
@@ -653,7 +662,8 @@ const salesAgentRuntime = createSalesAgentRuntime(async (requirements,phone,mess
   const pdf=await buildSmartQuotationPdf({quoteNumber,system:`${requirements.systemCapacityKw} kW`,generatedAt,clientName:requirements.name,clientPhone:phone,clientCity:requirements.city,lines:result.lines,subtotalPkr:result.subtotalPkr,discountPkr:result.discountPkr,totalPkr:result.totalPkr,logoDataUrl,document:smartQuotePricing.document});
   const archive=await archivePublicSmartQuotePdf(leadId,quoteNumber,Buffer.from(pdf.output("arraybuffer")));
   return {quoteNumber,totalPkr:result.totalPkr,url:absoluteCrmFileUrl(archive.fileUrl)};
-});
+};
+const salesAgentRuntime = createSalesAgentRuntime(createServerQuote);
 
 // Meta webhook must be public and mounted before JWT authorization middleware.
 if (!railwayPrivateSmokeMode) {
@@ -670,6 +680,13 @@ app.use(
 );
 }
 
+// Moos WhatsApp agent internal API — Bearer MOOS_SERVICE_TOKEN auth inside the
+// router. Mounted before JWT authorization like the Meta webhook. All sends
+// additionally require MOOS_ENABLED=true (default false: production inert).
+if (!railwayPrivateSmokeMode) {
+  app.use("/api/moos", createMoosRouter({ createQuote: createServerQuote }));
+}
+
 app.use(createAuthorizationMiddleware({ resolveLocalDb: resolveAuthLocalDb }));
 const smartQuoteSettingsStore = createSmartQuoteSettingsStore({
   read: () => { loadDb(); return db.smartQuoteSettings; },
@@ -678,6 +695,31 @@ const smartQuoteSettingsStore = createSmartQuoteSettingsStore({
 app.use(createSmartQuoteSettingsRouter(smartQuoteSettingsStore));
 app.use("/api/whatsapp-agent",createSalesAgentRouter(salesAgentRuntime.invalidate));
 if (!railwayPrivateSmokeMode) setInterval(()=>{void salesAgentRuntime.drain();},5000).unref();
+
+// Moos relay outbox drain: deliver queued inbound events to the Moos worker
+// with bounded retry/backoff and dead-letter alerting. No-op while
+// MOOS_RELAY_ENABLED is unset (the webhook does not enqueue then either).
+if (!railwayPrivateSmokeMode) {
+  setInterval(() => {
+    void drainMoosRelayOutbox({
+      store: getDefaultMoosRelayOutboxStore(),
+      env: process.env,
+      audit: async (eventType, entityId, metadata) => {
+        await safeAudit(createDefaultWhatsAppRepository(), {
+          eventType,
+          entityType: "conversation",
+          entityId,
+          metadata,
+        });
+      },
+    }).catch((err) =>
+      console.error(
+        "[moos-relay-outbox] drain failed:",
+        err instanceof Error ? err.message : String(err)
+      )
+    );
+  }, 30000).unref();
+}
 
 // Sunchaser Learning Studio: protected CRM SSO handoff and learning APIs.
 // The router is feature-gated and remains inert until LEARNING_STUDIO_ENABLED=true.

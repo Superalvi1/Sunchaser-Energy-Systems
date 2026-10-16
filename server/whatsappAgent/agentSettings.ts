@@ -1,7 +1,16 @@
 import { resolveSalesProvider, type SalesProviderSelection } from "./providerConfig.ts";
 import { getRailwayObject, putRailwayObjectConditional, isRailwayObjectStorageConfigured } from "../storage/railwayObjectStorage.ts";
 
-export type ApprovedQuotation = { id: string; title: string; description: string; capacityKw: number; expiresAt: string; storagePath: string; approved: boolean };
+export type QuotationSystemType = "on_grid" | "hybrid" | "off_grid";
+export type QuotationPhase = "single" | "three";
+export type ApprovedQuotation = {
+  id: string; title: string; description: string; capacityKw: number;
+  expiresAt: string; storagePath: string; approved: boolean;
+  /** Optional variant fields (added for the Moos agent). Absent = unspecified. */
+  systemType?: QuotationSystemType;
+  phase?: QuotationPhase;
+  batteryIncluded?: boolean;
+};
 export type SalesAgentSettings = SalesProviderSelection & { enabled: boolean; ownerUsername: string; businessFacts: string; dailyLimit: number; autoQuotes: boolean; quotations: ApprovedQuotation[]; revision: number };
 const key = "whatsapp-agent/settings.json";
 export const defaultAgentSettings = (): SalesAgentSettings => ({ enabled: false, ownerUsername: "", businessFacts: "", dailyLimit: 100, autoQuotes: false, quotations: [], revision: 0 });
