@@ -105,15 +105,26 @@ try {
   }
   pass("deployed_crm_all_mutations_disabled");
   const ownership = await fetch(env.CRM_BASE_URL + "/api/moos/ownership?conversationId=" + conversationId, { headers });
-  assert.equal(ownership.status, 200); assert.equal((await ownership.json()).humanOwned, true);
+  assert.equal(ownership.status, 200);
+  const stored = (await client.query("select ai_ownership_state,status,assigned_user_id from whatsapp_conversations where id=$1", [conversationId])).rows[0];
+  const observed = await ownership.json();
+  assert.equal(observed.state, stored.ai_ownership_state);
+  assert.equal(observed.humanOwned, !(["AI_SHADOW", "AI_ACTIVE"].includes(stored.ai_ownership_state) && !stored.assigned_user_id && ["open", "pending"].includes(stored.status)));
   pass("deployed_crm_reads_persistent_ownership");
   // Only this local test router enables handoff, backed by the disposable DB.
   env.MOOS_ENABLED = "true";
+  for (const route of ["send-approved-pdf", "custom-quote-draft"]) {
+    const r = await fetch(local + "/api/moos/" + route, { method: "POST", headers, body: JSON.stringify({ conversationId }) });
+    assert.equal(r.status, 403);
+  }
+  pass("text_only_blocks_pdf_and_quote_even_when_local_router_enabled");
   for (let attempt = 0; attempt < 2; attempt++) {
     const r = await fetch(local + "/api/moos/handoff", { method: "POST", headers, body: JSON.stringify({ conversationId, reason: "synthetic acceptance" }) });
     assert.equal(r.status, 200); assert.equal((await r.json()).state, "HUMAN_HANDLING");
   }
   assert.equal((await inbox.conversations.getById(conversationId))?.aiOwnershipState, "HUMAN_HANDLING");
+  const afterHandoff = await fetch(env.CRM_BASE_URL + "/api/moos/ownership?conversationId=" + conversationId, { headers });
+  assert.equal((await afterHandoff.json()).humanOwned, true);
   pass("persistent_handoff_and_repeat_idempotency");
   env.MOOS_ENABLED = "false";
   const blocked = await fetch(local + "/api/moos/send-text", { method: "POST", headers, body: JSON.stringify({ conversationId, text: "synthetic", idempotencyKey: run }) });
