@@ -1,6 +1,7 @@
 import { classifyRequest, matchApproved, matchFaq, shouldHandoff, requiresStaffPolicyReview } from "./logic.mjs";
 import { readFile } from "node:fs/promises";
 import { pilotRecipientAllowed } from "./pilotScope.mjs";
+import { GrokReplyClient } from "./grokClient.mjs";
 
 /**
  * Moos decision agent (action-only).
@@ -42,6 +43,7 @@ export class Agent {
     this.env = env;
     this._catalog = null;
     this._faqs = null;
+    this.grok = new GrokReplyClient(env);
     /** Latched when the CRM reports moos_disabled: stay silent afterwards. */
     this.shadowMode = false;
   }
@@ -495,7 +497,25 @@ export class Agent {
       return { review: true, reason: "text_only_sales_handoff" };
     }
 
-    // Do not pretend this rule-based pilot can answer an arbitrary question.
+    // A Grok model can respond only when explicitly enabled with an xAI
+    // server-side API key. Keep ordinary policy and quote requests on staff.
+    // Provider errors, refusals or malformed responses fail to human handoff.
+    if (this.grok.enabled()) {
+      let decision = null;
+      try {
+        decision = await this.grok.respond(t, await this.store.history(msg.phone));
+      } catch {
+        decision = null;
+      }
+      if (decision?.action === "reply") {
+        await this.text(msg, "grok_text", decision.reply);
+        return { review: false, reason: "grok_text_reply" };
+      }
+      await this.text(msg, "grok_review", "Thank you for contacting Sunchaser Energy Systems. Our team will review your question and reply shortly.");
+      await this.handoff(msg, decision?.action === "handoff" ? "grok_requested_staff" : "grok_unavailable_or_unverified", t.slice(0, 500));
+      return { review: true, reason: "grok_handoff" };
+    }
+
     await this.text(msg, "text_only_review", "Thank you for your message. Our Sunchaser team will review your enquiry and get back to you. You can also share your city and solar requirements.");
     await this.handoff(msg, "text_only_unreviewed_question", t.slice(0, 500));
     return { review: true, reason: "text_only_review_handoff" };
