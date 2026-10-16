@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, loadEnv} from 'vite';
 import {execSync} from 'child_process';
 
 function getGitCommitHash() {
@@ -26,9 +26,22 @@ function getFormattedBuildTime() {
   return `${day}-${month}-${year} ${hours}:${minutes} ${ampm}`;
 }
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  const syncShell = (process.env.VITE_APP_VARIANT || env.VITE_APP_VARIANT) === 'sync';
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), {
+      name: 'sync-shell-metadata',
+      transformIndexHtml(html: string) {
+        if (!syncShell) return html;
+        return html
+          .replace(/<title>[^<]*<\/title>/, '<title>Sunchaser Sync | Solar CRM</title>')
+          .replace('href="/manifest.json"', 'href="/manifest-sync.webmanifest"')
+          .replace('rel="icon" href="/assets/sunchaser-logo.png" type="image/png"', 'rel="icon" href="/sync-icon.svg" type="image/svg+xml"')
+          .replace('content="#1a2b4c"', 'content="#020617"')
+          .replace('</head>', '<meta name="description" content="Company workspaces, solar quotations, invoices, payment balances and customer documents with Sunchaser Sync." /><meta property="og:title" content="Sunchaser Sync | Solar CRM" /><meta property="og:description" content="From solar enquiry to a clear payment balance." /></head>');
+      },
+    }],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
