@@ -19,33 +19,29 @@ This document records actions performed by Codex, separately from Claude's synth
 - Fresh staging application/API credentials have been configured. WhatsApp conversations and AI replies, learning, marketplace and direct unified messaging are disabled. No production integration credentials were copied to the test application.
 - Staging invoice floor: 100000, explicitly chosen for this rehearsal after the owner delegated the choice. It is not the historical maximum and has not been applied to live numbering.
 
+- The fingerprint job completed: 179 tables, 99,248 rows and 798 recovery rows recorded privately in rehearsal_audit.baseline_tables.
+- PostgREST 16.4 is healthy, pinned to sha256:d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df.
+- Repair backend authentication, /api/auth/me, /api/admin/invoices and /api/state returned 200 using a synthetic administrator.
+- Repair migrations r1-r4 applied individually in deployment 3cca29b3-ae18-43ad-9819-d2df19a5a84b, with authenticated read smoke after each. Ledger: 4 rows, checksums/chain/probes agree.
+- These are migration/read checks, not yet acceptance of quotation/payment/file writes.
+- Hosted-target shell guard passes syntax validation and refuses both a production-like hostname and a mismatched Railway project before any database operation.
+
 ## Not yet verified
 
 The original backup has no row-count manifest. The archive transfer checksum and successful restore do not prove equality with a point-in-time source row manifest.
-The post-restore baseline job has not reported a completed fingerprint capture. Do not claim it passed.
-No repair or tenant migration has been reported as executed by this rehearsal.
-No production-sized migration, barrier, real-storage quota, cross-company or browser acceptance result is claimed.
-The staging application is not a customer-ready demo. Its first repair-build startup failed because it required a WhatsApp encryption key even with conversations disabled. A fresh staging-only key was supplied; startup must be checked again.
-PostgREST has fresh configuration prepared but no successful deployment is recorded here.
+Tenant migration/rollback/data-preservation rehearsal has started from pinned ops commit cede509019279fae6321d2002a20ce156ab60810. It is not reported as passed yet.
+No real-storage quota, cross-company, PDF or browser acceptance result is claimed.
+The staging application is private and is not a customer-ready demo.
 The real restore does not resolve the historical synthetic restore-deficit incident.
 
-## Current deployment approval
+## Authorisation and current work
 
-Railway cancelled accept-deploy for rehearsal-audit-once with: "Cancelled — the user did not approve this action. No changes were made."
+The owner renewed authorisation to complete staging. The earlier audit-helper approval cancellation was resolved; that helper deployed and completed.
+No approval question is pending for this isolated rehearsal.
 
-The pending patch is d6e5a074-bd20-4052-ad0f-3f9d18937772 in the rehearsal environment. It creates only rehearsal-audit-once and its six variables. It is not a production CRM release.
-The helper validates the rehearsal project and database host, captures existing table counts/digests into a private rehearsal_audit schema, and prepares the fresh authenticator/service roles for the isolated API. Its source is reviewable in Railway's staged changes. No production database credentials are present.
-Do not submit the same deployment through an alternate route while approval is pending.
-
-## Resume sequence
-
-1. Review and approve only the staged rehearsal-audit-once patch; check for unrelated changes first.
-2. Confirm its completion, save counts/digests without customer details, and investigate any earlier baseline-job state before proceeding.
-3. Start PostgREST at the pinned reference in POSTGREST_PIN.md and confirm the fresh authenticator works.
-4. Finish repair-release startup and smoke checks; apply r1-r4 individually using the versioned runner.
-5. Follow STAGING_REHEARSAL_RUNBOOK.md for preflight, tenant migrations, barrier verification, quota/storage checks, failure drills and recovery. Preserve the founding and recovery rows; any unplanned change stops the run.
-6. Build a separate synthetic-only demo before sharing access outside the owner/team. Do not share an administrator login to the restored customer-data environment.
-7. Keep PR #111/#113 and the production release separate from this staging approval.
+Current jobs are one-shot with restart policy NEVER. Production services, data and integration credentials are outside these actions.
+Next gates: tenant migration/rollback parity, repair financial writes, candidate backend, HTTP isolation barrier, real storage, two synthetic companies, recovery drills and a separate synthetic-only demo.
+PR #111/#113 and any production release remain separate.
 
 ## Minimum sellable pilot
 
