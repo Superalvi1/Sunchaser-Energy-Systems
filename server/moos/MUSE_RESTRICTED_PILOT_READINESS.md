@@ -2,6 +2,10 @@
 
 **Status:** draft PR #120. Do not merge this PR, connect a new Meta webhook, activate customer replies, or send a real WhatsApp message without the user's separate explicit final approval.
 
+## Priority: autonomous text replies only
+
+**Quotation/PDF sending and Smart Quote draft generation are out of scope and disabled** for this pilot. Do not make an approved PDF a release prerequisite. The worker may send safe text to the one test recipient and must hand unverified pricing, warranty, financing, backup-runtime or engineering answers to staff. A genuinely flexible LLM reply capability remains unconfigured; the current agent is rules-based with one approved FAQ and must not be represented as a general chat model.
+
 ## Intended pilot
 - Existing Sunchaser WhatsApp Business number stays on its existing CRM and Meta connection.
 - One previously designated test recipient only. Store it as `MOOS_TEST_ONLY_RECIPIENT_E164` in Railway, never in deployed runtime code or a published runbook.
@@ -33,6 +37,6 @@ Worker: `ENABLE_AUTOSEND=false`.
 Pilot: `MOOS_PILOT_SCOPE_REQUIRED=true` and `MOOS_TEST_ONLY_RECIPIENT_E164` on both services. Production will fail closed if scope is not set.
 
 ## After final authorization (not before)
-Stage changes, verify that only the test contact is eligible, open a 24-hour service window with a genuine inbound message, send a single approved PDF, inspect Meta provider ID/receipt and CRM audit, then immediately disable the three Muse gates while the outcome is reviewed. Do not retry unknown provider outcomes.
+Stage changes, verify that only the test contact is eligible, open a 24-hour service window with a genuine inbound test message, send and inspect one permitted TEXT reply, verify Meta provider ID/receipt and CRM audit, then immediately disable the three Muse gates while the outcome is reviewed. Do not retry unknown provider outcomes.
 
 **Naming:** Muse AI is the product. `moos` filenames/environment identifiers are existing internal interfaces; rename separately with tests rather than breaking live integrations.
