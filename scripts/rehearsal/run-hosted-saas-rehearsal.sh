@@ -92,10 +92,12 @@ diff -q "$OUT/fp_before.txt" "$OUT/fp_after.txt" > /dev/null; check "every pre-e
 diff "$OUT/fp_before.txt" "$OUT/fp_after.txt" | head -5 > "$OUT/fp_diff.txt" || true
 BADCO=""
 for t in $(Q -c "select table_name from information_schema.columns where table_schema='public' and column_name='company_id' and table_name not in ('companies','company_memberships','document_counters','saas_payments','saas_audit','saas_subscriptions') order by 1"); do
-  n="$(Q -c "select count(*) from public.\"$t\" where company_id is distinct from 'sunchaser'" 2>&1)"
+  predicate="company_id is distinct from 'sunchaser'"
+  case "$t" in roles|role_permissions) predicate="company_id is not null and company_id <> 'sunchaser'";; esac
+  n="$(Q -c "select count(*) from public.\"$t\" where $predicate" 2>&1)"
   [ "$n" = 0 ] || BADCO="$BADCO $t($n)"
 done
-check "every row of every company-owned table belongs to the founding company" "$(echo $BADCO)" ""
+check "company-owned rows belong to the founding company; shared null role templates are preserved" "$(echo $BADCO)" ""
 CNT="$(Q -c "select coalesce(last_value,-1) from public.document_counters where company_id='sunchaser' and kind='invoice' and period='$YEAR'")"
 [ "${CNT:--1}" -ge "$MAXNUM" ] 2>/dev/null && pass "the founding invoice counter ($CNT) is at or above the highest number used ($MAXNUM): numbering never restarts at 0001" || fail "founding invoice counter below the highest number used" "$CNT < $MAXNUM"
 check "the first new invoice number continues the history" "$(Q -c "select public.next_document_number('invoice','INV','$YEAR')" 2>&1 | tr -d ' ')" "INV-$YEAR-$(printf '%04d' $(( ${CNT:-0} + 1 )))"
