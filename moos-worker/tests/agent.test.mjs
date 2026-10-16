@@ -351,3 +351,46 @@ test('text-only Muse routes policy claims to staff',async()=>{
   assert.equal(events.filter(e=>e.type==='document').length,0);
   assert.equal(state.handoff,'text_only_staff_review');
 });
+
+test('Grok model safe reply reaches the CRM text action exactly once',async()=>{
+  const {agent,events,state}=mocks([]);
+  agent.env.MUSE_TEXT_ONLY_MODE='true';
+  agent.env.MUSE_GROK_ENABLED='true';
+  agent.grok={enabled:()=>true,respond:async()=>({action:'reply',reply:'Solar panels turn sunlight into electricity.',reason:'general education'})};
+  const r=await agent.process(msg('Can you explain how solar panels work?','wamid.grok.1'));
+  assert.equal(r.reason,'grok_text_reply');
+  assert.equal(events.filter(x=>x.type==='text').length,1);
+  assert.equal(events.filter(x=>x.type==='document').length,0);
+  assert.equal(state.handoff,null);
+});
+test('Grok handoff decision yields safe text plus human ownership',async()=>{
+  const {agent,events,state}=mocks([]);
+  agent.env.MUSE_TEXT_ONLY_MODE='true';
+  agent.env.MUSE_GROK_ENABLED='true';
+  agent.grok={enabled:()=>true,respond:async()=>({action:'handoff',reply:'',reason:'unknown site issue'})};
+  const r=await agent.process(msg('Can you inspect unusual electrical wiring?','wamid.grok.2'));
+  assert.equal(r.reason,'grok_handoff');
+  assert.equal(state.handoff,'grok_requested_staff');
+  assert.equal(events.filter(x=>x.type==='document').length,0);
+});
+test('Grok unavailability does not invent an answer and hands off',async()=>{
+  const {agent,events,state}=mocks([]);
+  agent.env.MUSE_TEXT_ONLY_MODE='true';
+  agent.env.MUSE_GROK_ENABLED='true';
+  agent.grok={enabled:()=>true,respond:async()=>null};
+  const r=await agent.process(msg('How should I arrange the inverter room?','wamid.grok.3'));
+  assert.equal(r.reason,'grok_handoff');
+  assert.equal(state.handoff,'grok_unavailable_or_unverified');
+  assert.equal(events.filter(x=>x.type==='text').length,1);
+  assert.equal(events.filter(x=>x.type==='document').length,0);
+});
+test('Even with Grok enabled commercial/warranty policy bypasses model and goes to human',async()=>{
+  const {agent,events,state}=mocks([]);
+  agent.env.MUSE_TEXT_ONLY_MODE='true';
+  agent.env.MUSE_GROK_ENABLED='true';
+  agent.grok={enabled:()=>true,respond:async()=>{throw Error('Grok should never be called for warranty');}};
+  const r=await agent.process(msg('Can you give 10 kW warranty and price?','wamid.grok.4'));
+  assert.equal(r.reason,'text_only_handoff');
+  assert.equal(state.handoff,'text_only_staff_review');
+  assert.equal(events.filter(x=>x.type==='document').length,0);
+});
