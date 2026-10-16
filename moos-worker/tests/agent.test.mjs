@@ -323,3 +323,31 @@ test('off-grid classification takes precedence over hybrid label', () => {
   const { agent } = mocks([]);
   assert.equal(agent.systemTypeOf({title:'Hybrid off-grid rural cabin'}), 'off_grid');
 });
+
+test('text-only Muse replies autonomously to greetings without a quote', async () => {
+  const {agent,events,state}=mocks([q(10,'10kW Hybrid','ten','hybrid')]);
+  agent.env.MUSE_TEXT_ONLY_MODE='true';
+  const r=await agent.process(msg('Assalamualaikum','wamid.textonly.1'));
+  assert.equal(r.reason,'text_only_greeting');
+  assert.equal(events.filter(e=>e.type==='text').length,1);
+  assert.equal(events.filter(e=>e.type==='document').length,0);
+  assert.equal(state.handoff,null);
+});
+test('text-only Muse handles quotation requests with text, never sends PDFs or drafts',async()=>{
+  const {agent,events,state}=mocks([q(10,'10kW Hybrid','ten','hybrid')]);
+  agent.env.MUSE_TEXT_ONLY_MODE='true';
+  const r=await agent.process(msg('Send 10kW hybrid quotation','wamid.textonly.2'));
+  assert.equal(r.reason,'text_only_sales_handoff');
+  assert.equal(events.filter(e=>e.type==='text').length,1);
+  assert.equal(events.filter(e=>e.type==='document').length,0);
+  assert.equal(state.drafts.length,0);
+  assert.equal(state.handoff,'text_only_sales_enquiry');
+});
+test('text-only Muse routes policy claims to staff',async()=>{
+  const {agent,events,state}=mocks([]);
+  agent.env.MUSE_TEXT_ONLY_MODE='true';
+  const r=await agent.process(msg('10kW warranty and installments details?','wamid.textonly.3'));
+  assert.equal(r.reason,'text_only_handoff');
+  assert.equal(events.filter(e=>e.type==='document').length,0);
+  assert.equal(state.handoff,'text_only_staff_review');
+});
