@@ -140,6 +140,12 @@ function AuthenticatedApp() {
   const workspaceBrand = useSyncExternalStore(subscribeWorkspace, getWorkspaceBrand, getWorkspaceBrand);
   const platformInfo = usePlatformInfo();
   const neutralWorkspace = useSyncExternalStore(subscribeWorkspace, workspaceIsNeutral, workspaceIsNeutral);
+  useEffect(() => {
+    if (!platformInfo?.platformName) return;
+    document.title = neutralWorkspace && workspaceBrand?.companyName
+      ? workspaceBrand.companyName + " · " + platformInfo.platformName
+      : platformInfo.platformName;
+  }, [platformInfo?.platformName, neutralWorkspace, workspaceBrand?.companyName]);
   /*
    * Native cold start opens on Login; web keeps the marketing landing.
    *
