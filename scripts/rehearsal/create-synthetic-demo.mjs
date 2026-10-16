@@ -15,7 +15,7 @@ try{
  if(dump.status!==0||!dump.stdout.includes("CREATE TABLE public.users"))throw new Error("Schema-only dump failed");
  if(/^COPY public\./m.test(dump.stdout))throw new Error("Refusing unexpected table data in schema export");
  await source.query("create database "+ident(DEMO)+" template template0");
- demo=new pg.Client({...undefined,database:DEMO});await demo.connect();
+ demo=new pg.Client({database:DEMO});await demo.connect();
  if(/CREATE SCHEMA public;/.test(dump.stdout))await demo.query("drop schema public");
  const restored=spawnSync("psql",["-X","-v","ON_ERROR_STOP=1","--single-transaction","--dbname="+DEMO],{env:e,input:dump.stdout,encoding:"utf8",maxBuffer:10*1024*1024});
  if(restored.status!==0)throw new Error("New demo schema restore failed (the new database is retained privately)");
@@ -24,7 +24,7 @@ try{
  // Only built-in, shared role definitions are configuration. No users, contacts, prices or settings are copied.
  const roles=(await source.query("select * from public.roles where company_id is null and is_system=true order by id")).rows;
  const roleIds=roles.map(r=>r.id);
- const permissions=roleIds.length?(await source.query("select * from public.role_permissions where company_id is null and role_id=any($1::text[])",[roleIds])).rows:[];
+ const permissions=roleIds.length?(await source.query("select * from public.role_permissions where company_id is null and role_id::text=any($1::text[])",[roleIds])).rows:[];
  for(const [table,rows] of [["roles",roles],["role_permissions",permissions]])for(const row of rows){
   const cols=Object.keys(row);await demo.query("insert into public."+ident(table)+"("+cols.map(ident).join(",")+") values("+cols.map((_,i)=>"$"+(i+1)).join(",")+")",cols.map(k=>row[k]));
  }
