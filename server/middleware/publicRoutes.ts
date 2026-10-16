@@ -11,6 +11,9 @@ type PublicRouteEntry =
  */
 const PUBLIC_ROUTE_ENTRIES: PublicRouteEntry[] = [
   { method: "GET", path: "/health" },
+  { method: "GET", path: "/ready" },
+  { method: "GET", path: "/api/health" },
+  { method: "GET", path: "/api/ready" },
   { method: "POST", path: "/api/auth/login" },
   { method: "POST", path: "/api/auth/register" },
   { method: "POST", path: "/api/auth/verify-email" },
