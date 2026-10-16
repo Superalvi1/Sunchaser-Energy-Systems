@@ -60,3 +60,13 @@ test("PII censoring also bounds history content",()=>{
   assert.equal(redactCustomerText("My email ali@example.com and phone 03218486752").includes("03218486752"),false);
   assert.equal(redactCustomerText("x".repeat(900)).length,700);
 });
+
+test('strict parsing rejects extra fields, long reasons and numerical commercial claims in any script', () => {
+  for (const reply of ['Our system saves 80 percent.', 'قیمت ۹۰۰۰۰۰ روپے ہے', 'The price is $900.', 'Our warranty covers this.']) {
+    assert.equal(parseGrokDecision(provider('reply', reply)), null);
+  }
+  assert.equal(parseGrokDecision(provider('reply', 'Solar uses sunlight.', 'x'.repeat(91))), null);
+  const extra = provider('reply', 'Solar uses sunlight.');
+  extra.output[0].content[0].text = JSON.stringify({action:'reply',reply:'Solar uses sunlight.',reason:'general',tool:'send_pdf'});
+  assert.equal(parseGrokDecision(extra), null);
+});

@@ -42,10 +42,13 @@ export function parseGrokDecision(data) {
   if (typeof raw!=="string" || raw.length>2500) return null;
   let value;
   try { value=JSON.parse(raw); } catch {return null;}
-  if (!value || !["reply","handoff"].includes(value.action) ||
-      typeof value.reply!=="string" || typeof value.reason!=="string") return null;
+  if (!value || Array.isArray(value) || Object.keys(value).sort().join(",") !== "action,reason,reply" || !["reply","handoff"].includes(value.action) ||
+      typeof value.reply!=="string" || typeof value.reason!=="string" || value.reason.length > 90 || value.reply.length > MAX_REPLY) return null;
   if (value.action==="handoff") return {action:"handoff",reply:"",reason:value.reason.slice(0,90)};
   const reply=value.reply.trim();
+  // Pilot permits qualitative explanations only. Reject numeric claims and
+  // common financial/contact payloads independently of model instructions.
+  if (/[\p{N}]/u.test(reply) || /[₨$€£]|\b(?:pay|payment|iban|account|warranty|guarantee|discount|financing)\b|قیمت|وارنٹی|گارنٹی|رعایت/i.test(reply)) return null;
   if (!reply || reply.length>MAX_REPLY || /https?:\/\/|www\.|\b(?:PKR|Rs\.?\s*\d|guaranteed|free installation)\b|₨/i.test(reply)) return null;
   return {action:"reply",reply,reason:value.reason.slice(0,90)};
 }

@@ -394,3 +394,33 @@ test('Even with Grok enabled commercial/warranty policy bypasses model and goes 
   assert.equal(state.handoff,'text_only_staff_review');
   assert.equal(events.filter(x=>x.type==='document').length,0);
 });
+
+test('rollback switch stops ownership reads, Grok, sends, drafts and handoff', async () => {
+  const { agent, events, state, crm } = mocks([]);
+  agent.env.ENABLE_AUTOSEND = 'false';
+  let reads = 0;
+  crm.ownership = async () => { reads++; throw Error('must not read'); };
+  agent.grok.respond = async () => { throw Error('must not call Grok'); };
+  assert.equal((await agent.process(msg('Please talk to a human'))).reason, 'worker_disabled');
+  assert.equal(reads, 0);
+  assert.deepEqual(events, []);
+  assert.deepEqual(state.handoffs, []);
+  assert.deepEqual(state.drafts, []);
+});
+test('pilot scope blocks direct processing before any CRM call', async () => {
+  const { agent, events, state } = mocks([]);
+  agent.env.NODE_ENV = 'production';
+  agent.env.MOOS_TEST_ONLY_RECIPIENT_E164 = '+923218486752';
+  assert.equal((await agent.process(msg('hello'))).reason, 'outside_pilot_scope');
+  assert.equal(events.length, 0);
+  assert.equal(state.handoffs.length, 0);
+});
+test('text-only greetings and staff acknowledgements follow Urdu and Roman Urdu', async () => {
+  for (const [text, expected] of [['السلام علیکم', /خوش آمدید/], ['salam', /khush aamdeed/], ['وارنٹی کتنی ہے؟', /ٹیم/], ['warranty kya hai', /team ka review/]]) {
+    const { agent, events } = mocks([]);
+    agent.env.MUSE_TEXT_ONLY_MODE = 'true';
+    await agent.process(msg(text));
+    assert.match(events[0].text, expected);
+    assert.ok(events.every(e => e.type === 'text'));
+  }
+});

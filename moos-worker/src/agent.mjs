@@ -2,6 +2,7 @@ import { classifyRequest, matchApproved, matchFaq, shouldHandoff, requiresStaffP
 import { readFile } from "node:fs/promises";
 import { pilotRecipientAllowed } from "./pilotScope.mjs";
 import { GrokReplyClient } from "./grokClient.mjs";
+import { pilotText } from "./pilotText.mjs";
 
 /**
  * Moos decision agent (action-only).
@@ -469,7 +470,7 @@ export class Agent {
   async processTextOnly(msg, text) {
     const t = String(text || "").trim();
     if (shouldHandoff(t) || requiresStaffPolicyReview(t)) {
-      await this.text(msg, "text_only_staff", "Thank you for contacting Sunchaser Energy Systems. Our team will review your question and reply shortly.");
+      await this.text(msg, "text_only_staff", pilotText(t, "review"));
       await this.handoff(msg, "text_only_staff_review", t.slice(0, 500));
       return { review: true, reason: "text_only_handoff" };
     }
@@ -478,12 +479,12 @@ export class Agent {
     // for automatic factual replies. Unapproved 64-FAQ patch stays excluded.
     const faq = matchFaq(t, await this.faqs());
     if (faq) {
-      await this.text(msg, `faq:${faq.id}`, faq.answer);
+      await this.text(msg, `faq:${faq.id}`, faq.id === "service_area" ? pilotText(t, "service_area") : faq.answer);
       return { review: false, reason: "text_only_faq" };
     }
 
     if (/^(hi|hello|hey|aoa|a\.?o\.?a\.?|assalamu?\s*alaikum|asalamualaikum|salam|السلام\s*علیکم|سلام|اسلام\s*علیکم)[!.,\s]*$/i.test(t)) {
-      await this.text(msg, "text_only_welcome", "Assalam-o-Alaikum! Welcome to Sunchaser Energy Systems. How can I help you with your solar enquiry? You can write in Urdu, Roman Urdu or English.");
+      await this.text(msg, "text_only_welcome", pilotText(t, "welcome"));
       return { review: false, reason: "text_only_greeting" };
     }
 
@@ -492,7 +493,7 @@ export class Agent {
     const classified = classifyRequest(t);
     if (classified.quoteIntent || classified.sizes.length || classified.custom ||
         /\b(price|cost|rate|estimate|quotation|quote|kitne|qeemat)\b|قیمت|ریٹ|کوٹیشن/i.test(t)) {
-      await this.text(msg, "text_only_sales", "Thank you! Please share your city and whether you need an on-grid or hybrid solar system. Our sales team will confirm the suitable system and current price. I will not send a quotation automatically.");
+      await this.text(msg, "text_only_sales", pilotText(t, "sales"));
       await this.handoff(msg, "text_only_sales_enquiry", t.slice(0, 500));
       return { review: true, reason: "text_only_sales_handoff" };
     }
@@ -511,12 +512,12 @@ export class Agent {
         await this.text(msg, "grok_text", decision.reply);
         return { review: false, reason: "grok_text_reply" };
       }
-      await this.text(msg, "grok_review", "Thank you for contacting Sunchaser Energy Systems. Our team will review your question and reply shortly.");
+      await this.text(msg, "grok_review", pilotText(t, "review"));
       await this.handoff(msg, decision?.action === "handoff" ? "grok_requested_staff" : "grok_unavailable_or_unverified", t.slice(0, 500));
       return { review: true, reason: "grok_handoff" };
     }
 
-    await this.text(msg, "text_only_review", "Thank you for your message. Our Sunchaser team will review your enquiry and get back to you. You can also share your city and solar requirements.");
+    await this.text(msg, "text_only_review", pilotText(t, "review"));
     await this.handoff(msg, "text_only_unreviewed_question", t.slice(0, 500));
     return { review: true, reason: "text_only_review_handoff" };
   }
@@ -524,6 +525,10 @@ export class Agent {
   // ---------- main turn ----------
 
   async process(msg) {
+    // Rollback must prevent ALL CRM side effects and provider requests, not
+    // merely fail at the final send (which previously triggered a handoff).
+    if (this.env.ENABLE_AUTOSEND !== "true") return { review: false, reason: "worker_disabled" };
+    if (!pilotRecipientAllowed(msg.phone, this.env)) return { review: false, reason: "outside_pilot_scope" };
     if (!(await this.store.preflight(msg))) return { review: false, reason: "superseded_or_closed" };
     if (await this.isOwnedByHuman(msg)) return { review: false, reason: "crm_human_owned" };
     if (msg.type !== "text" && msg.type !== "interactive") {

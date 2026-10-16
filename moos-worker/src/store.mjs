@@ -7,9 +7,11 @@ export class Store{
  async add(event){
   const c=await this.pool.connect();
   try{await c.query('BEGIN');
-   // Lock customer row to serialise per-conversation inbound state.
-   await c.query(`INSERT INTO wa_chat(phone,latest_message_id,last_inbound_at) VALUES($1,$2,to_timestamp($3 / 1000.0)) ON CONFLICT(phone) DO UPDATE SET latest_message_id=CASE WHEN excluded.last_inbound_at >= wa_chat.last_inbound_at THEN excluded.latest_message_id ELSE wa_chat.latest_message_id END,last_inbound_at=GREATEST(wa_chat.last_inbound_at,excluded.last_inbound_at),updated_at=now()`,[event.phone,event.messageId,event.sentAt]);
-   await c.query(`INSERT INTO wa_inbound(message_id,phone,payload) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING`,[event.messageId,event.phone,JSON.stringify(event)]);
+   // A duplicate with the same Meta timestamp must not replace the latest id.
+   await c.query(`INSERT INTO wa_chat(phone,latest_message_id,last_inbound_at) VALUES($1,$2,to_timestamp($3 / 1000.0)) ON CONFLICT(phone) DO NOTHING`,[event.phone,event.messageId,event.sentAt]);
+   await c.query(`SELECT phone FROM wa_chat WHERE phone=$1 FOR UPDATE`,[event.phone]);
+   const inserted=await c.query(`INSERT INTO wa_inbound(message_id,phone,payload) VALUES($1,$2,$3::jsonb) ON CONFLICT DO NOTHING RETURNING message_id`,[event.messageId,event.phone,JSON.stringify(event)]);
+   if(inserted.rowCount) await c.query(`UPDATE wa_chat SET latest_message_id=CASE WHEN to_timestamp($3 / 1000.0) >= last_inbound_at THEN $2 ELSE latest_message_id END,last_inbound_at=GREATEST(last_inbound_at,to_timestamp($3 / 1000.0)),updated_at=now() WHERE phone=$1`,[event.phone,event.messageId,event.sentAt]);
    await c.query('COMMIT');
   }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
  }
@@ -24,7 +26,7 @@ export class Store{
  async setPending(phone,pending){await this.query(`UPDATE wa_chat SET pending_quote=$2::jsonb WHERE phone=$1`,[phone,pending?JSON.stringify(pending):null]);}
  async preflight(msg){const r=await this.query(`SELECT human_owned,latest_message_id,last_inbound_at FROM wa_chat WHERE phone=$1`,[msg.phone]);return Boolean(r.rows.length&&!r.rows[0].human_owned&&r.rows[0].latest_message_id===msg.messageId&&Date.now()-new Date(r.rows[0].last_inbound_at).getTime()<24*3600*1000)}
  async reserve(key,msg,kind){const r=await this.query(`INSERT INTO wa_outbound(send_key,message_id,phone,kind,state) VALUES($1,$2,$3,$4,'attempted') ON CONFLICT DO NOTHING RETURNING send_key`,[key,msg.messageId,msg.phone,kind]);return r.rowCount===1}
- async sent(key,result){await this.query(`UPDATE wa_outbound SET state='accepted',provider_message_id=$2 WHERE send_key=$1`,[key,result?.messages?.[0]?.id||'']);}
+ async sent(key,result){await this.query(`UPDATE wa_outbound SET state='accepted',provider_message_id=$2 WHERE send_key=$1`,[key,result?.providerMessageId||result?.messages?.[0]?.id||'']);}
  async unknown(key){await this.query(`UPDATE wa_outbound SET state='outcome_unknown' WHERE send_key=$1`,[key])}
  async shadow(key){await this.query(`UPDATE wa_outbound SET state='shadow_skipped' WHERE send_key=$1`,[key])}
  async finish(messageId,review=false,code=null){await this.query(`UPDATE wa_inbound SET state=$2,error_code=$3 WHERE message_id=$1`,[messageId,review?'needs_review':'done',code]);}

@@ -4,7 +4,7 @@
 
 ## Priority: autonomous text replies only
 
-**Quotation/PDF sending and Smart Quote draft generation are out of scope and disabled** for this pilot. Do not make an approved PDF a release prerequisite. The worker may send safe text to the one test recipient and must hand unverified pricing, warranty, financing, backup-runtime or engineering answers to staff. A genuinely flexible LLM reply capability remains unconfigured; the current agent is rules-based with one approved FAQ and must not be represented as a general chat model.
+**Quotation/PDF sending and Smart Quote draft generation are out of scope and disabled** for this pilot. Do not make an approved PDF a release prerequisite. The worker may send safe text to the one test recipient and must hand unverified pricing, warranty, financing, backup-runtime or engineering answers to staff. The optional Grok adapter is committed but has no credentialed inference evidence. Deterministic replies use one approved FAQ; OpenAI OAuth eligibility is under review following the user’s preference.
 
 ## Intended pilot
 - Existing Sunchaser WhatsApp Business number stays on its existing CRM and Meta connection.
@@ -25,7 +25,7 @@
 1. Verify the actual Meta webhooks product/app callback URL and phone-number-ID. DNS of `crm.sunchaserenergy.co` is evidence of the CRM service address, **not evidence of a configured Meta callback**.
 2. Map live CRM domain and user conversation store; determine the actual source of `whatsapp_connections` and approved quotations. Verify existing Meta connection's state, token health and webhook receipts without exposing tokens.
 3. Inspect who owns the pilot contact in CRM. Confirm legacy AI will not also reply and business inbox stays working for everyone else.
-4. Verify exactly one current staff-approved 10 kW hybrid PDF, correct specifications/prices/expiry, and native document delivery path. A Smart Quote **draft** is not an approved PDF.
+4. Confirm `MUSE_TEXT_ONLY_MODE=true` at both boundaries. Verify PDF and custom draft endpoints refuse requests. Approved quotation documents are not a prerequisite for this text-only release.
 5. Plan `moos_relay_outbox` migration for the **actual webhook-receiving** CRM data source, with preflight backup, RLS verification, rollback and maintenance window. **Do not apply on customer-facing DB during preparation.**
 6. Verify production service Git commit, Postgres queue schema, status, safety flags, and test-recipient scope. Railway OAuth exposes only env variable **names**, not actual readback values.
 7. Re-run worker/CRM CI suites and DB integration verification on the final PR head.

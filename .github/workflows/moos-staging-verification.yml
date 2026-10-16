@@ -114,6 +114,7 @@ jobs:
         working-directory: moos-worker
         env:
           ENABLE_AUTOSEND: "false"
+          MOOS_TEST_DATABASE_URL: postgresql://moos_ci:moos_test_ci_only@localhost:5432/moos_ci
         run: npm test
 
   production-switch-audit:
