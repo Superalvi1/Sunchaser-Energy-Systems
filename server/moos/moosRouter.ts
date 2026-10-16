@@ -165,6 +165,14 @@ export function moosEnabled(): boolean {
   return /^(true|1|yes)$/i.test(String(process.env.MOOS_ENABLED || ""));
 }
 
+/** Text-only until a separate quote/PDF rollout is authorized.
+ * Defaults ON in production so missing environment variables fail closed. */
+function museTextOnlyMode(): boolean {
+  const raw = String(process.env.MUSE_TEXT_ONLY_MODE || "").trim().toLowerCase();
+  return raw === "true" || (process.env.NODE_ENV === "production" && raw !== "false");
+}
+
+
 function authorized(req: Request, res: Response): boolean {
   const expected = serviceToken();
   if (!expected) {
@@ -657,6 +665,10 @@ export function createMoosRouter(deps: MoosRouterDeps) {
   router.post("/send-approved-pdf", async (req: Request, res: Response) => {
     if (!authorized(req, res)) return;
     if (!requireEnabled(res)) return;
+    if (museTextOnlyMode()) {
+      res.status(403).json({ error: "muse_text_only_mode", message: "Quotation and document actions are disabled in this Muse pilot." });
+      return;
+    }
     const body = jsonBody(req);
     const conversationId = String(body.conversationId || "");
     const quoteId = String(body.quoteId || "");
@@ -866,6 +878,10 @@ export function createMoosRouter(deps: MoosRouterDeps) {
   router.post("/custom-quote-draft", async (req: Request, res: Response) => {
     if (!authorized(req, res)) return;
     if (!requireEnabled(res)) return;
+    if (museTextOnlyMode()) {
+      res.status(403).json({ error: "muse_text_only_mode", message: "Quotation and document actions are disabled in this Muse pilot." });
+      return;
+    }
     const body = jsonBody(req);
     const conversationId = String(body.conversationId || "");
     const inboundMessageId = String(body.inboundMessageId || "");
