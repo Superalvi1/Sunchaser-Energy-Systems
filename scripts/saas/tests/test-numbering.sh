@@ -105,4 +105,37 @@ EXPECT="INV-$YEAR-$(printf %04d $((CUR + 4)))"
 check "numbers issued outside the counter (three invoices numbered by an older backend) are never reissued: the next number is one past the highest the company holds" "$(next service_role '')" "$EXPECT"
 check "...and the counter stays ahead afterwards (the following number is one more)" "$(next service_role '')" "INV-$YEAR-$(printf %04d $((CUR + 5)))"
 $P -c "delete from invoices where id like 'outside-%'" > /dev/null 2>&1 || true
+
+# 7. t9: width is minimum padding. Reproduce the old real defect before applying the additive repair.
+$P -c "select public.document_counter_set_floor('co_a','invoice','2999',9999)" > /dev/null
+check "negative control: old formatter truncates 10000 to 1000" "$(next crm_tenant co_a INV 2999)" "INV-2999-1000"
+check "negative control: old formatter repeats that truncated number" "$(next crm_tenant co_a INV 2999)" "INV-2999-1000"
+$P -f "$SAAS/phase2j-document-number-width.sql" > /dev/null 2>&1
+$P -f "$SAAS/phase2j-document-number-width.sql" > /dev/null 2>&1
+check "t9 preserves every digit after the counter exceeds four digits (idempotent apply)" "$(next crm_tenant co_a INV 2999)" "INV-2999-10002"
+$P -c "select public.document_counter_set_floor('co_a','invoice','2998',9007199254740991)" > /dev/null
+check "t9 preserves bigint digits beyond JavaScript's exact-integer range" "$(next crm_tenant co_a INV 2998)" "INV-2998-9007199254740992"
+$P -c "select public.document_counter_set_floor('co_a','invoice','2997',9)" > /dev/null
+check "a one-digit padding width also expands instead of truncating" "$(as crm_tenant co_a "select public.next_document_number('invoice','INV','2997',1)")" "INV-2997-10"
+$P -c "select public.document_counter_set_floor('co_a','invoice','2996',9998); create table zz.width_nums(n text); grant all on zz.width_nums to public" > /dev/null
+width_worker() {
+  psql $E2E_ADMIN -d "$DB" -q -v ON_ERROR_STOP=1 -c "begin; set local role crm_tenant; select set_config('request.headers','{\"x-company-id\":\"co_a\"}',true); insert into zz.width_nums select public.next_document_number('invoice','INV','2996') from generate_series(1,4); commit;" > /dev/null 2>&1
+}
+WIDTH_PIDS=""
+for i in $(seq 1 16); do width_worker & WIDTH_PIDS="$WIDTH_PIDS $!"; done
+wait $WIDTH_PIDS
+check "64 concurrent numbers cross the four-digit boundary" "$($Q -c "select count(*) from zz.width_nums")" "64"
+check "every concurrent full-width number is distinct" "$($Q -c "select count(distinct n) from zz.width_nums")" "64"
+check "the full-width concurrent range is consecutive" "$($Q -c "select min(substring(n from '[0-9]+
+)::bigint)||'-'||max(substring(n from '[0-9]+
+)::bigint) from zz.width_nums")" "9999-10062"
+check "another company keeps its own numbering at the same period" "$(next crm_tenant co_b INV 2996)" "INV-2996-0001"
+check "anon remains unable to issue numbers after t9" "$(next anon co_a | grep -c 'permission denied')" "1"
+check "missing tenant context remains refused after t9" "$(next crm_tenant '' | grep -c 'company_context_required')" "1"
+$P -f "$SAAS/phase2j-document-number-width-rollback.sql" > /dev/null 2>&1
+check "t9 rollback refuses oversized issuance rather than restoring truncation" "$(next crm_tenant co_a INV 2999 | grep -c 'document_number_width_requires_upgrade')" "1"
+check "refused issuance consumes no number" "$($Q -c "select last_value from document_counters where company_id='co_a' and period='2999'")" "10002"
+$P -f "$SAAS/phase2j-document-number-width.sql" > /dev/null 2>&1
+check "t9 re-apply continues with the next complete number" "$(next crm_tenant co_a INV 2999)" "INV-2999-10003"
+
 echo; echo "$ok passed, $bad failed"; [ "$bad" = 0 ]
