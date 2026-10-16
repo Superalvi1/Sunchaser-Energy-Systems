@@ -13,7 +13,6 @@ function miniPdf(text){const body="BT /F1 12 Tf 72 720 Td ("+text+") Tj ET";cons
 let result="failed";
 try{
  const h=await json(await fetch(BASE+"/health"));check("candidate isolation guard is active",h.tenantIsolation?.paused===false);
- const {rows:[barrier]}=await db.query("select value from app.config where key='tenancy_mode'"); // HTTP operator access below proves the serving mode independently.
  await db.query("update users set is_platform_admin=true where id=$1",[OWNER]);
  const op=request((await login("rehearsal_owner",e.TEST_PW)).token);
  check("platform console API", (await op("/api/platform/overview")).status===200);
@@ -36,6 +35,10 @@ try{
   const lead=await json(lr);check(c.label+": enquiry saved",lr.status<300&&Boolean(lead.id),lr.status);c.lead=lead.id;
   const qr=await c.api("/api/leads/"+c.lead+"/create-quote","POST",{systemSizekW:5,panelCount:10,panelType:"Synthetic panel",inverterType:"Synthetic inverter",batteryCapacity:"None",totalCost:250000,boqItems:[{type:"item",name:c.tag+" Panels",qty:10,unit:"pcs",rate:10000,total:100000},{type:"item",name:c.tag+" Inverter",qty:1,unit:"pcs",rate:150000,total:150000}]});
   check(c.label+": quotation saved",qr.status<300,qr.status);
+  c.quoteId=(await db.query("select id from quotations where lead_id=$1 and company_id=$2 order by created_at desc limit 1",[c.lead,c.id])).rows[0]?.id;
+  c.quoteDownload="/api/export/pdf/manual-quote/"+c.lead+"/download?quoteId="+encodeURIComponent(c.quoteId);
+  const pdf=await c.api(c.quoteDownload);const pdfBytes=Buffer.from(await pdf.arrayBuffer());
+  check(c.label+": actual Chromium quotation PDF downloads",pdf.status===200&&pdf.headers.get("content-type")?.includes("application/pdf")&&pdfBytes.length>1000&&pdfBytes.subarray(0,5).toString()==="%PDF-",pdf.status);
   const contract=await c.api("/api/leads/"+c.lead,"PUT",{status:"Contracted"});const cj=await json(contract);
   c.invoice=cj.contractProvision?.invoiceId;c.customer=cj.contractProvision?.customerId;
   check(c.label+": contract creates invoice",contract.status<300&&Boolean(c.invoice),contract.status);
@@ -64,7 +67,7 @@ try{
  }
  check("companies have independent invoice numbering",companies[0].number===companies[1].number);
  for(const c of companies){const other=companies.find(x=>x!==c);
-  for(const path of ["/api/admin/invoices/"+other.invoice,"/api/leads/"+other.lead+"/smart-quote-versions",other.docPath]){
+  for(const path of ["/api/admin/invoices/"+other.invoice,"/api/leads/"+other.lead+"/smart-quote-versions",other.docPath,other.quoteDownload]){
    const r=await c.api(path);check(c.label+": foreign record/file refused",r.status===403||r.status===404,r.status);
   }
   const state=await c.api("/api/state");const sj=await json(state);const leads=sj.leads||[];
