@@ -176,6 +176,18 @@
    "gate": "G3+G4",
    "probe": "select position('company_name, office_address, hotline_phones, billing_email, website_url' in pg_get_functiondef('public.saas_create_company(text,text,text,integer,jsonb,jsonb)'::regprocedure)) > 0",
    "note": "Explicit blank contact fields allow atomic onboarding on restored strict quotation-settings schemas without inheriting founding-company identity."
+  },
+  {
+   "id": "t11-invoice-creator",
+   "series": "tenant",
+   "file": "scripts/saas/phase2l-invoice-creator.sql",
+   "rollback": "scripts/saas/phase2l-invoice-creator-rollback.sql",
+   "requires": [
+    "t1-company-foundation"
+   ],
+   "gate": "G3+G4",
+   "probe": "select exists(select 1 from information_schema.columns where table_schema='public' and table_name='invoices' and column_name='created_by_user_id') and to_regclass('public.invoices_company_creator_idx') is not null",
+   "note": "Required creator id for scoped staff invoice creation; preserves legacy rows and refuses to drop recorded attribution."
   }
  ]
 }
