@@ -152,6 +152,18 @@
    "gate": "G3+G4",
    "probe": "select to_regclass('public.saas_storage_reservations') is not null and to_regprocedure('public.saas_storage_reserve(text,bigint,bigint,bigint,bigint,integer,integer)') is not null",
    "note": "Atomic storage reservations across server processes: a per-company locked reserve/settle function pair. Pilot companies' uploads need it (without it they are refused with a retryable 'could not verify storage'); the founding company and single-company mode never use it."
+  },
+  {
+   "id": "t9-document-number-width",
+   "series": "tenant",
+   "file": "scripts/saas/phase2j-document-number-width.sql",
+   "rollback": "scripts/saas/phase2j-document-number-width-rollback.sql",
+   "requires": [
+    "t3-document-numbering"
+   ],
+   "gate": "G3+G4",
+   "probe": "select position('greatest(p_width, length(v_next::text))' in pg_get_functiondef('public.next_document_number(text,text,text,integer)'::regprocedure)) > 0",
+   "note": "Preserve all counter digits beyond the padding width; rollback refuses oversized issuance instead of truncating it."
   }
  ]
 }
