@@ -164,6 +164,18 @@
    "gate": "G3+G4",
    "probe": "select position('greatest(p_width, length(v_next::text))' in pg_get_functiondef('public.next_document_number(text,text,text,integer)'::regprocedure)) > 0",
    "note": "Preserve all counter digits beyond the padding width; rollback refuses oversized issuance instead of truncating it."
+  },
+  {
+   "id": "t10-onboarding-required-fields",
+   "series": "tenant",
+   "file": "scripts/saas/phase2k-onboarding-required-fields.sql",
+   "rollback": "scripts/saas/phase2k-onboarding-required-fields-rollback.sql",
+   "requires": [
+    "t5-subscriptions"
+   ],
+   "gate": "G3+G4",
+   "probe": "select position('company_name, office_address, hotline_phones, billing_email, website_url' in pg_get_functiondef('public.saas_create_company(text,text,text,integer,jsonb,jsonb)'::regprocedure)) > 0",
+   "note": "Explicit blank contact fields allow atomic onboarding on restored strict quotation-settings schemas without inheriting founding-company identity."
   }
  ]
 }
