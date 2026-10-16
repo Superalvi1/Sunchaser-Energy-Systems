@@ -25,10 +25,11 @@ Safety settings were explicitly written only to the two isolated services, with 
 - Localize deterministic greetings/review/sales/location text in English, Urdu and Roman Urdu.
 - Strictly reject extra model fields, overlong reason/reply, numeric claims and common commercial/payment output. This reduces risk; it cannot prove all generated prose is factual.
 - Add regression tests, including actual Postgres duplicate/order/provider/restart tests in disposable CI.
+- Await relay-outbox persistence before acknowledging the webhook; storage failure now leaves the envelope incomplete for deduplicated retry. Local regression confirms a failed enqueue returns 500 and recovery stores one message and one relay.
 
 ## Validation at local working tree
 
-Worker: 64 passed, zero failed; one real Postgres test skipped locally because no disposable Postgres was available. GitHub CI must run that test with MOOS_TEST_DATABASE_URL. Existing 60-test baseline also passed before changes.
+Worker: 64 passed, zero failed; one real Postgres test skipped locally because no disposable Postgres was available. All three GitHub Muse jobs passed at be1ea913846b6d5f1ac93422a114ffbbf358d69f, including the actual Postgres regression with MOOS_TEST_DATABASE_URL (run 38868671752). Existing 60-test baseline also passed before changes. The follow-up webhook persistence fix requires final-head CI.
 
 All seven CRM suites passed locally using node --import tsx: recipient scope, router security/text-only gating, HMAC/legacy exclusion, relay outbox, Graph serialization using fake HTTP, existing webhook and repository behavior. These are automated local tests with injected transports, not live Meta sends or production DB validation.
 

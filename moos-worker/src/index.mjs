@@ -99,7 +99,7 @@ if (isMain) {
     if (!env[k]) throw new Error("Missing " + k);
   }
   if (env.NODE_ENV === "production" && env.ENABLE_AUTOSEND !== "true") {
-    console.log("[moos] production boot with ENABLE_AUTOSEND=false: worker will process but not send (handoff only).");
+    console.log("[moos] production boot with ENABLE_AUTOSEND=false: worker will not call providers or CRM actions.");
   }
 
   const store = new Store(env.DATABASE_URL);

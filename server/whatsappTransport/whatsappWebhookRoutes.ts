@@ -192,10 +192,10 @@ async function persistNormalizedEvents(
             text: textBody.slice(0, 4000),
             sentAt: Date.parse(event.occurredAt) || Date.now(),
           };
-          void getDefaultMoosRelayOutboxStore()
+          await getDefaultMoosRelayOutboxStore()
             .enqueue(relayEvent)
-            .catch((err) =>
-              safeAudit(repo, {
+            .catch(async (err) => {
+              await safeAudit(repo, {
                 eventType: "MOOS_RELAY_ENQUEUE_FAILED",
                 entityType: "message",
                 entityId: inserted.row.id,
@@ -203,8 +203,11 @@ async function persistNormalizedEvents(
                   conversationId: conversation.id,
                   error: String(err instanceof Error ? err.message : err).slice(0, 200),
                 },
-              })
-            );
+              });
+              // Keep the webhook incomplete so Meta can safely retry the
+              // deduplicated inbound and persist its relay after DB recovery.
+              throw new Error("Muse relay enqueue failed");
+            });
         }
         continue;
       }

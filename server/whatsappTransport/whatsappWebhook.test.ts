@@ -22,6 +22,8 @@ import { parseWebhookRawBody } from "./whatsappEnvelope.ts";
 import { verifyWhatsAppSignature, sha256Hex } from "./whatsappSignature.ts";
 import { createWhatsAppWebhookRouter } from "./whatsappWebhookRoutes.ts";
 
+import { InMemoryMoosRelayOutboxStore, setDefaultMoosRelayOutboxStoreForTests } from "../moos/moosRelayOutbox.ts";
+
 let failed = 0;
 
 async function test(name: string, fn: () => void | Promise<void>): Promise<void> {
@@ -1323,6 +1325,35 @@ await test("canonical webhook path is /api/whatsapp/webhook", () => {
   assert.equal(WHATSAPP_WEBHOOK_PATH, "/api/whatsapp/webhook");
   assert.equal(isPublicApiRoute("GET", "/api/integrations/whatsapp/webhook"), false);
   assert.equal(isPublicApiRoute("GET", "/api/whatsapp/webhook"), true);
+});
+
+await test("Muse outbox failure keeps webhook retryable; recovery enqueues exactly once", async () => {
+  const saved = {relay:process.env.MOOS_RELAY_ENABLED,scope:process.env.MOOS_TEST_ONLY_RECIPIENT_E164};
+  process.env.MOOS_RELAY_ENABLED = "true";
+  process.env.MOOS_TEST_ONLY_RECIPIENT_E164 = "+923001234567";
+  const store = new InMemoryMoosRelayOutboxStore();
+  const enqueue = store.enqueue.bind(store);
+  store.enqueue = async () => { throw Error("simulated DB unavailable"); };
+  setDefaultMoosRelayOutboxStoreForTests(store);
+  const repo = new InMemoryWhatsAppRepository();
+  try {
+    await withWebhookServer(repo, enabledConfig(), async base => {
+      const payload = inboundTextEnvelope({waMessageId:"wamid.MUSE_RETRY"});
+      const raw = Buffer.from(JSON.stringify(payload));
+      assert.equal((await postWebhook(base,payload)).status,500);
+      assert.equal(repo.webhookEvents.get(sha256Hex(raw))?.processed,false);
+      store.enqueue = enqueue;
+      assert.equal((await postWebhook(base,payload)).status,200);
+      assert.equal(repo.messages.size,1);
+      assert.ok(await store.get("wamid.MUSE_RETRY"));
+      assert.equal((await postWebhook(base,payload)).status,200);
+      assert.equal((await store.claimDue(Date.now()+1000,10)).length,1);
+    });
+  } finally {
+    setDefaultMoosRelayOutboxStoreForTests(null);
+    if(saved.relay===undefined) delete process.env.MOOS_RELAY_ENABLED; else process.env.MOOS_RELAY_ENABLED=saved.relay;
+    if(saved.scope===undefined) delete process.env.MOOS_TEST_ONLY_RECIPIENT_E164; else process.env.MOOS_TEST_ONLY_RECIPIENT_E164=saved.scope;
+  }
 });
 
 if (failed > 0) {
