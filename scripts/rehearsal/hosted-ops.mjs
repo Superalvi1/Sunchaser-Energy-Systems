@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {spawnSync} from "node:child_process";
-if(process.env.RAILWAY_PROJECT_ID!=="ea5d5d07-e276-4fa3-85af-320d92dbdcaa"||process.env.PGHOST!=="rehearsal-postgres.railway.internal")throw new Error("Refusing other target");
+if(process.env.RAILWAY_PROJECT_ID!=="ea5d5d07-e276-4fa3-85af-320d92dbdcaa"||!["rehearsal-postgres.railway.internal","sync-postgres.railway.internal"].includes(process.env.PGHOST))throw new Error("Refusing other target");
 const phases={
  stop_drill:"scripts/rehearsal/run-hosted-stop-drill.mjs",
  recovery:"scripts/rehearsal/run-hosted-recovery.mjs",
