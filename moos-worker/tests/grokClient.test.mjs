@@ -28,6 +28,7 @@ test("configured Grok sends only bounded redacted text, store:false and no tools
   assert.equal(payload.store,false);
   assert.equal(payload.stream,false);
   assert.equal(payload.model,"grok-4.3");
+  assert.equal(payload.reasoning.effort,"none");
   assert.equal(payload.tools,undefined);
   assert.equal(payload.text.format.type,"json_schema");
   const body=JSON.stringify(payload);
@@ -48,6 +49,12 @@ test("unsafe prices, URLs, malformed JSON, truncated and provider failures fail 
   assert.equal(parseGrokDecision(provider("reply","")),null);
   const c=new GrokReplyClient({MUSE_GROK_ENABLED:"true",XAI_API_KEY:"test"},async()=>({ok:false,status:401}));
   assert.equal(await c.respond("Hi"),null);
+});
+test("untested model slugs fail closed before network call",async()=>{
+  let calls=0;
+  const c=new GrokReplyClient({MUSE_GROK_ENABLED:"true",XAI_API_KEY:"key",XAI_MODEL:"grok-4.7"},async()=>{calls++;return {ok:true};});
+  assert.equal(await c.respond("hello"),null);
+  assert.equal(calls,0);
 });
 test("PII censoring also bounds history content",()=>{
   assert.equal(redactCustomerText("My email ali@example.com and phone 03218486752").includes("03218486752"),false);
