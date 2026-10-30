@@ -1,6 +1,15 @@
 {
   "appId": "com.sunchaser.crm",
   "appName": "Sunchaser CRM",
-  "webDir": "dist",
-  "bundledWebRuntime": false
+  "webDir": "mobile-shell",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "https://crm.sunchaserenergy.co/client",
+    "cleartext": false,
+    "errorPath": "offline.html"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
 }
