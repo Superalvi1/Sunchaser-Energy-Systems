@@ -1,0 +1,47 @@
+name: Verify live Railway CRM staging
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/verify-railway-live-smoke.yml"
+  workflow_dispatch:
+
+jobs:
+  railway-http:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CRM_URL: https://sunchaser-crm-private-smoke-production.up.railway.app
+    steps:
+      - name: Health and SPA smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(curl -L -sS --retry 4 --retry-delay 3 --max-time 30 -o /tmp/health -w '%{http_code}' "$CRM_URL/health")" = "200"
+          grep -q '"status":"ok"' /tmp/health
+          test "$(curl -L -sS --retry 4 --retry-delay 3 --max-time 30 -o /tmp/home -w '%{http_code}' "$CRM_URL/")" = "200"
+      - name: Verify Railway database catalogue publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready=0
+          for attempt in $(seq 1 24); do
+            if curl -L --fail --max-time 30 -sS "$CRM_URL/api/marketplace/catalogue/publication" -o /tmp/publication.json \
+              && node -e 'const x=require("/tmp/publication.json"); if(!x.ok || x.data?.effectivePublicCatalogueSource!=="database" || x.data?.publicWouldShowSyncedProducts!==true) process.exit(1)' ; then
+              ready=1
+              break
+            fi
+            echo "Waiting for Railway database catalogue deployment (attempt $attempt/24)"
+            sleep 10
+          done
+          test "$ready" = "1"
+          node -e 'const x=require("/tmp/publication.json"); console.log("CATALOGUE_PUBLICATION="+JSON.stringify(x.data))'
+          curl -L --fail --retry 4 --retry-delay 3 --max-time 60 -sS "$CRM_URL/api/marketplace/catalogue/products" -o /tmp/products.json
+          node -e 'const x=require("/tmp/products.json"); const rows=Array.isArray(x.data)?x.data:x.data?.items; if(!x.ok || !Array.isArray(rows) || rows.length<100) process.exit(1); console.log("RAILWAY_CATALOGUE_PRODUCTS="+rows.length)'
+      - name: Verify checkout remains disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl -sS --max-time 20 -o /tmp/checkout -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{}' "$CRM_URL/api/marketplace/checkout" || true)"
+          test "$code" != "200"
+          echo "CHECKOUT_FAIL_CLOSED_HTTP=$code"
