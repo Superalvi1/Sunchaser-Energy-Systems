@@ -119,7 +119,7 @@ html[lang="ur"] .rx__head { direction: rtl; }
 html[lang="ur"] .faq summary { line-height: 2; }
 html[lang="ur"] .hero h1 span { padding: .55em .1em .3em; margin-top: -.35em; }
 html[lang="ur"] .hero .lede em { text-underline-offset: .5em; }
-.stage { position: relative; aspect-ratio: 1; width: 100%; max-height: 440px; }
+.stage { position: relative; aspect-ratio: 1; width: 100%; max-height: 500px; }
 .stage canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
 .stage__fb { position: absolute; inset: 14%; border-radius: 50%; background: radial-gradient(circle at 35% 30%, rgba(159,227,198,.5), rgba(142,135,242,.25) 60%, transparent 70%); }
 .has-3d .stage__fb { display: none; }
@@ -308,7 +308,19 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
 .ringtag__ic { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(140deg, var(--sun), #F59E0B); color: #3A2600; flex: none; }
 .ringtag__ic svg { width: 18px; height: 18px; }
 .ringtag::after { content: ""; position: absolute; right: -7px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 0 3px var(--card); }
+/* Badges riding on the ring: a stem points down to the moon they ride on */
+.rides { left: 0 !important; top: 0 !important; right: auto !important; bottom: auto !important; animation: none !important; transition: opacity .35s ease; will-change: transform, opacity; }
+.rides::after { content: ""; position: absolute; left: 50%; right: auto; top: auto; bottom: -14px; width: 2px; height: 12px; margin: 0; border-radius: 2px; background: color-mix(in srgb, var(--sun) 85%, transparent); box-shadow: none; transform: translateX(calc(-50% + var(--dx, 0px))); }
+html[lang="ur"] .rides::after { left: 50%; }
 @media (max-width: 60rem) { .ringtag { position: relative; transform: none !important; margin: 8px auto 0; width: fit-content; } .ringtag::after { display: none; } }
+.glass.rides { gap: 9px; padding: 7px 12px 7px 7px; font-size: .74rem; }
+.glass.rides b { font-size: .86rem; }
+.glass.rides .glass__ic { width: 30px; height: 30px; border-radius: 9px; }
+.glass.rides .glass__ic svg { width: 16px; height: 16px; }
+.ringtag.rides { gap: 8px; padding: 6px 12px 6px 6px; font-size: .74rem; }
+.ringtag.rides b { font-size: .86rem; }
+.ringtag.rides .ringtag__ic { width: 28px; height: 28px; }
+.ringtag.rides .ringtag__ic svg { width: 15px; height: 15px; }
 html[lang="ur"] .topbar, html[lang="ur"] .ringtag b, html[lang="ur"] .topbar__cta { font-family: "Noto Nastaliq Urdu", serif; letter-spacing: 0; line-height: 2; }
 html[lang="ur"] .ringtag { line-height: 1.9; }
 html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
@@ -407,7 +419,7 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
         <div class="stage" id="stage">
           <div class="stage__fb"></div>
           <a class="ringtag" href="#book" data-family id="ringtag" aria-hidden="false"><span class="ringtag__ic"><svg><use href="#i-globe"/></svg></span><span><b data-i18n="ob.tag1">Living abroad?</b><span data-i18n="ob.tag2">Book for your family in Pakistan</span></span></a>
-          <div class="glass glass--b" aria-hidden="true"><span class="glass__ic"><svg><use href="#i-pulse"/></svg></span><span><b data-i18n="glass.b">Video consultation</b><span data-i18n="glass.s">Speak directly with your doctor</span></span></div>
+          <div class="glass glass--b" id="vidtag" aria-hidden="true"><span class="glass__ic"><svg><use href="#i-pulse"/></svg></span><span><b data-i18n="glass.b">Video consultation</b><span data-i18n="glass.s">Speak directly with your doctor</span></span></div>
         </div>
       </div>
     </div>
@@ -524,14 +536,6 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
             <h2 id="book-t" data-i18n="book.h2">Book your visit</h2>
             <p class="sub" data-i18n="book.sub">Pick a doctor and a time, leave your number, and we call to confirm.</p>
             <p class="price"><span class="price__v" data-i18n="fee.v">Rs 1,000</span><span class="price__l" data-i18n="fee.book">per online consultation, either doctor</span></p>
-            <div class="slots" role="group" aria-label="Choose a time">
-              <button class="slot" type="button" data-i18n="sl1">Today 15:30</button>
-              <button class="slot" type="button" data-i18n="sl2">Today 17:00</button>
-              <button class="slot" type="button" data-i18n="sl3">Tomorrow 10:30</button>
-              <button class="slot" type="button" data-i18n="sl4">Tomorrow 12:00</button>
-              <button class="slot" type="button" data-i18n="sl5">Thursday 11:00</button>
-            </div>
-            <p class="note" data-i18n="book.note">Example times. Live booking opens soon.</p>
           </div>
           <form class="form" novalidate>
             <fieldset class="seg"><legend data-i18n="doc.role2">Doctor</legend>
@@ -557,7 +561,7 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
             <label for="f-phone" data-i18n="f.phone">Mobile number</label>
             <input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0300 1234567" pattern="[0-9+ \-]{10,15}" required>
             <label for="f-time" data-i18n="f.time">Preferred time</label>
-            <input id="f-time" name="time" placeholder="Tap a time, or write one" data-i18n-ph="f.timeph">
+            <input id="f-time" name="time" placeholder="e.g. Tomorrow evening" data-i18n-ph="f.timeph">
             <label for="f-reason" data-i18n="f.reason">What would you like help with?</label>
             <textarea id="f-reason" name="reason" rows="3"></textarea>
             <button class="btn btn--dark" type="submit" data-i18n="f.submit">Request my visit</button>
@@ -582,7 +586,7 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Language: English / Urdu
-  const UR = {"nav.book": "وقت بُک کریں", "hero.chip": "آن لائن ڈاکٹر مشاورت", "hero.h1": "ڈاکٹر سے ملیں، <span>گھر بیٹھے۔</span>", "hero.lede": "مستند ڈاکٹر سے بات کریں اور صحیح مشورہ حاصل کریں، <em>انتظار گاہ کے بغیر۔</em>", "hero.meet": "ڈاکٹرز سے ملیں", "hero.docs": "ڈاکٹر محمد احمد شاہد اور ڈاکٹر خدیجہ شاہد", "hero.docs2": "ایم بی بی ایس گولڈ میڈلسٹ، پی ایم ڈی سی رجسٹرڈ", "hero.t1": "ویڈیو یا فون", "hero.t2": "دستخط شدہ ای-نسخہ", "hero.t3": "پورے پاکستان میں", "glass.b": "ویڈیو مشاورت", "glass.s": "اپنے ڈاکٹر سے براہِ راست بات کریں", "nav.doctors": "ہمارے ڈاکٹرز", "nav.areas": "علاج کے شعبے", "nav.how": "طریقہ کار", "nav.faq": "سوالات", "doc.h2": "اپنے ڈاکٹرز سے ملیں", "doc.sub": "ہر ڈاکٹر کی تعلیم اور تجربہ دیکھیں اور اپنی پسند کا ڈاکٹر منتخب کریں۔", "doc.role1": "جنرل فزیشن", "doc.name1": "ڈاکٹر محمد احمد شاہد", "doc.sel1": "ڈاکٹر احمد کو منتخب کریں", "doc.role2": "ڈاکٹر", "doc.name2": "ڈاکٹر خدیجہ شاہد", "doc.sel2": "ڈاکٹر خدیجہ کو منتخب کریں", "doc.reg": "پی ایم ڈی سی رجسٹریشن", "doc.tba": "جلد شامل کیا جائے گا", "area.k": "جنرل پریکٹس", "area.h2": "آپ کن مسائل پر بات کر سکتے ہیں", "area.sub": "روزمرہ بیماریاں اور دیرینہ امراض، ویڈیو یا فون پر۔", "a1": "بخار، فلو، کھانسی اور انفیکشن", "a2": "شوگر، بلڈ پریشر اور کولیسٹرول", "a3": "دمہ اور سانس کی بیماریاں", "a4": "معدے اور ہاضمے کے مسائل", "a5": "گردے اور پیشاب کے مسائل", "a6": "تھائیرائیڈ اور میٹابولک امراض", "a7": "موٹاپا اور وزن پر کنٹرول", "a8": "بچاؤ اور صحت مند طرزِ زندگی", "how.h2": "آپ کی آن لائن ملاقات", "s1h": "ڈاکٹر اور وقت منتخب کریں", "s1p": "اپنا ڈاکٹر چنیں، پھر اپنی سہولت کا وقت۔", "s2h": "ویڈیو کال میں شامل ہوں", "s2p": "اپنے موبائل سے ڈاکٹر سے بات کریں۔ عام فون کال بھی ہو سکتی ہے۔", "s3h": "اگلے اقدامات حاصل کریں", "s3p": "مشورہ، فالو اپ کا منصوبہ، اور ضرورت ہو تو دستخط شدہ ای-نسخہ۔", "rx.ex": "صرف نمونہ", "rx.signed": "دستخط شدہ", "faq.h2": "بُکنگ سے پہلے", "faq.sos": "ایمرجنسی؟ آن لائن بُک نہ کریں۔ فوراً 1122 پر کال کریں۔", "q1": "کیا مجھے نسخہ ملے گا؟", "q1a": "اگر ڈاکٹر سمجھیں کہ آپ کو دوا کی ضرورت ہے تو ملاقات کے بعد آپ کو دستخط شدہ ای-نسخہ ملے گا۔ کنٹرولڈ ادویات کے لیے خود آ کر معائنہ ضروری ہے۔", "q2": "کیا مجھے کوئی ایپ انسٹال کرنی ہوگی؟", "q2a": "نہیں۔ ویڈیو لنک آپ کے موبائل براؤزر میں کھل جاتا ہے۔ اگر انٹرنیٹ کمزور ہو تو ڈاکٹر آپ کو فون کر سکتے ہیں۔", "q3": "کون سے مسائل آن لائن کے لیے مناسب نہیں؟", "q3a": "جن مسائل میں جسمانی معائنہ، کوئی طبی عمل یا فوری علاج درکار ہو۔ اگر خود آ کر دکھانا ضروری ہو تو ڈاکٹر آپ کو بتا دیں گے۔", "q4": "میری معلومات کون دیکھتا ہے؟", "q4a": "صرف آپ کا ڈاکٹر۔ آپ کے نوٹس اور نسخے راز میں رہتے ہیں اور آپ کی اجازت کے بغیر کسی کو نہیں دیے جاتے۔", "book.h2": "اپنی ملاقات بُک کریں", "book.sub": "ڈاکٹر اور وقت منتخب کریں، اپنا نمبر دیں، ہم تصدیق کے لیے کال کریں گے۔", "sl1": "آج 15:30", "sl2": "آج 17:00", "sl3": "کل 10:30", "sl4": "کل 12:00", "sl5": "جمعرات 11:00", "book.note": "نمونے کے اوقات۔ براہِ راست بُکنگ جلد شروع ہوگی۔", "f.doc": "ڈاکٹر", "f.da": "ڈاکٹر احمد", "f.dk": "ڈاکٹر خدیجہ", "f.name": "آپ کا نام", "f.phone": "موبائل نمبر", "f.time": "پسندیدہ وقت", "f.reason": "آپ کو کس مسئلے میں مدد چاہیے؟", "f.submit": "ملاقات کی درخواست بھیجیں", "f.timeph": "اوپر سے وقت چنیں یا لکھیں", "m.phone": "براہِ کرم اپنا موبائل نمبر اس طرح لکھیں: 0300 1234567", "m.name": "براہِ کرم اپنا نام لکھیں۔", "m.none": "کچھ نہیں بھیجا گیا: آن لائن بُکنگ ابھی منسلک نہیں ہے۔", "foot.note": "آن لائن ملاقات ایمرجنسی علاج کا متبادل نہیں۔ ایمرجنسی میں 1122 پر کال کریں۔", "foot.c": "© 2026 سن چیزر کیئر، پاکستان", "fee.l": "آن لائن مشاورت", "fee.v": "1,000 روپے", "fee.book": "فی آن لائن مشاورت، دونوں ڈاکٹرز کے لیے", "q0": "ملاقات کی فیس کتنی ہے؟", "q0a": "ڈاکٹر محمد احمد شاہد یا ڈاکٹر خدیجہ شاہد، دونوں کے ساتھ آن لائن مشاورت کی فیس 1,000 روپے ہے۔", "ob.bar1": "بیرونِ ملک مقیم پاکستانی:", "ob.bar2": "پاکستان میں اپنے والدین یا گھر والوں کے لیے ڈاکٹر سے ویڈیو ملاقات بُک کریں۔", "ob.cta": "گھر والوں کے لیے بُک کریں", "ob.tag1": "بیرونِ ملک رہتے ہیں؟", "ob.tag2": "پاکستان میں گھر والوں کے لیے بُک کریں", "f.for": "ملاقات کس کے لیے ہے؟", "f.me": "میرے لیے، پاکستان میں", "f.fam": "پاکستان میں گھر والے", "f.patient": "مریض کا نام", "f.country": "آپ کا ملک", "f.countryph": "برطانیہ، امارات، سعودی عرب، امریکہ...", "qa": "میں بیرونِ ملک رہتا ہوں۔ کیا میں اپنے والدین کے لیے بُک کر سکتا ہوں؟", "qaa": "جی ہاں۔ آپ کسی بھی ملک سے بُک کر سکتے ہیں اور ویڈیو کال میں شامل ہو سکتے ہیں، بشرطیکہ مریض پاکستان میں ہو۔ ہمارے ڈاکٹرز پاکستان میں موجود مریضوں کا علاج کرتے ہیں۔", "ob.short": "بیرونِ ملک؟ گھر والوں کے لیے بُک کریں۔"};
+  const UR = {"nav.book": "وقت بُک کریں", "hero.chip": "آن لائن ڈاکٹر مشاورت", "hero.h1": "ڈاکٹر سے ملیں، <span>گھر بیٹھے۔</span>", "hero.lede": "مستند ڈاکٹر سے بات کریں اور صحیح مشورہ حاصل کریں، <em>انتظار گاہ کے بغیر۔</em>", "hero.meet": "ڈاکٹرز سے ملیں", "hero.docs": "ڈاکٹر محمد احمد شاہد اور ڈاکٹر خدیجہ شاہد", "hero.docs2": "ایم بی بی ایس گولڈ میڈلسٹ، پی ایم ڈی سی رجسٹرڈ", "hero.t1": "ویڈیو یا فون", "hero.t2": "دستخط شدہ ای-نسخہ", "hero.t3": "پورے پاکستان میں", "glass.b": "ویڈیو مشاورت", "glass.s": "اپنے ڈاکٹر سے براہِ راست بات کریں", "nav.doctors": "ہمارے ڈاکٹرز", "nav.areas": "علاج کے شعبے", "nav.how": "طریقہ کار", "nav.faq": "سوالات", "doc.h2": "اپنے ڈاکٹرز سے ملیں", "doc.sub": "ہر ڈاکٹر کی تعلیم اور تجربہ دیکھیں اور اپنی پسند کا ڈاکٹر منتخب کریں۔", "doc.role1": "جنرل فزیشن", "doc.name1": "ڈاکٹر محمد احمد شاہد", "doc.sel1": "ڈاکٹر احمد کو منتخب کریں", "doc.role2": "ڈاکٹر", "doc.name2": "ڈاکٹر خدیجہ شاہد", "doc.sel2": "ڈاکٹر خدیجہ کو منتخب کریں", "doc.reg": "پی ایم ڈی سی رجسٹریشن", "doc.tba": "جلد شامل کیا جائے گا", "area.k": "جنرل پریکٹس", "area.h2": "آپ کن مسائل پر بات کر سکتے ہیں", "area.sub": "روزمرہ بیماریاں اور دیرینہ امراض، ویڈیو یا فون پر۔", "a1": "بخار، فلو، کھانسی اور انفیکشن", "a2": "شوگر، بلڈ پریشر اور کولیسٹرول", "a3": "دمہ اور سانس کی بیماریاں", "a4": "معدے اور ہاضمے کے مسائل", "a5": "گردے اور پیشاب کے مسائل", "a6": "تھائیرائیڈ اور میٹابولک امراض", "a7": "موٹاپا اور وزن پر کنٹرول", "a8": "بچاؤ اور صحت مند طرزِ زندگی", "how.h2": "آپ کی آن لائن ملاقات", "s1h": "ڈاکٹر اور وقت منتخب کریں", "s1p": "اپنا ڈاکٹر چنیں، پھر اپنی سہولت کا وقت۔", "s2h": "ویڈیو کال میں شامل ہوں", "s2p": "اپنے موبائل سے ڈاکٹر سے بات کریں۔ عام فون کال بھی ہو سکتی ہے۔", "s3h": "اگلے اقدامات حاصل کریں", "s3p": "مشورہ، فالو اپ کا منصوبہ، اور ضرورت ہو تو دستخط شدہ ای-نسخہ۔", "rx.ex": "صرف نمونہ", "rx.signed": "دستخط شدہ", "faq.h2": "بُکنگ سے پہلے", "faq.sos": "ایمرجنسی؟ آن لائن بُک نہ کریں۔ فوراً 1122 پر کال کریں۔", "q1": "کیا مجھے نسخہ ملے گا؟", "q1a": "اگر ڈاکٹر سمجھیں کہ آپ کو دوا کی ضرورت ہے تو ملاقات کے بعد آپ کو دستخط شدہ ای-نسخہ ملے گا۔ کنٹرولڈ ادویات کے لیے خود آ کر معائنہ ضروری ہے۔", "q2": "کیا مجھے کوئی ایپ انسٹال کرنی ہوگی؟", "q2a": "نہیں۔ ویڈیو لنک آپ کے موبائل براؤزر میں کھل جاتا ہے۔ اگر انٹرنیٹ کمزور ہو تو ڈاکٹر آپ کو فون کر سکتے ہیں۔", "q3": "کون سے مسائل آن لائن کے لیے مناسب نہیں؟", "q3a": "جن مسائل میں جسمانی معائنہ، کوئی طبی عمل یا فوری علاج درکار ہو۔ اگر خود آ کر دکھانا ضروری ہو تو ڈاکٹر آپ کو بتا دیں گے۔", "q4": "میری معلومات کون دیکھتا ہے؟", "q4a": "صرف آپ کا ڈاکٹر۔ آپ کے نوٹس اور نسخے راز میں رہتے ہیں اور آپ کی اجازت کے بغیر کسی کو نہیں دیے جاتے۔", "book.h2": "اپنی ملاقات بُک کریں", "book.sub": "ڈاکٹر اور وقت منتخب کریں، اپنا نمبر دیں، ہم تصدیق کے لیے کال کریں گے۔", "sl1": "آج 15:30", "sl2": "آج 17:00", "sl3": "کل 10:30", "sl4": "کل 12:00", "sl5": "جمعرات 11:00", "book.note": "نمونے کے اوقات۔ براہِ راست بُکنگ جلد شروع ہوگی۔", "f.doc": "ڈاکٹر", "f.da": "ڈاکٹر احمد", "f.dk": "ڈاکٹر خدیجہ", "f.name": "آپ کا نام", "f.phone": "موبائل نمبر", "f.time": "پسندیدہ وقت", "f.reason": "آپ کو کس مسئلے میں مدد چاہیے؟", "f.submit": "ملاقات کی درخواست بھیجیں", "f.timeph": "مثلاً کل شام", "m.phone": "براہِ کرم اپنا موبائل نمبر اس طرح لکھیں: 0300 1234567", "m.name": "براہِ کرم اپنا نام لکھیں۔", "m.none": "کچھ نہیں بھیجا گیا: آن لائن بُکنگ ابھی منسلک نہیں ہے۔", "foot.note": "آن لائن ملاقات ایمرجنسی علاج کا متبادل نہیں۔ ایمرجنسی میں 1122 پر کال کریں۔", "foot.c": "© 2026 سن چیزر کیئر، پاکستان", "fee.l": "آن لائن مشاورت", "fee.v": "1,000 روپے", "fee.book": "فی آن لائن مشاورت، دونوں ڈاکٹرز کے لیے", "q0": "ملاقات کی فیس کتنی ہے؟", "q0a": "ڈاکٹر محمد احمد شاہد یا ڈاکٹر خدیجہ شاہد، دونوں کے ساتھ آن لائن مشاورت کی فیس 1,000 روپے ہے۔", "ob.bar1": "بیرونِ ملک مقیم پاکستانی:", "ob.bar2": "پاکستان میں اپنے والدین یا گھر والوں کے لیے ڈاکٹر سے ویڈیو ملاقات بُک کریں۔", "ob.cta": "گھر والوں کے لیے بُک کریں", "ob.tag1": "بیرونِ ملک رہتے ہیں؟", "ob.tag2": "پاکستان میں گھر والوں کے لیے بُک کریں", "f.for": "ملاقات کس کے لیے ہے؟", "f.me": "میرے لیے، پاکستان میں", "f.fam": "پاکستان میں گھر والے", "f.patient": "مریض کا نام", "f.country": "آپ کا ملک", "f.countryph": "برطانیہ، امارات، سعودی عرب، امریکہ...", "qa": "میں بیرونِ ملک رہتا ہوں۔ کیا میں اپنے والدین کے لیے بُک کر سکتا ہوں؟", "qaa": "جی ہاں۔ آپ کسی بھی ملک سے بُک کر سکتے ہیں اور ویڈیو کال میں شامل ہو سکتے ہیں، بشرطیکہ مریض پاکستان میں ہو۔ ہمارے ڈاکٹرز پاکستان میں موجود مریضوں کا علاج کرتے ہیں۔", "ob.short": "بیرونِ ملک؟ گھر والوں کے لیے بُک کریں۔"};
   const EN_MSG = {"m.phone": "Please write your mobile number like 0300 1234567.", "m.name": "Please add your name.", "m.none": "Nothing was sent: online booking is not connected yet."};
   const i18nNodes = [...document.querySelectorAll('[data-i18n]')];
   const enText = new Map(i18nNodes.map((n) => [n, n.innerHTML]));
@@ -690,24 +694,35 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
   const orbs = [['#4f46e5', .3, 0], ['#ff8fb8', .26, 2.3], ['#5eead4', .2, 4.2]].map(([c, s, a]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 40, 40), glossy(c, { roughness: .15 })); m.userData.a = a; ringG.add(m); return m; });
   const dots = [['#5eead4', -3.2, 2.6, -1.5, .16], ['#ffc53d', 3.3, 2.9, -1, .2], ['#ff8fb8', -3.0, -2.7, .2, .13]].map(([c, x, y, z, s]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 24, 24), glossy(c)); m.position.set(x, y, z); m.userData.y = y; root.add(m); return m; });
 
-  const tag = document.getElementById('ringtag'); const wide = matchMedia('(min-width: 60.01rem)'); const TAG_A = 2.75;
+  const wide = matchMedia('(min-width: 60.01rem)');
+  const riders = [{ el: document.getElementById('ringtag'), orb: orbs[0] }, { el: document.getElementById('vidtag'), orb: orbs[2] }].filter((r) => r.el);
+  const wp = new THREE.Vector3();
+  function placeRiders() {
+    const on = wide.matches;
+    riders.forEach((r) => r.el.classList.toggle('rides', on));
+    if (!on) { riders.forEach((r) => { r.el.style.transform = ''; r.el.style.opacity = ''; }); return; }
+    const W = stage.clientWidth, H = stage.clientHeight;
+    riders.forEach((r) => {
+      r.orb.getWorldPosition(wp); const behind = wp.z < -0.4; wp.project(cam);
+      const x = (wp.x + 1) / 2 * W, y = (1 - wp.y) / 2 * H;
+      const bw = r.el.offsetWidth, bh = r.el.offsetHeight;
+      const cx = Math.min(Math.max(x, bw / 2 - 30), W - bw / 2 + 10);
+      r.el.style.transform = `translate(${Math.round(cx - bw / 2)}px, ${Math.round(y - bh - 18)}px)`;
+      r.el.style.setProperty('--dx', Math.round(x - cx) + 'px');
+      r.el.style.opacity = behind ? '.88' : '1'; r.el.style.zIndex = behind ? '2' : '4';
+    });
+  }
   const size = () => { const wd = stage.clientWidth, h = stage.clientHeight; renderer.setSize(wd, h, false); cam.aspect = wd / h; cam.position.z = wd < 420 ? 17 : 15; cam.updateProjectionMatrix(); };
   let mx = 0, my = 0;
   addEventListener('pointermove', (e) => { mx = e.clientX / innerWidth - .5; my = e.clientY / innerHeight - .5; });
   function draw(t) {
     cross.rotation.y = Math.sin(t * .45) * .5 - .25; cross.rotation.x = Math.sin(t * .3) * .12 + .08; cross.position.y = Math.sin(t * .8) * .08;
     ringG.rotation.z = -.5 + Math.sin(t * .25) * .06;
-    orbs.forEach((o) => { const a = o.userData.a + t * .4; o.position.set(Math.cos(a) * R, Math.sin(a) * R, 0); });
+    orbs.forEach((o) => { const a = o.userData.a + t * .22; o.position.set(Math.cos(a) * R, Math.sin(a) * R, 0); });
     dots.forEach((d, k) => { d.position.y = d.userData.y + Math.sin(t + k * 1.7) * .15; });
     root.rotation.y += ((mx * .4) - root.rotation.y) * .05; root.rotation.x += ((my * .22) - root.rotation.x) * .05;
     renderer.render(scene, cam);
-    if (tag && wide.matches) {
-      const rtl = document.documentElement.dir === 'rtl'; const A = rtl ? Math.PI - TAG_A : TAG_A;
-      const v = new THREE.Vector3(Math.cos(A) * R, Math.sin(A) * R, 0);
-      ringG.localToWorld(v); v.project(cam);
-      const x = (v.x + 1) / 2 * stage.clientWidth, y = (1 - v.y) / 2 * stage.clientHeight;
-      tag.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) ` + (rtl ? 'translate(10px, -50%)' : 'translate(calc(-100% - 10px), -50%)');
-    }
+    placeRiders();
   }
   size(); addEventListener('resize', () => { size(); if (reduce) draw(1.6); });
   let visible = true; const t0 = performance.now();
