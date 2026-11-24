@@ -263,6 +263,38 @@ footer { padding-block: 36px 44px; color: var(--muted); font-size: .9rem; }
 footer .logo { margin: 0; font-size: 1.05rem; }
 footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; height: 28px; }
 
+
+/* Professional white theme: white panels, indigo as the accent */
+.hero, .book { --forest-ink: var(--ink); --forest-muted: var(--ink-2); color: var(--ink); }
+.hero { background: radial-gradient(50% 70% at 78% 45%, color-mix(in srgb, var(--mint) 22%, transparent), transparent 65%), radial-gradient(40% 60% at 100% 0%, color-mix(in srgb, var(--forest-2) 10%, transparent), transparent 70%), linear-gradient(180deg, var(--paper-2), var(--paper)); box-shadow: inset 0 0 0 1px var(--line); }
+.hero::after { background-image: radial-gradient(color-mix(in srgb, var(--forest-2) 14%, transparent) 1px, transparent 1px); }
+.chip { background: var(--card); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); color: var(--forest-2); }
+.hero h1 { color: var(--ink); }
+.hero h1 span { background-image: linear-gradient(95deg, var(--forest-2), #0EA5A4 70%); }
+.hero .lede { color: var(--ink-2); }
+.hero .lede em { color: var(--forest-2); text-decoration-color: color-mix(in srgb, var(--forest-2) 35%, transparent); }
+.btn--lime { background: var(--forest-2); color: #FFFFFF; box-shadow: 0 12px 28px -12px var(--forest-2); }
+.btn--lime:hover { background: var(--forest); box-shadow: 0 16px 32px -12px var(--forest-2); }
+.btn--glass { background: var(--card); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line); }
+.btn--glass:hover { background: var(--card); box-shadow: inset 0 0 0 1.5px var(--forest-2); }
+.docrow { background: var(--card); box-shadow: inset 0 0 0 1px var(--line), var(--shadow); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.docrow__t b { color: var(--ink); }
+.docrow__t small { color: var(--muted); }
+.avatars img, .av-ph { box-shadow: 0 0 0 3px var(--card), 0 0 0 4.5px color-mix(in srgb, var(--forest-2) 40%, transparent); }
+.trust li { background: var(--card); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); }
+.glass { background: var(--card); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-lift); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.glass b { color: var(--ink); }
+.glass__ic { background: var(--forest-2); color: #FFFFFF; }
+.book { background: linear-gradient(180deg, var(--paper-2), var(--paper)); box-shadow: inset 0 0 0 1px var(--line); }
+.book h2 { color: var(--ink); }
+.book .sub, .note, .price__l { color: var(--ink-2); }
+.price__v { color: var(--forest-2); }
+.slot { background: var(--card); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line); }
+.slot:hover { background: var(--card); box-shadow: inset 0 0 0 1.5px var(--forest-2); }
+.slot[aria-pressed="true"] { background: var(--forest-2); color: #FFFFFF; }
+.form { box-shadow: inset 0 0 0 1px var(--line), var(--shadow-lift); }
+.form .btn--dark, .doc .btn--dark { background: var(--forest-2); color: #FFFFFF; }
+
 /* Reveal: visible by default */
 .js [data-reveal] { opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s cubic-bezier(.16,1,.3,1); }
 .js [data-reveal].in { opacity: 1; transform: none; }
@@ -576,7 +608,7 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
   const cam = new THREE.PerspectiveCamera(32, 1, 0.1, 100); cam.position.set(0, 0, 15);
 
   const ec = document.createElement('canvas'); ec.width = 256; ec.height = 128; const ex = ec.getContext('2d');
-  const eg = ex.createLinearGradient(0, 0, 0, 128); eg.addColorStop(0, '#ffffff'); eg.addColorStop(.45, '#d9f6ff'); eg.addColorStop(1, '#2b2593');
+  const eg = ex.createLinearGradient(0, 0, 0, 128); eg.addColorStop(0, '#ffffff'); eg.addColorStop(.45, '#d9f6ff'); eg.addColorStop(1, '#c7d2fe');
   ex.fillStyle = eg; ex.fillRect(0, 0, 256, 128);
   ex.fillStyle = 'rgba(255,255,255,.95)'; ex.beginPath(); ex.ellipse(70, 28, 36, 14, 0, 0, Math.PI * 2); ex.fill();
   ex.fillStyle = 'rgba(190,185,255,.9)'; ex.beginPath(); ex.ellipse(200, 44, 26, 10, 0, 0, Math.PI * 2); ex.fill();
@@ -588,7 +620,7 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
   const rimL = new THREE.PointLight(0xff8fb8, 2.0, 30); rimL.position.set(-6, -3, 4); scene.add(rimL);
   const rimM = new THREE.PointLight(0x9fe3c6, 1.4, 30); rimM.position.set(6, 3, -2); scene.add(rimM);
 
-  const glossy = (c, o = {}) => new THREE.MeshPhysicalMaterial(Object.assign({ color: new THREE.Color(c), roughness: .32, metalness: 0, clearcoat: 1, clearcoatRoughness: .08, envMapIntensity: .3 }, o));
+  const glossy = (c, o = {}) => new THREE.MeshPhysicalMaterial(Object.assign({ color: new THREE.Color(c).convertSRGBToLinear(), roughness: .32, metalness: 0, clearcoat: 1, clearcoatRoughness: .08, envMapIntensity: .3 }, o));
 
   const roundedPoly = (pts, r) => { const sh = new THREE.Shape(); const n = pts.length;
     for (let k = 0; k < n; k++) { const p0 = pts[(k - 1 + n) % n], p1 = pts[k], p2 = pts[(k + 1) % n];
@@ -601,14 +633,14 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
   crossGeo.center();
 
   const root = new THREE.Group(); scene.add(root);
-  const cross = new THREE.Mesh(crossGeo, glossy('#5fe0cf', { roughness: .22 })); root.add(cross);
+  const cross = new THREE.Mesh(crossGeo, glossy('#14b8a6', { roughness: .22 })); root.add(cross);
 
   const ringG = new THREE.Group(); ringG.rotation.set(1.2, .25, -.5); root.add(ringG);
   const R = 3.15;
   const ring = new THREE.Mesh(new THREE.TorusGeometry(R, .15, 32, 200), glossy('#ffc53d', { roughness: .2 })); ringG.add(ring);
-  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(R + .55, .012, 8, 200), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .25 })); ringG.add(ring2);
+  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(R + .55, .012, 8, 200), new THREE.MeshBasicMaterial({ color: 0x4f46e5, transparent: true, opacity: .18 })); ringG.add(ring2);
 
-  const orbs = [['#e4fa8e', .34, 0], ['#ff8fb8', .26, 2.3], ['#ffffff', .2, 4.2]].map(([c, s, a]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 40, 40), glossy(c, { roughness: .15 })); m.userData.a = a; ringG.add(m); return m; });
+  const orbs = [['#4f46e5', .3, 0], ['#ff8fb8', .26, 2.3], ['#5eead4', .2, 4.2]].map(([c, s, a]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 40, 40), glossy(c, { roughness: .15 })); m.userData.a = a; ringG.add(m); return m; });
   const dots = [['#5eead4', -3.2, 2.6, -1.5, .16], ['#ffc53d', 3.3, 2.9, -1, .2], ['#ff8fb8', -3.0, -2.7, .2, .13]].map(([c, x, y, z, s]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 24, 24), glossy(c)); m.position.set(x, y, z); m.userData.y = y; root.add(m); return m; });
 
   const size = () => { const wd = stage.clientWidth, h = stage.clientHeight; renderer.setSize(wd, h, false); cam.aspect = wd / h; cam.position.z = wd < 420 ? 17 : 15; cam.updateProjectionMatrix(); };
