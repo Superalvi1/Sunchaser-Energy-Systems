@@ -1,0 +1,549 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Shahid Clinic 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Video consultations and e-prescriptions with Dr Ahmad Shahid and Dr Khadija Shahid, PMDC-registered doctors in Pakistan.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: colourful clinic. Split 3D hero, step tiles, bento of conditions, a tilting e-prescription, doctor cards, form on a deep band. */
+:root {
+  --bg: #F4FBFC; --bg-2: #E6F6F8; --card: #FFFFFF; --ink: #0B2540; --ink-2: #33506B; --muted: #5A7287; --line: #CFE7EC;
+  --teal: #0891B2; --teal-ink: #FFFFFF; --emerald: #059669; --coral: #F2674F; --sun: #F5B23D; --sky: #38BDF8; --rose: #E85D8A;
+  --teal-soft: #D5F1F6; --emerald-soft: #D3F3E6; --coral-soft: #FDE2DC; --sun-soft: #FDF0D3; --sky-soft: #DAF1FD; --rose-soft: #FBDDE8;
+  --band: #0B2540; --band-ink: #EAF6F9; --band-muted: #A9C3D3; --focus: #0891B2; --error: #C93A2B;
+  --shadow: 0 1px 2px rgba(11,37,64,.06), 0 20px 40px -20px rgba(11,37,64,.25);
+  --shadow-lift: 0 2px 6px rgba(11,37,64,.08), 0 40px 80px -30px rgba(8,145,178,.40);
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --r-lg: 28px; --r-md: 18px; --r-sm: 12px; --r-pill: 999px;
+  --gut: 24px; --max: 1240px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #071A2C; --bg-2: #0B2338; --card: #0F2B44; --ink: #EAF6F9; --ink-2: #C3D8E4; --muted: #93AFC2; --line: #1D4260;
+  --teal: #22B8D9; --teal-ink: #04202E; --emerald: #2FC28E; --coral: #FF7F68; --sun: #FFC55C; --sky: #5CCBFA; --rose: #F27AA1;
+  --teal-soft: #0E3A4D; --emerald-soft: #0E3A33; --coral-soft: #43241F; --sun-soft: #3F3218; --sky-soft: #0F3550; --rose-soft: #40213A;
+  --band: #030E19; --band-ink: #EAF6F9; --band-muted: #93AFC2; --focus: #5CCBFA; --error: #FF8A7A;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 20px 40px -20px rgba(0,0,0,.6); --shadow-lift: 0 2px 6px rgba(0,0,0,.3), 0 40px 80px -30px rgba(34,184,217,.35);
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #071A2C; --bg-2: #0B2338; --card: #0F2B44; --ink: #EAF6F9; --ink-2: #C3D8E4; --muted: #93AFC2; --line: #1D4260;
+  --teal: #22B8D9; --teal-ink: #04202E; --emerald: #2FC28E; --coral: #FF7F68; --sun: #FFC55C; --sky: #5CCBFA; --rose: #F27AA1;
+  --teal-soft: #0E3A4D; --emerald-soft: #0E3A33; --coral-soft: #43241F; --sun-soft: #3F3218; --sky-soft: #0F3550; --rose-soft: #40213A;
+  --band: #030E19; --band-ink: #EAF6F9; --band-muted: #93AFC2; --focus: #5CCBFA; --error: #FF8A7A;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 20px 40px -20px rgba(0,0,0,.6); --shadow-lift: 0 2px 6px rgba(0,0,0,.3), 0 40px 80px -30px rgba(34,184,217,.35);
+  color-scheme: dark; }
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+html { scroll-behavior: smooth; scroll-padding-top: 90px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.6 var(--font-body); -webkit-font-smoothing: antialiased; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.025em; line-height: 1.05; margin: 0; text-wrap: balance; overflow-wrap: break-word; min-width: 0; }
+h1 { font-size: clamp(2.6rem, 5.4vw, 4.6rem); }
+h2 { font-size: clamp(2rem, 3.6vw, 3.1rem); max-width: 20ch; }
+h3 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.01em; line-height: 1.25; }
+p { margin: 0; text-wrap: pretty; }
+a { color: inherit; }
+svg { display: block; }
+.wrap { width: 100%; max-width: var(--max); margin-inline: auto; padding-left: max(var(--gut), env(safe-area-inset-left, 0px)); padding-right: max(var(--gut), env(safe-area-inset-right, 0px)); }
+section { padding-block: clamp(64px, 9vw, 120px); }
+.sub { color: var(--ink-2); max-width: 52ch; margin-top: 16px; font-size: 1.1rem; }
+.hl { background: linear-gradient(100deg, var(--teal), var(--emerald) 55%, var(--sun)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 8px; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 26px; border: 0; border-radius: var(--r-pill); font: 700 1rem/1 var(--font-body); text-decoration: none; cursor: pointer; transition: transform .18s ease, box-shadow .25s ease, background-color .2s ease; }
+.btn--main { background: linear-gradient(135deg, var(--teal), var(--emerald)); color: var(--teal-ink); box-shadow: 0 10px 24px -10px var(--teal), inset 0 1px 0 rgba(255,255,255,.35); }
+.btn--main:hover { transform: translateY(-2px); box-shadow: 0 16px 30px -12px var(--teal), inset 0 1px 0 rgba(255,255,255,.35); }
+.btn--ghost { background: var(--card); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line); }
+.btn--ghost:hover { box-shadow: inset 0 0 0 1.5px var(--teal); transform: translateY(-2px); }
+.btn:active { transform: translateY(0); }
+.btn svg { width: 20px; height: 20px; }
+
+/* Nav */
+.nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50; background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: var(--bg); }
+.nav__in { display: flex; align-items: center; gap: 24px; min-height: 72px; }
+.logo { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 800 1.2rem/1 var(--font-display); letter-spacing: -0.02em; margin-right: auto; }
+.logo__mark { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; background: linear-gradient(135deg, var(--coral), var(--sun)); box-shadow: 0 6px 14px -6px var(--coral), inset 0 1px 0 rgba(255,255,255,.4); }
+.logo__mark svg { width: 20px; height: 20px; color: #FFFFFF; }
+.nav ul { display: flex; gap: 26px; list-style: none; margin: 0; padding: 0; }
+.nav ul a { text-decoration: none; font-weight: 700; color: var(--ink-2); font-size: .95rem; }
+.nav ul a:hover { color: var(--teal); }
+.nav .btn { min-height: 44px; padding: 0 20px; }
+@media (max-width: 52rem) { .nav ul { display: none; } }
+
+/* Hero */
+.hero { position: relative; padding-block: clamp(40px, 6vw, 72px) clamp(56px, 8vw, 96px); overflow: clip; }
+.hero::before { content: ""; position: absolute; inset: -20% -10% auto auto; width: 70vw; max-width: 900px; aspect-ratio: 1; background: radial-gradient(closest-side, color-mix(in srgb, var(--sky) 28%, transparent), transparent); pointer-events: none; }
+.hero::after { content: ""; position: absolute; inset: auto auto -30% -15%; width: 55vw; max-width: 700px; aspect-ratio: 1; background: radial-gradient(closest-side, color-mix(in srgb, var(--sun) 22%, transparent), transparent); pointer-events: none; }
+.hero__grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 32px; align-items: center; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+.badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: var(--r-pill); font-size: .9rem; font-weight: 700; background: var(--card); box-shadow: var(--shadow); }
+.badge svg { width: 16px; height: 16px; }
+.badge--t svg { color: var(--emerald); } .badge--c svg { color: var(--coral); }
+.hero .sub { font-size: 1.2rem; }
+.hero__cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.stage { position: relative; aspect-ratio: 1 / 1; max-height: 600px; width: 100%; }
+.stage canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+.stage__fallback { position: absolute; inset: 8%; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--sky-soft), var(--teal-soft) 50%, var(--emerald-soft)); }
+.has-3d .stage__fallback { display: none; }
+.float { position: absolute; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--r-md); background: color-mix(in srgb, var(--card) 88%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: var(--shadow-lift); font-size: .92rem; animation: bob 6s ease-in-out infinite; }
+.float b { display: block; font-size: 1rem; }
+.float small { color: var(--muted); }
+.float__ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: #FFFFFF; flex: none; }
+.float__ic svg { width: 20px; height: 20px; }
+.float--a { left: 0; top: 14%; } .float--a .float__ic { background: linear-gradient(135deg, var(--coral), var(--rose)); }
+.float--b { right: 2%; bottom: 12%; animation-delay: -3s; } .float--b .float__ic { background: linear-gradient(135deg, var(--teal), var(--sky)); }
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@media (max-width: 60rem) { .hero__grid { grid-template-columns: minmax(0, 1fr); } .stage { max-width: 520px; margin-inline: auto; } }
+@media (max-width: 30rem) { .float { font-size: .82rem; padding: 10px 12px; } .float--a { top: 4%; } }
+
+/* Steps */
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 48px; list-style: none; padding: 0; counter-reset: s; }
+.step { position: relative; padding: 30px; border-radius: var(--r-lg); background: var(--c-soft); overflow: hidden; }
+.step::after { counter-increment: s; content: counter(s); position: absolute; right: 18px; top: 4px; font: 800 6rem/1 var(--font-display); color: var(--c); opacity: .18; }
+.step:nth-child(1) { --c: var(--teal); --c-soft: var(--teal-soft); }
+.step:nth-child(2) { --c: var(--coral); --c-soft: var(--coral-soft); }
+.step:nth-child(3) { --c: var(--emerald); --c-soft: var(--emerald-soft); }
+.cube { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: #FFFFFF; background: linear-gradient(145deg, color-mix(in srgb, var(--c) 70%, #FFFFFF), var(--c)); box-shadow: 0 14px 24px -12px var(--c), inset 0 2px 0 rgba(255,255,255,.45), inset 0 -4px 0 rgba(0,0,0,.12); transform: perspective(300px) rotateX(12deg) rotateY(-14deg); margin-bottom: 22px; }
+.cube svg { width: 28px; height: 28px; }
+.step p { margin-top: 8px; color: var(--ink-2); }
+@media (max-width: 52rem) { .steps { grid-template-columns: minmax(0, 1fr); } }
+
+/* Bento */
+.treat { background: var(--bg-2); }
+.bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin-top: 48px; }
+.tile { --c: var(--teal); --c-soft: var(--teal-soft); position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 40px; min-height: 200px; padding: 26px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow); transition: transform .25s ease, box-shadow .25s ease; overflow: hidden; }
+.tile:hover { transform: translateY(-4px); box-shadow: var(--shadow-lift); }
+.tile::before { content: ""; position: absolute; right: -40px; top: -40px; width: 160px; height: 160px; border-radius: 50%; background: var(--c-soft); }
+.tile__ic { position: relative; width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; background: var(--c); color: #FFFFFF; box-shadow: 0 10px 20px -10px var(--c), inset 0 1px 0 rgba(255,255,255,.4); }
+.tile__ic svg { width: 26px; height: 26px; }
+.tile p { color: var(--ink-2); margin-top: 6px; font-size: .98rem; }
+.tile--wide { grid-column: span 2; }
+.t1 { --c: var(--coral); --c-soft: var(--coral-soft); } .t2 { --c: var(--rose); --c-soft: var(--rose-soft); } .t3 { --c: var(--sun); --c-soft: var(--sun-soft); }
+.t4 { --c: var(--emerald); --c-soft: var(--emerald-soft); } .t5 { --c: var(--sky); --c-soft: var(--sky-soft); } .t6 { --c: var(--teal); --c-soft: var(--teal-soft); }
+@media (max-width: 60rem) { .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 34rem) { .bento { grid-template-columns: minmax(0, 1fr); } .tile--wide { grid-column: auto; } }
+
+/* Prescription */
+.rx__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: center; }
+.ticks { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 14px; }
+.ticks li { display: flex; gap: 12px; align-items: flex-start; }
+.ticks svg { width: 24px; height: 24px; flex: none; color: var(--emerald); margin-top: 1px; }
+.rx-scene { perspective: 1200px; }
+.rx { position: relative; padding: 30px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow-lift); transform: rotateX(var(--rx, 8deg)) rotateY(var(--ry, -14deg)); transform-style: preserve-3d; transition: transform .4s cubic-bezier(.16,1,.3,1); }
+.rx::before { content: ""; position: absolute; inset: 0 0 auto; height: 10px; border-radius: var(--r-lg) var(--r-lg) 0 0; background: linear-gradient(90deg, var(--teal), var(--emerald), var(--sun), var(--coral)); }
+.rx__head { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 18px; border-bottom: 1px dashed var(--line); }
+.rx__head b { font-family: var(--font-display); font-size: 1.2rem; }
+.rx__head small, .rx__meta { color: var(--muted); font-size: .88rem; }
+.rx__sym { font: 800 2.6rem/1 var(--font-display); color: var(--teal); transform: translateZ(40px); }
+.rx__lines { display: grid; gap: 12px; padding-block: 20px; }
+.rx__line { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 12px; align-items: center; padding: 12px 14px; border-radius: var(--r-sm); background: var(--bg-2); transform: translateZ(24px); }
+.rx__dot { width: 14px; height: 14px; border-radius: 50%; }
+.rx__bar { height: 10px; border-radius: 6px; background: var(--line); }
+.rx__foot { display: flex; justify-content: space-between; align-items: end; gap: 16px; padding-top: 16px; border-top: 1px dashed var(--line); }
+.rx__sign { font: 600 1.4rem/1 var(--font-display); color: var(--teal); transform: rotate(-4deg); }
+.rx__stamp { position: absolute; right: -14px; top: 38%; padding: 8px 14px; border-radius: var(--r-pill); background: var(--sun); color: #3A2500; font-weight: 700; font-size: .85rem; transform: translateZ(60px) rotate(8deg); box-shadow: var(--shadow); }
+@media (max-width: 60rem) { .rx__grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Doctors */
+.docs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px; margin-top: 48px; }
+.doc { perspective: 1000px; }
+.doc__card { height: 100%; padding: 30px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow); transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); transition: transform .35s cubic-bezier(.16,1,.3,1), box-shadow .3s ease; display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 26px; align-items: start; }
+.doc__card:hover { box-shadow: var(--shadow-lift); }
+.doc__pic { aspect-ratio: 4 / 5; border-radius: var(--r-md); display: grid; place-items: center; font: 800 2.6rem/1 var(--font-display); color: #FFFFFF; box-shadow: inset 0 2px 0 rgba(255,255,255,.35), 0 16px 28px -14px var(--c); }
+.d1 .doc__pic { --c: var(--teal); background: linear-gradient(150deg, var(--sky), var(--teal) 55%, var(--emerald)); }
+.d2 .doc__pic { --c: var(--coral); background: linear-gradient(150deg, var(--sun), var(--coral) 55%, var(--rose)); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; list-style: none; padding: 0; }
+.chips li { padding: 6px 12px; border-radius: var(--r-pill); font-size: .88rem; font-weight: 700; }
+.d1 .chips li { background: var(--teal-soft); color: var(--ink); } .d2 .chips li { background: var(--coral-soft); color: var(--ink); }
+.reg { margin-top: 18px; font-size: .92rem; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.reg svg { width: 18px; height: 18px; color: var(--emerald); }
+.reg b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.fill { padding: 0 .35em; border: 1.5px dashed var(--muted); border-radius: 6px; color: var(--muted); font-weight: 400; }
+@media (max-width: 60rem) { .docs { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 30rem) { .doc__card { grid-template-columns: minmax(0, 1fr); } .doc__pic { max-width: 140px; } }
+
+/* Visits */
+.visits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 48px; }
+.visit { display: flex; flex-direction: column; gap: 14px; padding: 28px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow); border-top: 6px solid var(--c); }
+.visit:nth-child(1) { --c: var(--teal); } .visit:nth-child(2) { --c: var(--sun); } .visit:nth-child(3) { --c: var(--rose); }
+.visit p { color: var(--ink-2); }
+.visit dl { margin: auto 0 0; display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); font-size: .95rem; }
+.visit dl div { display: flex; justify-content: space-between; gap: 12px; }
+.visit dt { color: var(--muted); }
+.visit dd { margin: 0; font-weight: 700; text-align: right; }
+@media (max-width: 60rem) { .visits { grid-template-columns: minmax(0, 1fr); } }
+
+/* FAQ */
+.faq { background: var(--bg-2); }
+.faq__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 56px; align-items: start; }
+.faq details { background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow); }
+.faq details + details { margin-top: 12px; }
+.faq summary { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 24px; font-weight: 700; font-size: 1.08rem; cursor: pointer; list-style: none; border-radius: var(--r-md); }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: ""; flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--teal-soft) no-repeat center/14px; background-image: linear-gradient(var(--teal), var(--teal)), linear-gradient(var(--teal), var(--teal)); background-size: 12px 2px, 2px 12px; transition: transform .25s ease; }
+.faq details[open] summary::after { transform: rotate(45deg); }
+.faq details p { padding: 0 24px 22px; color: var(--ink-2); }
+.sos { margin-top: 24px; display: flex; gap: 12px; align-items: center; padding: 16px 18px; border-radius: var(--r-md); background: var(--coral-soft); font-weight: 700; }
+.sos svg { width: 24px; height: 24px; color: var(--coral); flex: none; }
+@media (max-width: 60rem) { .faq__grid { grid-template-columns: minmax(0, 1fr); gap: 32px; } }
+
+/* Booking band */
+.book { position: relative; background: var(--band); color: var(--band-ink); overflow: clip; }
+.book::before { content: ""; position: absolute; left: -10%; top: -40%; width: 60%; aspect-ratio: 1; background: radial-gradient(closest-side, rgba(8,145,178,.45), transparent); pointer-events: none; }
+.book::after { content: ""; position: absolute; right: -10%; bottom: -40%; width: 50%; aspect-ratio: 1; background: radial-gradient(closest-side, rgba(242,103,79,.32), transparent); pointer-events: none; }
+.book__grid { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; align-items: start; }
+.book h2 { color: var(--band-ink); }
+.book .sub { color: var(--band-muted); }
+.slots { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+.slot { min-height: 46px; padding: 0 18px; border-radius: var(--r-pill); border: 1.5px solid rgba(234,246,249,.25); background: rgba(234,246,249,.06); color: var(--band-ink); font: 700 .95rem/1 var(--font-body); cursor: pointer; transition: background-color .2s ease, border-color .2s ease, transform .15s ease; }
+.slot:hover { border-color: var(--sky); transform: translateY(-2px); }
+.slot[aria-pressed="true"] { background: var(--sun); border-color: var(--sun); color: #3A2500; }
+.slots-note { margin-top: 12px; font-size: .88rem; color: var(--band-muted); }
+.form { display: grid; gap: 8px; padding: 32px; border-radius: var(--r-lg); background: var(--card); color: var(--ink); box-shadow: 0 40px 80px -30px rgba(0,0,0,.6); }
+.form label { margin-top: 8px; font-weight: 700; font-size: .95rem; }
+.form input, .form textarea { min-height: 52px; padding: 12px 16px; border: 1.5px solid var(--line); border-radius: var(--r-sm); background: var(--bg); color: var(--ink); font: inherit; transition: border-color .2s ease; }
+.form input:focus-visible, .form textarea:focus-visible { outline: none; border-color: var(--teal); box-shadow: 0 0 0 4px color-mix(in srgb, var(--teal) 22%, transparent); }
+.form input[aria-invalid] { border-color: var(--error); }
+.form .btn { margin-top: 14px; justify-content: center; }
+.form__help { min-height: 1.6em; font-size: .92rem; color: var(--muted); }
+@media (max-width: 60rem) { .book__grid { grid-template-columns: minmax(0, 1fr); } }
+
+footer { background: var(--band); color: var(--band-muted); border-top: 1px solid rgba(234,246,249,.1); padding-block: 28px; font-size: .92rem; }
+.foot { display: flex; flex-wrap: wrap; gap: 12px 28px; justify-content: space-between; align-items: center; }
+footer .logo { color: var(--band-ink); margin: 0; }
+
+/* Reveal (visible by default) */
+.js [data-reveal] { opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s cubic-bezier(.16,1,.3,1); }
+.js [data-reveal].in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .js [data-reveal] { opacity: 1; transform: none; transition: none; }
+  .float { animation: none; }
+  .rx, .doc__card { transition: none; }
+}
+</style>
+<script>document.documentElement.classList.add('js');</script>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M16 13H8M16 17H8M10 9H8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/></symbol>
+  <symbol id="i-thermo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></symbol>
+  <symbol id="i-drop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+  <symbol id="i-pill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
+</svg>
+
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="logo" href="#top"><span class="logo__mark"><svg><use href="#i-plus"/></svg></span>Shahid Clinic</a>
+    <nav aria-label="Main"><ul>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#doctors">Doctors</a></li>
+      <li><a href="#visits">Visits</a></li>
+      <li><a href="#faq">Questions</a></li>
+    </ul></nav>
+    <a class="btn btn--main" href="#book">Book now</a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap hero__grid">
+      <div>
+        <div class="badges">
+          <span class="badge badge--t"><svg><use href="#i-shield"/></svg>PMDC-registered doctors</span>
+          <span class="badge badge--c"><svg><use href="#i-file"/></svg>Signed e-prescriptions</span>
+        </div>
+        <h1>Your doctor, <span class="hl">one video call</span> away.</h1>
+        <p class="sub">See Dr Ahmad Shahid or Dr Khadija Shahid from home, anywhere in Pakistan.</p>
+        <div class="hero__cta">
+          <a class="btn btn--main" href="#book"><svg><use href="#i-video"/></svg>Book a video visit</a>
+          <a class="btn btn--ghost" href="#doctors">Meet the doctors</a>
+        </div>
+      </div>
+      <div class="stage" id="stage" aria-hidden="true">
+        <div class="stage__fallback"></div>
+        <div class="float float--a"><span class="float__ic"><svg><use href="#i-heart"/></svg></span><span><b>Care from home</b><small>No waiting room</small></span></div>
+        <div class="float float--b"><span class="float__ic"><svg><use href="#i-file"/></svg></span><span><b>e-Prescription</b><small>Sent after your visit</small></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how" aria-labelledby="how-t">
+    <div class="wrap">
+      <h2 id="how-t" data-reveal>Three steps to feeling better</h2>
+      <ol class="steps">
+        <li class="step" data-reveal><div class="cube"><svg><use href="#i-cal"/></svg></div><h3>Pick a time</h3><p>Choose a slot that suits you and tell us what is wrong.</p></li>
+        <li class="step" data-reveal><div class="cube"><svg><use href="#i-video"/></svg></div><h3>Talk to your doctor</h3><p>Join a video call from your phone. Phone call works too.</p></li>
+        <li class="step" data-reveal><div class="cube"><svg><use href="#i-file"/></svg></div><h3>Get your prescription</h3><p>A signed e-prescription arrives, ready for any pharmacy.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="treat" aria-labelledby="treat-t">
+    <div class="wrap">
+      <h2 id="treat-t" data-reveal>Common problems we can help with</h2>
+      <p class="sub" data-reveal>For everyday illnesses and long-term conditions that do not need a hands-on exam.</p>
+      <div class="bento">
+        <article class="tile tile--wide t1" data-reveal><span class="tile__ic"><svg><use href="#i-thermo"/></svg></span><div><h3>Fever, cough and flu</h3><p>Seasonal infections, sore throat, colds and body aches.</p></div></article>
+        <article class="tile t2" data-reveal><span class="tile__ic"><svg><use href="#i-heart"/></svg></span><div><h3>Blood pressure</h3><p>Readings, medicines and lifestyle advice.</p></div></article>
+        <article class="tile t3" data-reveal><span class="tile__ic"><svg><use href="#i-drop"/></svg></span><div><h3>Diabetes</h3><p>Sugar control and medicine reviews.</p></div></article>
+        <article class="tile t4" data-reveal><span class="tile__ic"><svg><use href="#i-pulse"/></svg></span><div><h3>Stomach trouble</h3><p>Acidity, diarrhoea, pain after eating.</p></div></article>
+        <article class="tile t5" data-reveal><span class="tile__ic"><svg><use href="#i-sun"/></svg></span><div><h3>Skin problems</h3><p>Rashes, allergies and acne.</p></div></article>
+        <article class="tile tile--wide t6" data-reveal><span class="tile__ic"><svg><use href="#i-file"/></svg></span><div><h3>Lab reports explained</h3><p>Send your test results and a doctor walks you through them in plain words.</p></div></article>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="rx-t">
+    <div class="wrap rx__grid">
+      <div>
+        <h2 id="rx-t" data-reveal>A real prescription, on your phone</h2>
+        <p class="sub" data-reveal>After your visit the doctor signs and sends your prescription. Show it at any pharmacy.</p>
+        <ul class="ticks" data-reveal>
+          <li><svg><use href="#i-check"/></svg>Doctor's name and PMDC number on every page</li>
+          <li><svg><use href="#i-check"/></svg>Clear dose and timing for each medicine</li>
+          <li><svg><use href="#i-check"/></svg>Kept in your record for repeat visits</li>
+        </ul>
+      </div>
+      <div class="rx-scene" data-tilt-scene>
+        <div class="rx" data-tilt aria-label="Example of an e-prescription" role="img">
+          <div class="rx__head">
+            <div><b>Dr Ahmad Shahid</b><br><small>MBBS, MD, RMP</small><br><small>PMDC 959983-01-M</small></div>
+            <div class="rx__sym">℞</div>
+          </div>
+          <div class="rx__lines">
+            <div class="rx__line"><span class="rx__dot" style="background: var(--coral)"></span><span class="rx__bar" style="width: 78%"></span></div>
+            <div class="rx__line"><span class="rx__dot" style="background: var(--teal)"></span><span class="rx__bar" style="width: 62%"></span></div>
+            <div class="rx__line"><span class="rx__dot" style="background: var(--emerald)"></span><span class="rx__bar" style="width: 70%"></span></div>
+          </div>
+          <div class="rx__foot"><span class="rx__meta">Example only</span><span class="rx__sign">A. Shahid</span></div>
+          <span class="rx__stamp">Signed</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="treat" id="doctors" aria-labelledby="doc-t">
+    <div class="wrap">
+      <h2 id="doc-t" data-reveal>Meet your doctors</h2>
+      <div class="docs">
+        <article class="doc d1" data-reveal data-tilt-scene>
+          <div class="doc__card" data-tilt data-tilt-soft>
+            <div class="doc__pic" aria-hidden="true">AS</div>
+            <div>
+              <h3>Dr Ahmad Shahid</h3>
+              <ul class="chips"><li>MBBS, gold medalist</li><li>MD</li><li>RMP</li><li>ECFMG certified (USA)</li></ul>
+              <p class="reg"><svg><use href="#i-shield"/></svg>PMDC registration <b>959983-01-M</b></p>
+            </div>
+          </div>
+        </article>
+        <article class="doc d2" data-reveal data-tilt-scene>
+          <div class="doc__card" data-tilt data-tilt-soft>
+            <div class="doc__pic" aria-hidden="true">KS</div>
+            <div>
+              <h3>Dr Khadija Shahid</h3>
+              <ul class="chips"><li>MBBS, gold medalist</li><li>MD</li><li>RMP</li><li>FCPS Part I</li><li>BSc Electrical Engineering</li></ul>
+              <p class="reg"><svg><use href="#i-shield"/></svg>PMDC registration <span class="fill">number to be added</span></p>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="visits" aria-labelledby="vis-t">
+    <div class="wrap">
+      <h2 id="vis-t" data-reveal>Choose your visit</h2>
+      <div class="visits">
+        <article class="visit" data-reveal><h3>New problem</h3><p>Something new is bothering you and you want a diagnosis.</p>
+          <dl><div><dt>Length</dt><dd><span class="fill">to be added</span></dd></div><div><dt>Fee</dt><dd><span class="fill">to be added</span></dd></div></dl></article>
+        <article class="visit" data-reveal><h3>Follow-up</h3><p>Check progress, go over results or adjust a treatment.</p>
+          <dl><div><dt>Length</dt><dd><span class="fill">to be added</span></dd></div><div><dt>Fee</dt><dd><span class="fill">to be added</span></dd></div></dl></article>
+        <article class="visit" data-reveal><h3>Repeat prescription</h3><p>Renew ongoing medicines after a short review.</p>
+          <dl><div><dt>Length</dt><dd><span class="fill">to be added</span></dd></div><div><dt>Fee</dt><dd><span class="fill">to be added</span></dd></div></dl></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="faq" id="faq" aria-labelledby="faq-t">
+    <div class="wrap faq__grid">
+      <div>
+        <h2 id="faq-t" data-reveal>Questions patients ask</h2>
+        <p class="sos" data-reveal><svg><use href="#i-alert"/></svg>Emergency? Do not book online. Call 1122 now.</p>
+      </div>
+      <div>
+        <details open><summary>Can you really prescribe online?</summary><p>Yes, for many common problems. After the video visit the doctor sends a signed e-prescription you can take to any pharmacy.</p></details>
+        <details><summary>What can't be prescribed online?</summary><p>Controlled medicines, such as strong painkillers and sleeping pills, need an in-person visit. So does anything that needs a physical exam.</p></details>
+        <details><summary>Do I need to install an app?</summary><p>No. The video link opens in your phone's browser. If your internet is weak, the doctor can call you instead.</p></details>
+        <details><summary>Who sees my details?</summary><p>Only your doctor. Your notes and prescriptions stay private and are never shared without your consent.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="book" id="book" aria-labelledby="book-t">
+    <div class="wrap book__grid">
+      <div>
+        <h2 id="book-t">Book your visit today</h2>
+        <p class="sub">Pick a time and leave your number. We call to confirm and send the video link.</p>
+        <div class="slots" role="group" aria-label="Choose a time">
+          <button class="slot" type="button">Today 15:30</button>
+          <button class="slot" type="button">Today 17:00</button>
+          <button class="slot" type="button">Tomorrow 10:30</button>
+          <button class="slot" type="button">Tomorrow 12:00</button>
+          <button class="slot" type="button">Thursday 11:00</button>
+        </div>
+        <p class="slots-note">Example times. Live booking connects in the next step.</p>
+      </div>
+      <form class="form" novalidate data-endpoint="">
+        <label for="f-name">Your name</label>
+        <input id="f-name" name="name" autocomplete="name" required>
+        <label for="f-phone">Mobile number</label>
+        <input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0300 1234567" pattern="[0-9+ \-]{10,15}" required>
+        <label for="f-time">Preferred time</label>
+        <input id="f-time" name="time" placeholder="Tap a time, or write one">
+        <label for="f-reason">What would you like help with?</label>
+        <textarea id="f-reason" name="reason" rows="3"></textarea>
+        <button class="btn btn--main" type="submit">Request my visit</button>
+        <p class="form__help" id="f-help" aria-live="polite"></p>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span class="logo"><span class="logo__mark"><svg><use href="#i-plus"/></svg></span>Shahid Clinic</span>
+    <span>Online visits do not replace emergency care. In an emergency call 1122.</span>
+    <span>© 2026 Shahid Clinic</span>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Reveal
+  const els = document.querySelectorAll('[data-reveal]');
+  if ('IntersectionObserver' in window && !reduce) {
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
+    els.forEach((el) => io.observe(el));
+    setTimeout(() => els.forEach((el) => el.classList.add('in')), 2500);
+  } else els.forEach((el) => el.classList.add('in'));
+
+  // Tilt cards
+  if (!reduce && matchMedia('(hover: hover)').matches) {
+    document.querySelectorAll('[data-tilt-scene]').forEach((scene) => {
+      const card = scene.querySelector('[data-tilt]'); const soft = card.hasAttribute('data-tilt-soft');
+      const k = soft ? 6 : 14;
+      scene.addEventListener('pointermove', (e) => { const r = scene.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width - .5, y = (e.clientY - r.top) / r.height - .5; card.style.setProperty('--ry', (x * k * 2) + 'deg'); card.style.setProperty('--rx', (-y * k) + 'deg'); });
+      scene.addEventListener('pointerleave', () => { card.style.removeProperty('--ry'); card.style.removeProperty('--rx'); });
+    });
+  }
+
+  // Slots + form
+  const time = document.getElementById('f-time');
+  document.querySelectorAll('.slot').forEach((b) => b.addEventListener('click', () => {
+    document.querySelectorAll('.slot').forEach((o) => o.setAttribute('aria-pressed', o === b));
+    time.value = b.textContent; document.getElementById('f-name').focus();
+  }));
+  const form = document.querySelector('.form'), help = document.getElementById('f-help');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    form.querySelectorAll('input[required]').forEach((i) => i.toggleAttribute('aria-invalid', !i.checkValidity()));
+    const bad = form.querySelector('input[aria-invalid]');
+    if (bad) { help.style.color = 'var(--error)'; help.textContent = bad.id === 'f-phone' ? 'Please write your mobile number like 0300 1234567.' : 'Please add your name.'; bad.setAttribute('aria-describedby', 'f-help'); bad.focus(); return; }
+    help.style.color = ''; help.textContent = 'Nothing was sent: this form is not connected yet.';
+  });
+
+  // 3D hero
+  const stage = document.getElementById('stage');
+  if (!window.THREE) return;
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); } catch (err) { return; }
+  document.documentElement.classList.add('has-3d');
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  stage.prepend(renderer.domElement);
+  const scene = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(38, 1, 0.1, 100); cam.position.set(0, 0, 13);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xbfe7ef, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(4, 6, 8); scene.add(key);
+  const rim = new THREE.PointLight(0x38bdf8, 1.2, 30); rim.position.set(-6, -3, 4); scene.add(rim);
+
+  const css = getComputedStyle(document.documentElement);
+  const col = (n) => new THREE.Color(css.getPropertyValue(n).trim());
+  const mat = (c, rough = .25) => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: .05 });
+  const root = new THREE.Group(); scene.add(root);
+
+  // DNA helix
+  const helix = new THREE.Group(); root.add(helix);
+  const sph = new THREE.SphereGeometry(0.22, 24, 24);
+  const rod = new THREE.CylinderGeometry(0.05, 0.05, 1, 10);
+  const palette = [col('--teal'), col('--coral'), col('--sun'), col('--emerald'), col('--sky'), col('--rose')];
+  const N = 22;
+  for (let i = 0; i < N; i++) {
+    const t = i / N * Math.PI * 4, y = (i - N / 2) * 0.36, r = 1.25;
+    const a = new THREE.Vector3(Math.cos(t) * r, y, Math.sin(t) * r), b = new THREE.Vector3(-Math.cos(t) * r, y, -Math.sin(t) * r);
+    const ma = new THREE.Mesh(sph, mat(palette[i % 6])); ma.position.copy(a); helix.add(ma);
+    const mb = new THREE.Mesh(sph, mat(palette[(i + 3) % 6])); mb.position.copy(b); helix.add(mb);
+    const link = new THREE.Mesh(rod, mat(new THREE.Color(0xdfeff3), .6)); link.position.set(0, y, 0); link.scale.y = r * 2; link.rotation.z = Math.PI / 2; link.rotation.y = -t; helix.add(link);
+  }
+  helix.rotation.z = 0.35;
+
+  // Capsules
+  const capsule = (c1, c2) => {
+    const g = new THREE.Group(), L = 0.9, R = 0.38;
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(R, R, L / 2, 32), mat(c1, .2)); top.position.y = L / 4;
+    const bot = new THREE.Mesh(new THREE.CylinderGeometry(R, R, L / 2, 32), mat(c2, .2)); bot.position.y = -L / 4;
+    const capT = new THREE.Mesh(new THREE.SphereGeometry(R, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), mat(c1, .2)); capT.position.y = L / 2;
+    const capB = new THREE.Mesh(new THREE.SphereGeometry(R, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), mat(c2, .2)); capB.position.y = -L / 2;
+    g.add(top, bot, capT, capB); return g;
+  };
+  // Medical cross
+  const cross = (c) => { const g = new THREE.Group(), m = mat(c, .3); const a = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 0.5), m), b = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 0.5), m); g.add(a, b); return g; };
+
+  const floaters = [
+    { o: capsule(palette[1], new THREE.Color(0xffffff)), p: [-3.1, 2.3, 0.5] },
+    { o: capsule(palette[0], palette[2]), p: [3.2, -2.2, 0.8] },
+    { o: capsule(palette[3], new THREE.Color(0xffffff)), p: [2.8, 2.9, -1] },
+    { o: cross(palette[1]), p: [-2.9, -2.6, 0.6] },
+    { o: cross(palette[0]), p: [3.4, 0.4, -1.5], s: .6 },
+    { o: new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.16, 20, 48), mat(palette[2], .25)), p: [-3.4, 0.2, -1] },
+    { o: new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 0), mat(palette[5], .35)), p: [0.6, 3.4, -1.2] },
+    { o: new THREE.Mesh(new THREE.IcosahedronGeometry(0.32, 0), mat(palette[4], .35)), p: [-0.8, -3.5, 0] },
+  ];
+  floaters.forEach((f, i) => { f.o.position.set(...f.p); if (f.s) f.o.scale.setScalar(f.s); f.o.rotation.set(i, i * .7, i * .3); f.base = f.p[1]; f.ph = i * 1.3; root.add(f.o); });
+
+  const size = () => { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); };
+  size(); addEventListener("resize", () => { size(); if (reduce) draw(1.2); });
+
+  let mx = 0, my = 0;
+  addEventListener('pointermove', (e) => { mx = e.clientX / innerWidth - .5; my = e.clientY / innerHeight - .5; });
+
+  let visible = true, t0 = performance.now();
+  new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible && !reduce) requestAnimationFrame(loop); }).observe(stage);
+  function draw(t) {
+    helix.rotation.y = t * 0.35;
+    floaters.forEach((f) => { f.o.rotation.x += 0.004; f.o.rotation.y += 0.006; f.o.position.y = f.base + Math.sin(t * 0.9 + f.ph) * 0.18; });
+    root.rotation.y += ((mx * 0.5) - root.rotation.y) * 0.05;
+    root.rotation.x += ((my * 0.3) - root.rotation.x) * 0.05;
+    renderer.render(scene, cam);
+  }
+  function loop(now) { if (!visible) return; draw((now - t0) / 1000); requestAnimationFrame(loop); }
+  if (reduce) draw(1.2); else requestAnimationFrame(loop);
+})();
+</script>
+</body></html>
