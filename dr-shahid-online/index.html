@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shahid Clinic Online</title>
+<meta name="description" content="Video consultations and e-prescriptions with Dr Ahmad Shahid and Dr Khadija Shahid, PMDC-registered doctors in Pakistan.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Young+Serif&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav container">
+  <a class="wordmark" href="#top">Shahid Clinic <span>Online</span></a>
+  <nav aria-label="Main">
+    <ul class="nav__links">
+      <li><a href="#doctors">Doctors</a></li>
+      <li><a href="#visits">Visits</a></li>
+      <li><a href="#questions">Questions</a></li>
+    </ul>
+  </nav>
+  <a class="pill pill--nav" href="#book">Book a visit</a>
+</header>
+
+<main id="main">
+  <!-- Hero: Ledge -->
+  <section class="hero container" id="top">
+    <div class="hero__text">
+      <h1>See a doctor today, without leaving home.</h1>
+      <p class="lead">Video visits and e-prescriptions from two PMDC-registered doctors.</p>
+      <div class="hero__actions">
+        <a class="cap" href="#book"><span class="cap__well" aria-hidden="true"><span class="cap__dome"></span></span><span class="cap__label">Book a video visit<small>Pick a time below</small></span></a>
+        <a class="link" href="#doctors">Meet the doctors</a>
+      </div>
+    </div>
+
+    <div class="slots" aria-labelledby="slots-title">
+      <div class="slots__head">
+        <h2 id="slots-title" class="slots__title">Next free times</h2>
+        <p class="slots__note">Pakistan time</p>
+      </div>
+      <div class="sheet">
+        <div class="sheet__ruler" aria-hidden="true"><span>10:00</span><span>12:00</span><span>14:00</span><span>16:00</span><span>18:00</span></div>
+        <div class="sheet__rows" role="group" aria-label="Choose a time">
+          <div class="row"><span class="row__day">Today</span><div class="row__lane">
+            <button class="clip clip--a" style="--at:46%" data-time="Today, 15:30">15:30</button>
+            <button class="clip clip--a" style="--at:66%" data-time="Today, 17:00">17:00</button>
+          </div></div>
+          <div class="row"><span class="row__day">Tomorrow</span><div class="row__lane">
+            <button class="clip clip--k" style="--at:6%" data-time="Tomorrow, 10:30">10:30</button>
+            <button class="clip clip--k" style="--at:26%" data-time="Tomorrow, 12:00">12:00</button>
+            <button class="clip clip--a" style="--at:56%" data-time="Tomorrow, 16:00">16:00</button>
+          </div></div>
+          <div class="row"><span class="row__day">Thursday</span><div class="row__lane">
+            <button class="clip clip--k" style="--at:16%" data-time="Thursday, 11:00">11:00</button>
+            <button class="clip clip--a" style="--at:76%" data-time="Thursday, 18:00">18:00</button>
+          </div></div>
+        </div>
+        <ul class="sheet__key">
+          <li><span class="key key--a" aria-hidden="true"></span>Dr Ahmad Shahid</li>
+          <li><span class="key key--k" aria-hidden="true"></span>Dr Khadija Shahid</li>
+        </ul>
+      </div>
+      <p class="slots__fine">Sample times. Live booking connects in the next step.</p>
+    </div>
+  </section>
+
+  <!-- Doctors -->
+  <section class="doctors container" id="doctors" aria-labelledby="doctors-title">
+    <h2 id="doctors-title">Who will you be speaking to?</h2>
+    <div class="doctors__grid">
+      <article class="doc">
+        <figure class="doc__photo" data-slot="dr-ahmad" data-alt="Portrait of Dr Ahmad Shahid"><span class="doc__initials" aria-hidden="true">AS</span></figure>
+        <div class="doc__body">
+          <h3>Dr Ahmad Shahid</h3>
+          <ul class="creds">
+            <li>MBBS, gold medalist</li>
+            <li>MD</li>
+            <li>RMP</li>
+            <li>ECFMG certified (USA)</li>
+          </ul>
+          <p class="reg">PMDC registration <span class="num">959983-01-M</span></p>
+        </div>
+      </article>
+      <article class="doc">
+        <figure class="doc__photo" data-slot="dr-khadija" data-alt="Portrait of Dr Khadija Shahid"><span class="doc__initials" aria-hidden="true">KS</span></figure>
+        <div class="doc__body">
+          <h3>Dr Khadija Shahid</h3>
+          <ul class="creds">
+            <li>MBBS, gold medalist</li>
+            <li>MD</li>
+            <li>RMP</li>
+            <li>FCPS Part I</li>
+            <li>BSc Electrical Engineering</li>
+          </ul>
+          <p class="reg">PMDC registration <span class="fill">number to be added</span></p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- Visits: switcher -->
+  <section class="visits container" id="visits" aria-labelledby="visits-title">
+    <div class="visits__intro">
+      <h2 id="visits-title">What can we help with?</h2>
+      <p>Choose the kind of visit. Each one ends with clear advice, and a prescription if you need one.</p>
+    </div>
+    <div class="switch" data-switch>
+      <div class="tabs" role="tablist" aria-label="Kinds of visit">
+        <button role="tab" id="t1" aria-controls="p1" aria-selected="true">New problem</button>
+        <button role="tab" id="t2" aria-controls="p2" aria-selected="false" tabindex="-1">Follow-up</button>
+        <button role="tab" id="t3" aria-controls="p3" aria-selected="false" tabindex="-1">Repeat prescription</button>
+      </div>
+      <div class="panel" role="tabpanel" id="p1" aria-labelledby="t1">
+        <p class="panel__lede">A fever, a cough, a rash, stomach trouble, blood pressure or sugar readings that worry you.</p>
+        <dl class="facts">
+          <div><dt>Length</dt><dd><span class="fill">minutes to be added</span></dd></div>
+          <div><dt>Fee</dt><dd><span class="fill">fee to be added</span></dd></div>
+          <div><dt>You receive</dt><dd>Advice, and an e-prescription if needed</dd></div>
+        </dl>
+      </div>
+      <div class="panel" role="tabpanel" id="p2" aria-labelledby="t2" hidden>
+        <p class="panel__lede">Check in after a visit, go over test results, or adjust a treatment that is not working.</p>
+        <dl class="facts">
+          <div><dt>Length</dt><dd><span class="fill">minutes to be added</span></dd></div>
+          <div><dt>Fee</dt><dd><span class="fill">fee to be added</span></dd></div>
+          <div><dt>Bring</dt><dd>Your reports and current medicines</dd></div>
+        </dl>
+      </div>
+      <div class="panel" role="tabpanel" id="p3" aria-labelledby="t3" hidden>
+        <p class="panel__lede">Ongoing medicines for a condition a doctor has already diagnosed, reviewed before renewal.</p>
+        <dl class="facts">
+          <div><dt>Length</dt><dd><span class="fill">minutes to be added</span></dd></div>
+          <div><dt>Fee</dt><dd><span class="fill">fee to be added</span></dd></div>
+          <div><dt>Bring</dt><dd>Your last prescription</dd></div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- Questions: the conversational spine -->
+  <section class="faq container" id="questions" aria-labelledby="faq-title">
+    <h2 id="faq-title">Questions patients ask first</h2>
+    <div class="faq__list">
+      <details open>
+        <summary>Can you really prescribe online?</summary>
+        <p>Yes, for many common problems. After the video visit the doctor sends a signed e-prescription you can take to any pharmacy.</p>
+      </details>
+      <details>
+        <summary>Is there anything you will not prescribe online?</summary>
+        <p>Controlled medicines, such as strong painkillers and sleeping pills, need an in-person visit. So does anything that needs a physical examination.</p>
+      </details>
+      <details>
+        <summary>What if it is an emergency?</summary>
+        <p>Do not book a video visit. Call 1122 or go to the nearest emergency department now.</p>
+      </details>
+      <details>
+        <summary>Who sees my details?</summary>
+        <p>Only your doctor. Your notes and prescriptions are kept private and are never shared without your consent.</p>
+      </details>
+    </div>
+  </section>
+
+  <!-- Hours -->
+  <section class="hours container" aria-labelledby="hours-title">
+    <h2 id="hours-title">When can I see a doctor?</h2>
+    <dl class="hours__list">
+      <div><dt>Consultation hours</dt><dd><span class="fill">days and hours to be added</span></dd></div>
+      <div><dt>How</dt><dd>Video call, or phone if your connection is weak</dd></div>
+      <div><dt>Where</dt><dd>Patients anywhere in Pakistan</dd></div>
+    </dl>
+  </section>
+</main>
+
+<!-- Letter close -->
+<footer class="close" id="book">
+  <div class="container close__grid">
+    <div class="letter">
+      <h2>Tell us what is wrong. We will call you back.</h2>
+      <p>Leave your number and a few words. We confirm your time and send the video link.</p>
+      <p class="letter__sign">Dr Ahmad Shahid and Dr Khadija Shahid</p>
+    </div>
+    <form class="book" data-endpoint="" novalidate>
+      <label for="name">Your name</label>
+      <input id="name" name="name" autocomplete="name" required>
+      <label for="phone">Mobile number</label>
+      <input id="phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" pattern="[0-9+ \-]{10,15}" placeholder="03xx xxxxxxx" required>
+      <label for="time">Preferred time</label>
+      <input id="time" name="time" placeholder="Pick one above, or write a time">
+      <label for="reason">What would you like help with?</label>
+      <textarea id="reason" name="reason" rows="3"></textarea>
+      <button class="btn" type="submit">Request a visit</button>
+      <p class="book__help" id="book-help" aria-live="polite"></p>
+    </form>
+  </div>
+  <div class="container foot">
+    <p class="wordmark">Shahid Clinic <span>Online</span></p>
+    <p>Online visits do not replace emergency care. In an emergency call 1122.</p>
+    <p>© 2026 Shahid Clinic Online</p>
+  </div>
+</footer>
+
+<script>
+// Slot buttons fill the form's time
+document.querySelectorAll('.clip').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.clip[aria-pressed]').forEach((o) => o.removeAttribute('aria-pressed'));
+  b.setAttribute('aria-pressed', 'true');
+  const t = document.getElementById('time'); t.value = b.dataset.time;
+  document.getElementById('book').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  setTimeout(() => document.getElementById('name').focus({ preventScroll: true }), 400);
+}));
+// Tabs
+document.querySelectorAll('[data-switch]').forEach((sw) => {
+  const tabs = [...sw.querySelectorAll('[role=tab]')];
+  const pick = (t) => tabs.forEach((x) => { const on = x === t; x.setAttribute('aria-selected', on); x.tabIndex = on ? 0 : -1; document.getElementById(x.getAttribute('aria-controls')).hidden = !on; });
+  tabs.forEach((t, i) => { t.addEventListener('click', () => pick(t)); t.addEventListener('keydown', (e) => { const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (d) { const n = tabs[(i + d + tabs.length) % tabs.length]; pick(n); n.focus(); } }); });
+});
+// Form posts nowhere yet
+document.querySelectorAll('form[data-endpoint]').forEach((form) => {
+  const help = form.querySelector('[aria-live]');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const bad = [...form.querySelectorAll('[required]')].find((i) => !i.checkValidity());
+    form.querySelectorAll('input').forEach((i) => i.toggleAttribute('aria-invalid', !i.checkValidity()));
+    if (bad) { help.textContent = bad.id === 'phone' ? 'Write your mobile number like 0300 1234567.' : 'Please add your name.'; bad.setAttribute('aria-describedby', help.id); bad.focus(); return; }
+    if (!form.dataset.endpoint) { help.textContent = 'Nothing was sent: this form is not connected yet.'; return; }
+    fetch(form.dataset.endpoint, { method: 'POST', body: new FormData(form) })
+      .then((r) => { help.textContent = r.ok ? 'Thank you. We will call you to confirm.' : 'That did not go through. Try again in a minute.'; })
+      .catch(() => { help.textContent = 'That did not go through. Try again in a minute.'; });
+  });
+});
+</script>
+<script>window.hallmarkSlots = (m) => { for (const [k, v] of Object.entries(m)) { const s = document.querySelector(`[data-slot="${k}"]`); if (!s) continue; const im = new Image(); im.src = typeof v === 'string' ? v : v.src; im.alt = (typeof v === 'object' && v.alt) || s.dataset.alt || ''; s.querySelectorAll(':scope > img').forEach((o) => o.remove()); s.prepend(im); } };
+document.querySelectorAll('[data-slot] img').forEach((i) => { if (i.complete && !i.naturalWidth) i.remove(); else i.addEventListener('error', () => i.remove(), { once: true }); });</script>
+</body>
+</html>
