@@ -275,6 +275,33 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
 .form { box-shadow: inset 0 0 0 1px var(--line), var(--shadow-lift); }
 .form .btn--dark, .doc .btn--dark { background: var(--forest-2); color: #FFFFFF; }
 
+/* Overseas promotion */
+.topbar { background: var(--forest); color: #FFFFFF; font-size: .9rem; }
+.topbar__in { display: flex; align-items: center; justify-content: center; gap: 10px 14px; min-height: 44px; padding-block: 8px; flex-wrap: wrap; text-align: center; }
+.topbar svg { width: 18px; height: 18px; color: var(--sun); flex: none; }
+.topbar p { color: rgba(255,255,255,.88); }
+.topbar b { color: #FFFFFF; font-weight: 700; }
+.topbar__short { display: none; }
+@media (max-width: 48rem) { .topbar__long { display: none; } .topbar__short { display: block; font-weight: 600; } .topbar__in { flex-wrap: nowrap; justify-content: space-between; text-align: start; } .topbar__cta { flex: none; } }
+.topbar__cta { display: inline-flex; align-items: center; min-height: 32px; padding: 0 14px; border-radius: 999px; background: var(--sun); color: #2A1E00; font: 700 .85rem/1 var(--display); text-decoration: none; transition: transform .15s ease; }
+.topbar__cta:hover { transform: translateY(-1px); }
+.ringtag { position: absolute; z-index: 3; left: 0; top: 0; transform: translate(4%, 18%); display: flex; align-items: center; gap: 10px; padding: 8px 14px 8px 8px; border-radius: 999px; background: var(--card); color: var(--ink); text-decoration: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--sun) 70%, transparent), 0 14px 30px -14px rgba(23,23,61,.45); font-size: .8rem; line-height: 1.25; white-space: nowrap; transition: box-shadow .2s ease; will-change: transform; }
+.ringtag:hover { box-shadow: 0 0 0 2px var(--sun), 0 16px 34px -14px rgba(23,23,61,.5); }
+.ringtag b { display: block; font: 700 .9rem/1.25 var(--display); color: var(--ink); }
+.ringtag > span:last-child > span { color: var(--ink-2); }
+.ringtag__ic { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(140deg, var(--sun), #F59E0B); color: #3A2600; flex: none; }
+.ringtag__ic svg { width: 18px; height: 18px; }
+.ringtag::after { content: ""; position: absolute; right: -7px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; background: var(--sun); box-shadow: 0 0 0 3px var(--card); }
+@media (max-width: 60rem) { .ringtag { position: relative; transform: none !important; margin: 8px auto 0; width: fit-content; } .ringtag::after { display: none; } }
+html[lang="ur"] .topbar, html[lang="ur"] .ringtag b, html[lang="ur"] .topbar__cta { font-family: "Noto Nastaliq Urdu", serif; letter-spacing: 0; line-height: 2; }
+html[lang="ur"] .ringtag { line-height: 1.9; }
+html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
+.famfields { display: grid; gap: 8px; padding: 12px; margin-bottom: 4px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--sun) 14%, var(--card)); }
+.famfields[hidden] { display: none; }
+.famfields label { font: 700 .92rem/1.2 var(--display); }
+.famfields input { min-height: 46px; padding: 10px 14px; border: 1.5px solid var(--line); border-radius: var(--r-sm); background: var(--card); color: var(--ink); font: inherit; }
+.famfields input:focus-visible { outline: none; border-color: var(--lav); box-shadow: 0 0 0 4px color-mix(in srgb, var(--lav) 25%, transparent); }
+
 /* Reveal: visible by default */
 .js [data-reveal] { opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s cubic-bezier(.16,1,.3,1); }
 .js [data-reveal].in { opacity: 1; transform: none; }
@@ -313,9 +340,18 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
   <symbol id="i-scale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1ZM2 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1ZM7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></symbol>
   <symbol id="i-leaf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
 </svg>
 
+<div class="topbar">
+  <div class="wrap topbar__in">
+    <svg aria-hidden="true"><use href="#i-globe"/></svg>
+    <p class="topbar__long"><b data-i18n="ob.bar1">Overseas Pakistanis:</b> <span data-i18n="ob.bar2">book a doctor's video visit for your parents or family in Pakistan.</span></p>
+    <p class="topbar__short" data-i18n="ob.short">Living abroad? Book for family in Pakistan.</p>
+    <a class="topbar__cta" href="#book" data-family data-i18n="ob.cta">Book for family</a>
+  </div>
+</div>
 <header class="nav">
   <div class="wrap nav__in">
     <a class="logo" href="#top"><span class="mark"><svg viewBox="0 0 48 48"><use href="#i-logo"/></svg></span><span>Sunchaser <b>Care</b></span></a>
@@ -352,9 +388,10 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
             <li><span class="trust__ic t-c"><svg><use href="#i-shield"/></svg></span><span data-i18n="hero.t3">Anywhere in Pakistan</span></li>
           </ul>
         </div>
-        <div class="stage" id="stage" aria-hidden="true">
+        <div class="stage" id="stage">
           <div class="stage__fb"></div>
-          <div class="glass glass--b"><span class="glass__ic"><svg><use href="#i-pulse"/></svg></span><span><b data-i18n="glass.b">Video consultation</b><span data-i18n="glass.s">Speak directly with your doctor</span></span></div>
+          <a class="ringtag" href="#book" data-family id="ringtag" aria-hidden="false"><span class="ringtag__ic"><svg><use href="#i-globe"/></svg></span><span><b data-i18n="ob.tag1">Living abroad?</b><span data-i18n="ob.tag2">Book for your family in Pakistan</span></span></a>
+          <div class="glass glass--b" aria-hidden="true"><span class="glass__ic"><svg><use href="#i-pulse"/></svg></span><span><b data-i18n="glass.b">Video consultation</b><span data-i18n="glass.s">Speak directly with your doctor</span></span></div>
         </div>
       </div>
     </div>
@@ -454,6 +491,7 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
         <h2 data-reveal data-i18n="faq.h2">Before you book</h2>
       </div>
       <div>
+        <details><summary data-i18n="qa">I live abroad. Can I book for my parents?</summary><p data-i18n="qaa">Yes. You can book and join the video call from any country, as long as the patient is in Pakistan. Our doctors treat patients who are located in Pakistan.</p></details>
         <details open><summary data-i18n="q0">How much does a visit cost?</summary><p data-i18n="q0a">An online consultation costs Rs 1,000 with either Dr Muhammad Ahmad Shahid or Dr Khadija Shahid.</p></details>
         <details><summary data-i18n="q1">Will I get a prescription?</summary><p data-i18n="q1a">If the doctor decides you need medicine, you receive a signed e-prescription after the visit. Controlled medicines need an in-person visit.</p></details>
         <details><summary data-i18n="q2">Do I need to install an app?</summary><p data-i18n="q2a">No. The video link opens in your phone's browser. If your internet is weak, the doctor can call you instead.</p></details>
@@ -486,6 +524,18 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
               <input type="radio" name="doctor" id="dr-k" value="Dr Khadija Shahid"><label for="dr-k" data-i18n="f.dk">Dr Khadija</label>
               </div>
             </fieldset>
+            <fieldset class="seg"><legend data-i18n="f.for">Who is the visit for?</legend>
+              <div class="seg__opts">
+              <input type="radio" name="for" id="for-me" value="me" checked><label for="for-me" data-i18n="f.me">Me, in Pakistan</label>
+              <input type="radio" name="for" id="for-fam" value="family"><label for="for-fam" data-i18n="f.fam">Family in Pakistan</label>
+              </div>
+            </fieldset>
+            <div class="famfields" id="famfields" hidden>
+              <label for="f-patient" data-i18n="f.patient">Patient's name</label>
+              <input id="f-patient" name="patient" autocomplete="off">
+              <label for="f-country" data-i18n="f.country">Your country</label>
+              <input id="f-country" name="country" autocomplete="country-name" placeholder="UK, UAE, Saudi Arabia, USA..." data-i18n-ph="f.countryph">
+            </div>
             <label for="f-name" data-i18n="f.name">Your name</label>
             <input id="f-name" name="name" autocomplete="name" required>
             <label for="f-phone" data-i18n="f.phone">Mobile number</label>
@@ -516,7 +566,7 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Language: English / Urdu
-  const UR = {"nav.book": "وقت بُک کریں", "hero.chip": "آن لائن ڈاکٹر مشاورت", "hero.h1": "ڈاکٹر سے ملیں، <span>گھر بیٹھے۔</span>", "hero.lede": "مستند ڈاکٹر سے بات کریں اور صحیح مشورہ حاصل کریں، <em>انتظار گاہ کے بغیر۔</em>", "hero.meet": "ڈاکٹرز سے ملیں", "hero.docs": "ڈاکٹر محمد احمد شاہد اور ڈاکٹر خدیجہ شاہد", "hero.docs2": "ایم بی بی ایس گولڈ میڈلسٹ، پی ایم ڈی سی رجسٹرڈ", "hero.t1": "ویڈیو یا فون", "hero.t2": "دستخط شدہ ای-نسخہ", "hero.t3": "پورے پاکستان میں", "glass.b": "ویڈیو مشاورت", "glass.s": "اپنے ڈاکٹر سے براہِ راست بات کریں", "nav.doctors": "ہمارے ڈاکٹرز", "nav.areas": "علاج کے شعبے", "nav.how": "طریقہ کار", "nav.faq": "سوالات", "doc.h2": "اپنے ڈاکٹرز سے ملیں", "doc.sub": "ہر ڈاکٹر کی تعلیم اور تجربہ دیکھیں اور اپنی پسند کا ڈاکٹر منتخب کریں۔", "doc.role1": "جنرل فزیشن", "doc.name1": "ڈاکٹر محمد احمد شاہد", "doc.sel1": "ڈاکٹر احمد کو منتخب کریں", "doc.role2": "ڈاکٹر", "doc.name2": "ڈاکٹر خدیجہ شاہد", "doc.sel2": "ڈاکٹر خدیجہ کو منتخب کریں", "doc.reg": "پی ایم ڈی سی رجسٹریشن", "doc.tba": "جلد شامل کیا جائے گا", "area.k": "جنرل پریکٹس", "area.h2": "آپ کن مسائل پر بات کر سکتے ہیں", "area.sub": "روزمرہ بیماریاں اور دیرینہ امراض، ویڈیو یا فون پر۔", "a1": "بخار، فلو، کھانسی اور انفیکشن", "a2": "شوگر، بلڈ پریشر اور کولیسٹرول", "a3": "دمہ اور سانس کی بیماریاں", "a4": "معدے اور ہاضمے کے مسائل", "a5": "گردے اور پیشاب کے مسائل", "a6": "تھائیرائیڈ اور میٹابولک امراض", "a7": "موٹاپا اور وزن پر کنٹرول", "a8": "بچاؤ اور صحت مند طرزِ زندگی", "how.h2": "آپ کی آن لائن ملاقات", "s1h": "ڈاکٹر اور وقت منتخب کریں", "s1p": "اپنا ڈاکٹر چنیں، پھر اپنی سہولت کا وقت۔", "s2h": "ویڈیو کال میں شامل ہوں", "s2p": "اپنے موبائل سے ڈاکٹر سے بات کریں۔ عام فون کال بھی ہو سکتی ہے۔", "s3h": "اگلے اقدامات حاصل کریں", "s3p": "مشورہ، فالو اپ کا منصوبہ، اور ضرورت ہو تو دستخط شدہ ای-نسخہ۔", "rx.ex": "صرف نمونہ", "rx.signed": "دستخط شدہ", "faq.h2": "بُکنگ سے پہلے", "faq.sos": "ایمرجنسی؟ آن لائن بُک نہ کریں۔ فوراً 1122 پر کال کریں۔", "q1": "کیا مجھے نسخہ ملے گا؟", "q1a": "اگر ڈاکٹر سمجھیں کہ آپ کو دوا کی ضرورت ہے تو ملاقات کے بعد آپ کو دستخط شدہ ای-نسخہ ملے گا۔ کنٹرولڈ ادویات کے لیے خود آ کر معائنہ ضروری ہے۔", "q2": "کیا مجھے کوئی ایپ انسٹال کرنی ہوگی؟", "q2a": "نہیں۔ ویڈیو لنک آپ کے موبائل براؤزر میں کھل جاتا ہے۔ اگر انٹرنیٹ کمزور ہو تو ڈاکٹر آپ کو فون کر سکتے ہیں۔", "q3": "کون سے مسائل آن لائن کے لیے مناسب نہیں؟", "q3a": "جن مسائل میں جسمانی معائنہ، کوئی طبی عمل یا فوری علاج درکار ہو۔ اگر خود آ کر دکھانا ضروری ہو تو ڈاکٹر آپ کو بتا دیں گے۔", "q4": "میری معلومات کون دیکھتا ہے؟", "q4a": "صرف آپ کا ڈاکٹر۔ آپ کے نوٹس اور نسخے راز میں رہتے ہیں اور آپ کی اجازت کے بغیر کسی کو نہیں دیے جاتے۔", "book.h2": "اپنی ملاقات بُک کریں", "book.sub": "ڈاکٹر اور وقت منتخب کریں، اپنا نمبر دیں، ہم تصدیق کے لیے کال کریں گے۔", "sl1": "آج 15:30", "sl2": "آج 17:00", "sl3": "کل 10:30", "sl4": "کل 12:00", "sl5": "جمعرات 11:00", "book.note": "نمونے کے اوقات۔ براہِ راست بُکنگ جلد شروع ہوگی۔", "f.doc": "ڈاکٹر", "f.da": "ڈاکٹر احمد", "f.dk": "ڈاکٹر خدیجہ", "f.name": "آپ کا نام", "f.phone": "موبائل نمبر", "f.time": "پسندیدہ وقت", "f.reason": "آپ کو کس مسئلے میں مدد چاہیے؟", "f.submit": "ملاقات کی درخواست بھیجیں", "f.timeph": "اوپر سے وقت چنیں یا لکھیں", "m.phone": "براہِ کرم اپنا موبائل نمبر اس طرح لکھیں: 0300 1234567", "m.name": "براہِ کرم اپنا نام لکھیں۔", "m.none": "کچھ نہیں بھیجا گیا: آن لائن بُکنگ ابھی منسلک نہیں ہے۔", "foot.note": "آن لائن ملاقات ایمرجنسی علاج کا متبادل نہیں۔ ایمرجنسی میں 1122 پر کال کریں۔", "foot.c": "© 2026 سن چیزر کیئر، پاکستان", "fee.l": "آن لائن مشاورت", "fee.v": "1,000 روپے", "fee.book": "فی آن لائن مشاورت، دونوں ڈاکٹرز کے لیے", "q0": "ملاقات کی فیس کتنی ہے؟", "q0a": "ڈاکٹر محمد احمد شاہد یا ڈاکٹر خدیجہ شاہد، دونوں کے ساتھ آن لائن مشاورت کی فیس 1,000 روپے ہے۔"};
+  const UR = {"nav.book": "وقت بُک کریں", "hero.chip": "آن لائن ڈاکٹر مشاورت", "hero.h1": "ڈاکٹر سے ملیں، <span>گھر بیٹھے۔</span>", "hero.lede": "مستند ڈاکٹر سے بات کریں اور صحیح مشورہ حاصل کریں، <em>انتظار گاہ کے بغیر۔</em>", "hero.meet": "ڈاکٹرز سے ملیں", "hero.docs": "ڈاکٹر محمد احمد شاہد اور ڈاکٹر خدیجہ شاہد", "hero.docs2": "ایم بی بی ایس گولڈ میڈلسٹ، پی ایم ڈی سی رجسٹرڈ", "hero.t1": "ویڈیو یا فون", "hero.t2": "دستخط شدہ ای-نسخہ", "hero.t3": "پورے پاکستان میں", "glass.b": "ویڈیو مشاورت", "glass.s": "اپنے ڈاکٹر سے براہِ راست بات کریں", "nav.doctors": "ہمارے ڈاکٹرز", "nav.areas": "علاج کے شعبے", "nav.how": "طریقہ کار", "nav.faq": "سوالات", "doc.h2": "اپنے ڈاکٹرز سے ملیں", "doc.sub": "ہر ڈاکٹر کی تعلیم اور تجربہ دیکھیں اور اپنی پسند کا ڈاکٹر منتخب کریں۔", "doc.role1": "جنرل فزیشن", "doc.name1": "ڈاکٹر محمد احمد شاہد", "doc.sel1": "ڈاکٹر احمد کو منتخب کریں", "doc.role2": "ڈاکٹر", "doc.name2": "ڈاکٹر خدیجہ شاہد", "doc.sel2": "ڈاکٹر خدیجہ کو منتخب کریں", "doc.reg": "پی ایم ڈی سی رجسٹریشن", "doc.tba": "جلد شامل کیا جائے گا", "area.k": "جنرل پریکٹس", "area.h2": "آپ کن مسائل پر بات کر سکتے ہیں", "area.sub": "روزمرہ بیماریاں اور دیرینہ امراض، ویڈیو یا فون پر۔", "a1": "بخار، فلو، کھانسی اور انفیکشن", "a2": "شوگر، بلڈ پریشر اور کولیسٹرول", "a3": "دمہ اور سانس کی بیماریاں", "a4": "معدے اور ہاضمے کے مسائل", "a5": "گردے اور پیشاب کے مسائل", "a6": "تھائیرائیڈ اور میٹابولک امراض", "a7": "موٹاپا اور وزن پر کنٹرول", "a8": "بچاؤ اور صحت مند طرزِ زندگی", "how.h2": "آپ کی آن لائن ملاقات", "s1h": "ڈاکٹر اور وقت منتخب کریں", "s1p": "اپنا ڈاکٹر چنیں، پھر اپنی سہولت کا وقت۔", "s2h": "ویڈیو کال میں شامل ہوں", "s2p": "اپنے موبائل سے ڈاکٹر سے بات کریں۔ عام فون کال بھی ہو سکتی ہے۔", "s3h": "اگلے اقدامات حاصل کریں", "s3p": "مشورہ، فالو اپ کا منصوبہ، اور ضرورت ہو تو دستخط شدہ ای-نسخہ۔", "rx.ex": "صرف نمونہ", "rx.signed": "دستخط شدہ", "faq.h2": "بُکنگ سے پہلے", "faq.sos": "ایمرجنسی؟ آن لائن بُک نہ کریں۔ فوراً 1122 پر کال کریں۔", "q1": "کیا مجھے نسخہ ملے گا؟", "q1a": "اگر ڈاکٹر سمجھیں کہ آپ کو دوا کی ضرورت ہے تو ملاقات کے بعد آپ کو دستخط شدہ ای-نسخہ ملے گا۔ کنٹرولڈ ادویات کے لیے خود آ کر معائنہ ضروری ہے۔", "q2": "کیا مجھے کوئی ایپ انسٹال کرنی ہوگی؟", "q2a": "نہیں۔ ویڈیو لنک آپ کے موبائل براؤزر میں کھل جاتا ہے۔ اگر انٹرنیٹ کمزور ہو تو ڈاکٹر آپ کو فون کر سکتے ہیں۔", "q3": "کون سے مسائل آن لائن کے لیے مناسب نہیں؟", "q3a": "جن مسائل میں جسمانی معائنہ، کوئی طبی عمل یا فوری علاج درکار ہو۔ اگر خود آ کر دکھانا ضروری ہو تو ڈاکٹر آپ کو بتا دیں گے۔", "q4": "میری معلومات کون دیکھتا ہے؟", "q4a": "صرف آپ کا ڈاکٹر۔ آپ کے نوٹس اور نسخے راز میں رہتے ہیں اور آپ کی اجازت کے بغیر کسی کو نہیں دیے جاتے۔", "book.h2": "اپنی ملاقات بُک کریں", "book.sub": "ڈاکٹر اور وقت منتخب کریں، اپنا نمبر دیں، ہم تصدیق کے لیے کال کریں گے۔", "sl1": "آج 15:30", "sl2": "آج 17:00", "sl3": "کل 10:30", "sl4": "کل 12:00", "sl5": "جمعرات 11:00", "book.note": "نمونے کے اوقات۔ براہِ راست بُکنگ جلد شروع ہوگی۔", "f.doc": "ڈاکٹر", "f.da": "ڈاکٹر احمد", "f.dk": "ڈاکٹر خدیجہ", "f.name": "آپ کا نام", "f.phone": "موبائل نمبر", "f.time": "پسندیدہ وقت", "f.reason": "آپ کو کس مسئلے میں مدد چاہیے؟", "f.submit": "ملاقات کی درخواست بھیجیں", "f.timeph": "اوپر سے وقت چنیں یا لکھیں", "m.phone": "براہِ کرم اپنا موبائل نمبر اس طرح لکھیں: 0300 1234567", "m.name": "براہِ کرم اپنا نام لکھیں۔", "m.none": "کچھ نہیں بھیجا گیا: آن لائن بُکنگ ابھی منسلک نہیں ہے۔", "foot.note": "آن لائن ملاقات ایمرجنسی علاج کا متبادل نہیں۔ ایمرجنسی میں 1122 پر کال کریں۔", "foot.c": "© 2026 سن چیزر کیئر، پاکستان", "fee.l": "آن لائن مشاورت", "fee.v": "1,000 روپے", "fee.book": "فی آن لائن مشاورت، دونوں ڈاکٹرز کے لیے", "q0": "ملاقات کی فیس کتنی ہے؟", "q0a": "ڈاکٹر محمد احمد شاہد یا ڈاکٹر خدیجہ شاہد، دونوں کے ساتھ آن لائن مشاورت کی فیس 1,000 روپے ہے۔", "ob.bar1": "بیرونِ ملک مقیم پاکستانی:", "ob.bar2": "پاکستان میں اپنے والدین یا گھر والوں کے لیے ڈاکٹر سے ویڈیو ملاقات بُک کریں۔", "ob.cta": "گھر والوں کے لیے بُک کریں", "ob.tag1": "بیرونِ ملک رہتے ہیں؟", "ob.tag2": "پاکستان میں گھر والوں کے لیے بُک کریں", "f.for": "ملاقات کس کے لیے ہے؟", "f.me": "میرے لیے، پاکستان میں", "f.fam": "پاکستان میں گھر والے", "f.patient": "مریض کا نام", "f.country": "آپ کا ملک", "f.countryph": "برطانیہ، امارات، سعودی عرب، امریکہ...", "qa": "میں بیرونِ ملک رہتا ہوں۔ کیا میں اپنے والدین کے لیے بُک کر سکتا ہوں؟", "qaa": "جی ہاں۔ آپ کسی بھی ملک سے بُک کر سکتے ہیں اور ویڈیو کال میں شامل ہو سکتے ہیں، بشرطیکہ مریض پاکستان میں ہو۔ ہمارے ڈاکٹرز پاکستان میں موجود مریضوں کا علاج کرتے ہیں۔", "ob.short": "بیرونِ ملک؟ گھر والوں کے لیے بُک کریں۔"};
   const EN_MSG = {"m.phone": "Please write your mobile number like 0300 1234567.", "m.name": "Please add your name.", "m.none": "Nothing was sent: online booking is not connected yet."};
   const i18nNodes = [...document.querySelectorAll('[data-i18n]')];
   const enText = new Map(i18nNodes.map((n) => [n, n.innerHTML]));
@@ -554,6 +604,10 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
   }
 
   // Doctor select buttons pick the doctor in the form
+  const fam = document.getElementById('famfields');
+  const syncFor = () => { fam.hidden = !document.getElementById('for-fam').checked; };
+  document.querySelectorAll('input[name=for]').forEach((r) => r.addEventListener('change', syncFor));
+  document.querySelectorAll('[data-family]').forEach((a) => a.addEventListener('click', () => { document.getElementById('for-fam').checked = true; syncFor(); setTimeout(() => document.getElementById('f-patient').focus({ preventScroll: true }), 500); }));
   document.querySelectorAll('[data-doctor]').forEach((b) => b.addEventListener('click', () => {
     const r = document.querySelector(`input[name=doctor][value="${b.dataset.doctor}"]`); if (r) r.checked = true;
     document.getElementById('book').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
@@ -620,6 +674,7 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
   const orbs = [['#4f46e5', .3, 0], ['#ff8fb8', .26, 2.3], ['#5eead4', .2, 4.2]].map(([c, s, a]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 40, 40), glossy(c, { roughness: .15 })); m.userData.a = a; ringG.add(m); return m; });
   const dots = [['#5eead4', -3.2, 2.6, -1.5, .16], ['#ffc53d', 3.3, 2.9, -1, .2], ['#ff8fb8', -3.0, -2.7, .2, .13]].map(([c, x, y, z, s]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 24, 24), glossy(c)); m.position.set(x, y, z); m.userData.y = y; root.add(m); return m; });
 
+  const tag = document.getElementById('ringtag'); const wide = matchMedia('(min-width: 60.01rem)'); const TAG_A = 2.75;
   const size = () => { const wd = stage.clientWidth, h = stage.clientHeight; renderer.setSize(wd, h, false); cam.aspect = wd / h; cam.position.z = wd < 420 ? 17 : 15; cam.updateProjectionMatrix(); };
   let mx = 0, my = 0;
   addEventListener('pointermove', (e) => { mx = e.clientX / innerWidth - .5; my = e.clientY / innerHeight - .5; });
@@ -630,6 +685,13 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
     dots.forEach((d, k) => { d.position.y = d.userData.y + Math.sin(t + k * 1.7) * .15; });
     root.rotation.y += ((mx * .4) - root.rotation.y) * .05; root.rotation.x += ((my * .22) - root.rotation.x) * .05;
     renderer.render(scene, cam);
+    if (tag && wide.matches) {
+      const rtl = document.documentElement.dir === 'rtl'; const A = rtl ? Math.PI - TAG_A : TAG_A;
+      const v = new THREE.Vector3(Math.cos(A) * R, Math.sin(A) * R, 0);
+      ringG.localToWorld(v); v.project(cam);
+      const x = (v.x + 1) / 2 * stage.clientWidth, y = (1 - v.y) / 2 * stage.clientHeight;
+      tag.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) ` + (rtl ? 'translate(10px, -50%)' : 'translate(calc(-100% - 10px), -50%)');
+    }
   }
   size(); addEventListener('resize', () => { size(); if (reduce) draw(1.6); });
   let visible = true; const t0 = performance.now();
