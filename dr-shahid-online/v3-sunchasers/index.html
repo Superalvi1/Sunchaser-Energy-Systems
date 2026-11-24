@@ -275,6 +275,22 @@ footer .mark { width: 36px; height: 36px; } footer .mark svg { width: 28px; heig
 .form { box-shadow: inset 0 0 0 1px var(--line), var(--shadow-lift); }
 .form .btn--dark, .doc .btn--dark { background: var(--forest-2); color: #FFFFFF; }
 
+
+/* Dark indigo hero panel on the off-white page (matches the top banner) */
+.hero { --forest-ink: #FFFFFF; --forest-muted: #D6D3FF; color: #FFFFFF; box-shadow: none;
+  background: radial-gradient(50% 70% at 78% 45%, rgba(94,234,212,.22), transparent 65%), radial-gradient(40% 60% at 100% 100%, rgba(255,143,184,.28), transparent 70%), radial-gradient(35% 50% at 0% 0%, rgba(255,197,61,.14), transparent 70%), linear-gradient(150deg, #1E1A6B, #2B2593 55%, #3730A3); }
+.hero::after { background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); }
+.hero .chip { background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); color: var(--mint); }
+.hero h1 { color: #FFFFFF; }
+.hero h1 span { background-image: linear-gradient(95deg, var(--mint), var(--lime) 55%, var(--sun)); }
+.hero .lede { color: rgba(255,255,255,.86); }
+.hero .lede em { color: var(--sun); text-decoration-color: rgba(255,197,61,.5); }
+.hero .btn--lime { background: var(--sun); color: #2A1E00; box-shadow: 0 12px 28px -12px rgba(255,197,61,.8), inset 0 1px 0 rgba(255,255,255,.5); }
+.hero .btn--lime:hover { background: #FFD466; box-shadow: 0 16px 32px -12px rgba(255,197,61,.9), inset 0 1px 0 rgba(255,255,255,.5); }
+.hero .btn--glass { background: rgba(255,255,255,.08); color: #FFFFFF; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.26); }
+.hero .btn--glass:hover { background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.5); }
+.hero .trust li { background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1px rgba(255,255,255,.16); color: #FFFFFF; }
+
 /* Overseas promotion */
 .topbar { background: var(--forest); color: #FFFFFF; font-size: .9rem; }
 .topbar__in { display: flex; align-items: center; justify-content: center; gap: 10px 14px; min-height: 44px; padding-block: 8px; flex-wrap: wrap; text-align: center; }
@@ -423,7 +439,7 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
             <div class="doc__body">
               <p class="role" data-i18n="doc.role2">Doctor</p>
               <h3 data-i18n="doc.name2">Dr Khadija Shahid</h3>
-              <ul class="creds"><li>MBBS (Gold Medalist), MD, RMP</li><li>FCPS Part I, BSc Electrical Engineering</li></ul>
+              <ul class="creds"><li>MBBS (Gold Medalist), MD, RMP</li><li>FCPS Part I</li></ul>
               <p class="reg"><span data-i18n="doc.reg">PMDC registration</span> <span class="fill" data-i18n="doc.tba">to be added</span></p>
               <p class="fee"><span data-i18n="fee.l">Online consultation</span> <b data-i18n="fee.v">Rs 1,000</b></p>
               <button class="btn btn--dark" type="button" data-doctor="Dr Khadija Shahid" data-i18n="doc.sel2">Select Dr Khadija</button>
@@ -639,7 +655,7 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
   const cam = new THREE.PerspectiveCamera(32, 1, 0.1, 100); cam.position.set(0, 0, 15);
 
   const ec = document.createElement('canvas'); ec.width = 256; ec.height = 128; const ex = ec.getContext('2d');
-  const eg = ex.createLinearGradient(0, 0, 0, 128); eg.addColorStop(0, '#ffffff'); eg.addColorStop(.45, '#d9f6ff'); eg.addColorStop(1, '#c7d2fe');
+  const eg = ex.createLinearGradient(0, 0, 0, 128); eg.addColorStop(0, '#ffffff'); eg.addColorStop(.45, '#d9f6ff'); eg.addColorStop(1, '#2b2593');
   ex.fillStyle = eg; ex.fillRect(0, 0, 256, 128);
   ex.fillStyle = 'rgba(255,255,255,.95)'; ex.beginPath(); ex.ellipse(70, 28, 36, 14, 0, 0, Math.PI * 2); ex.fill();
   ex.fillStyle = 'rgba(190,185,255,.9)'; ex.beginPath(); ex.ellipse(200, 44, 26, 10, 0, 0, Math.PI * 2); ex.fill();
@@ -669,7 +685,7 @@ html[lang="ur"] .ringtag::after { right: auto; left: -7px; }
   const ringG = new THREE.Group(); ringG.rotation.set(1.2, .25, -.5); root.add(ringG);
   const R = 3.15;
   const ring = new THREE.Mesh(new THREE.TorusGeometry(R, .15, 32, 200), glossy('#ffc53d', { roughness: .2 })); ringG.add(ring);
-  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(R + .55, .012, 8, 200), new THREE.MeshBasicMaterial({ color: 0x4f46e5, transparent: true, opacity: .18 })); ringG.add(ring2);
+  const ring2 = new THREE.Mesh(new THREE.TorusGeometry(R + .55, .012, 8, 200), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .22 })); ringG.add(ring2);
 
   const orbs = [['#4f46e5', .3, 0], ['#ff8fb8', .26, 2.3], ['#5eead4', .2, 4.2]].map(([c, s, a]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 40, 40), glossy(c, { roughness: .15 })); m.userData.a = a; ringG.add(m); return m; });
   const dots = [['#5eead4', -3.2, 2.6, -1.5, .16], ['#ffc53d', 3.3, 2.9, -1, .2], ['#ff8fb8', -3.0, -2.7, .2, .13]].map(([c, x, y, z, s]) => { const m = new THREE.Mesh(new THREE.SphereGeometry(s, 24, 24), glossy(c)); m.position.set(x, y, z); m.userData.y = y; root.add(m); return m; });
