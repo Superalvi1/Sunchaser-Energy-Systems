@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="1024" height="1024">
+  <defs>
+    <radialGradient id="tile" cx="30%" cy="15%" r="120%"><stop offset="0" stop-color="#7C74FF"/><stop offset=".72" stop-color="#2B2593"/></radialGradient>
+    <radialGradient id="sun" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="#FBFFD9"/><stop offset=".55" stop-color="#E4FA8E"/><stop offset="1" stop-color="#F2C14E"/></radialGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8B7CFF" stop-opacity=".2"/><stop offset="1" stop-color="#B9B4FF"/></linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  </defs>
+  <rect x="4" y="4" width="112" height="112" rx="34" fill="url(#tile)"/>
+  <rect x="4" y="4" width="112" height="112" rx="34" fill="url(#gloss)"/>
+  <g transform="translate(18 18) scale(1.75)">
+    <g stroke="#E4FA8E" stroke-width="2.6" stroke-linecap="round" opacity=".9"><path d="M24 4.5v3.2M24 40.3v3.2M4.5 24h3.2M40.3 24h3.2M10.2 10.2l2.3 2.3M35.5 35.5l2.3 2.3M10.2 37.8l2.3-2.3M35.5 12.5l2.3-2.3"/></g>
+    <circle cx="24" cy="24" r="12.5" fill="url(#sun)"/>
+    <path d="M24 17.2v13.6M17.2 24h13.6" stroke="#2B2593" stroke-width="4.2" stroke-linecap="round"/>
+    <path d="M6.5 30.5C9 38 32 32 41.5 17.5" fill="none" stroke="url(#arc)" stroke-width="2.4" stroke-linecap="round"/>
+    <circle cx="41.5" cy="17.5" r="2.6" fill="#C9C5FF"/>
+  </g>
+</svg>
